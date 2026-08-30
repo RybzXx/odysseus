@@ -7,6 +7,7 @@ Provides token estimation for context usage tracking.
 
 import ipaddress
 import logging
+import os  # odysseus-local-served-context
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -105,6 +106,53 @@ def is_local_endpoint(url: str) -> bool:
 # ---------------------------------------------------------------------------
 DEFAULT_CONTEXT = 128000
 REQUEST_TIMEOUT = 5
+
+# >>> odysseus-local-served-context
+# The window a LOCAL server actually serves, which is not always the window the
+# model supports. Ollama's default is far below its models' maximums and the
+# OpenAI-compat /v1/models response does not report it, so without this the
+# known-table value (131072 for anything matching `qwen3`) is used to budget a
+# prompt the server will silently truncate.
+#
+# Set it in Odysseus's .env to the same number as OLLAMA_CONTEXT_LENGTH on the
+# model host, which setup_ollama_host.ps1 owns. Unset = previous behaviour.
+LOCAL_SERVED_CONTEXT_ENV = "ODYSSEUS_LOCAL_SERVED_CONTEXT"
+
+
+def local_served_context_ceiling():
+    """The declared local serving window, or None when unset/malformed.
+
+    Malformed is treated as unset rather than fatal: a typo in .env must not
+    take the whole endpoint down.
+    """
+    raw = (os.environ.get(LOCAL_SERVED_CONTEXT_ENV) or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; ignoring", LOCAL_SERVED_CONTEXT_ENV, raw)
+        return None
+    if value <= 0:
+        logger.warning("%s=%d must be positive; ignoring", LOCAL_SERVED_CONTEXT_ENV, value)
+        return None
+    return value
+
+
+def is_cloud_served_model(model):
+    """True for a model the local server only proxies, executing it remotely.
+
+    Ollama's cloud models are addressed through the same local endpoint URL, so
+    `is_local_endpoint()` correctly says "local" while the context window is the
+    remote one -- 262144 for `gemma4:31b-cloud` against a locally served 8192.
+    Applying the local ceiling to them would throw away 97% of the window they
+    actually have, so they are exempt.
+
+    Ollama marks them in the tag: `<model>:cloud` or `<model>:<size>-cloud`.
+    """
+    tag = (model or "").rsplit(":", 1)[-1].lower()
+    return tag == "cloud" or tag.endswith("-cloud")
+# <<< odysseus-local-served-context
 
 # Known context windows for major API models (used as fallback when /models
 # endpoint doesn't report context_length).
@@ -257,6 +305,19 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     # the same model id, so always re-query them instead of serving stale cache.
     if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
         _context_cache[cache_key] = (ctx, known)
+    # >>> odysseus-local-served-context
+    # Every public accessor funnels through here, so the ceiling is applied
+    # once rather than at each call site. Cloud models are exempt: the local
+    # server only proxies them, so its serving window does not bound theirs.
+    if is_local and not is_cloud_served_model(model):
+        ceiling = local_served_context_ceiling()
+        if ceiling is not None and ctx > ceiling:
+            logger.info(
+                "Local endpoint serves %d; capping %s from %d (%s)",
+                ceiling, model, ctx, LOCAL_SERVED_CONTEXT_ENV,
+            )
+            ctx = ceiling
+    # <<< odysseus-local-served-context
     logger.info(f"Context length for {model}: {ctx}")
     return ctx, known
 
