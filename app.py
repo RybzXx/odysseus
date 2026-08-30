@@ -1080,6 +1080,48 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
 
+    # >>> odysseus-keepalive-endpoints
+    # Defined outside the startup-warmup guard because _keepalive_loop calls it
+    # too. Upstream binds it only when ODYSSEUS_STARTUP_WARMUPS is on, so
+    # ODYSSEUS_MODEL_KEEPALIVE=1 alone raises NameError every 60s into the
+    # loop's own except clause -- a keep-alive that logs instead of pinging.
+    #   Pre:  ModelEndpoint exposes base_url and is_enabled.
+    #   Post: one /models probe per enabled endpoint row; no port scan.
+    #   Inv:  cadence, error handling and back-off are untouched.
+    #
+    # The probe targets also change: warmup_ping_urls() port-scans localhost and
+    # host.docker.internal on every pass. The only backend here is a tailnet row
+    # in model_endpoints, so the scan found 0 endpoints 12,761 times while
+    # costing 1-6s of phone CPU a minute.
+    def _enabled_endpoint_probe_urls():
+        from core.database import SessionLocal, ModelEndpoint
+        db = SessionLocal()
+        try:
+            rows = db.query(ModelEndpoint).filter(
+                ModelEndpoint.is_enabled == True  # noqa: E712
+            ).all()
+            return [
+                (r.base_url or "").rstrip("/") + "/models"
+                for r in rows if r.base_url
+            ]
+        finally:
+            db.close()
+
+    async def _warmup_endpoints():
+        try:
+            import httpx
+            urls = await asyncio.to_thread(_enabled_endpoint_probe_urls)
+            for url in urls:
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        await client.get(url)
+                    logger.info(f"Warmup ping OK: {url}")
+                except Exception as e:
+                    logger.debug(f"Warmup ping failed for endpoint: {e}")
+        except Exception as e:
+            logger.debug(f"Warmup ping skipped: {e}")
+    # <<< odysseus-keepalive-endpoints
+
     # Startup warmups are opt-in. They make later requests a little warmer, but
     # they also compete with the first seconds of real UI use on slow or busy
     # machines. Default to clear/idle startup and let requests warm what they use.
@@ -1096,23 +1138,6 @@ async def _startup_event():
                 logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
 
         _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
-
-        async def _warmup_endpoints():
-            try:
-                import httpx
-                urls = (
-                    await asyncio.to_thread(model_discovery.warmup_ping_urls)
-                    if model_discovery else []
-                )
-                for url in urls:
-                    try:
-                        async with httpx.AsyncClient(timeout=5.0) as client:
-                            await client.get(url)
-                        logger.info(f"Warmup ping OK: {url}")
-                    except Exception as e:
-                        logger.debug(f"Warmup ping failed for endpoint: {e}")
-            except Exception as e:
-                logger.debug(f"Warmup ping skipped: {e}")
 
         _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
     else:
