@@ -191,10 +191,25 @@ def plan_mode_disabled_tools() -> Set[str]:
     except Exception as exc:
         logger.warning("Unable to load tool schemas for plan-mode gating: %s", exc)
         all_names = set()
-    # Subtract the allowlist from all known tool names (schema-derived plus the
-    # static mutator backstop). Fail closed: if the schema import failed above,
-    # the backstop alone still blocks known mutators.
-    return (all_names | _PLAN_MODE_KNOWN_MUTATORS) - PLAN_MODE_READONLY_TOOLS
+    # tool_capabilities already states every tool's effects, so derive the
+    # mutators from it rather than relying only on a list kept in sync by hand.
+    # Imported lazily: tool_capabilities imports BUILTIN_EMAIL_TOOLS from this
+    # module, so a module-level import would close a cycle.
+    try:
+        from src.tool_capabilities import classified_mutating_tools
+
+        classified_mutators = classified_mutating_tools()
+    except Exception as exc:
+        logger.warning("Unable to load tool capabilities for plan-mode gating: %s", exc)
+        classified_mutators = frozenset()
+    # Subtract the allowlist from all known tool names (schema-derived, plus the
+    # capability-derived mutators, plus the static backstop). Fail closed: if
+    # either import failed above, the backstop alone still blocks known mutators.
+    # The allowlist is subtracted last, so a tool plan mode deliberately permits
+    # stays permitted even when its effects classify as mutating.
+    return (
+        all_names | classified_mutators | _PLAN_MODE_KNOWN_MUTATORS
+    ) - PLAN_MODE_READONLY_TOOLS
 
 
 def email_tool_policy_names(tool_name: str) -> frozenset:

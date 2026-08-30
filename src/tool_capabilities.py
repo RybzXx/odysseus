@@ -263,6 +263,42 @@ _register(
 
 
 TOOL_CAPABILITIES: Mapping[str, ToolCapabilities] = MappingProxyType(dict(_REGISTRY))
+
+
+# The effects that change no state. BROKERED_NETWORK_READ belongs here because
+# the broker, not the model, chooses what is fetched. USER_INTERACTION belongs
+# here because asking a question or revising a plan alters nothing outside the
+# conversation -- and update_plan is the one tool plan mode exists to run.
+NON_MUTATING_EFFECTS: frozenset[ToolEffect] = frozenset(
+    {
+        ToolEffect.READ_PUBLIC,
+        ToolEffect.READ_WORKSPACE,
+        ToolEffect.READ_PRIVATE,
+        ToolEffect.BROKERED_NETWORK_READ,
+        ToolEffect.USER_INTERACTION,
+    }
+)
+
+
+def classified_mutating_tools() -> frozenset[str]:
+    """Every classified tool that does more than read.
+
+    This module already states each tool's effects, so plan mode should not
+    maintain a second hand-written list of mutators that has to be kept in sync
+    by hand. A tool registered here with a non-read effect is covered the moment
+    it is added.
+
+        Pre:  TOOL_CAPABILITIES is populated at import.
+        Post: names whose every effect is non-mutating are excluded; all others,
+              including any registered with no effects at all, are included.
+        Inv:  non-mutating classification is the only thing that keeps a tool out,
+              so a misclassification fails closed rather than open.
+    """
+    return frozenset(
+        name
+        for name, capabilities in TOOL_CAPABILITIES.items()
+        if not (capabilities.effects and capabilities.effects <= NON_MUTATING_EFFECTS)
+    )
 KNOWN_CAPABILITY_TOOLS = frozenset(TOOL_CAPABILITIES)
 
 _UNKNOWN_CAPABILITIES = _capabilities(
