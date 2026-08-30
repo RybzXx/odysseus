@@ -148,15 +148,9 @@ class LLMConfig:
     # CONNECT_TIMEOUT is untouched, so a dead endpoint still fails fast.
     DEFAULT_TIMEOUT = 120  # odysseus-nonstreaming-call-path
     DEFAULT_TEMPERATURE = 1.0
-    # Was 0 ("omit num_predict, let Ollama/the model's own Modelfile decide").
-    # A reasoning model can spend its entire per-model default on <think>...
-    # and never reach content -- reproduced live against gemma4:26b, which
-    # returned an empty response every time under its own unstated default.
-    # 8192 matches this deployment's served context length (OLLAMA_CONTEXT_
-    # LENGTH), so it is a real ceiling only when a model's own default is
-    # smaller than the window it's actually served at -- never an additional
-    # cut below what the model could otherwise use.
-    DEFAULT_MAX_TOKENS = 8192
+    # 0 = omit num_predict, let Ollama/the model's own Modelfile decide.
+    # Reverted from an explicit 8192 at the user's request after live testing.
+    DEFAULT_MAX_TOKENS = 0
     MAX_RETRIES = 3
     RETRY_DELAY = 0.5
     STREAM_TIMEOUT = 300
