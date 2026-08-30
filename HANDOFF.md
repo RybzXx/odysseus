@@ -109,10 +109,13 @@ tool-call parsing stays load-bearing.
 **Ops seam (read side) — confirmed.** Pricing rulebook resolves under the agent's allowed roots
 (`ODYSSEUS_DATA_DIR`, `/tmp`); 36 files, 0 drift as of last sync check.
 
-**Untested asset — confirmed, unresolved.** The fork carries 808 files under `tests/` with
-pytest 9.1.1 available in the guest's venv, including `tests/test_external_context_tool_gate.py`
-— directly relevant to the security-boundary gap above. Not mentioned anywhere in SYSTEM_RECORD;
-no evidence it has ever been run on-device.
+**Untested asset — now run (2026-08-30, phone-side, Antigravity session).** First ever on-device
+pytest run: `3157 passed, 1 failed, 2 skipped, 128 warnings` in 528s. The one failure was
+`tests/test_markdown_table_row_js.py::test_non_string_row_falls_back_to_empty_cell` — a bug in
+`static/js/markdown/tableRow.js` where non-string input (null, object) returned `[]` instead of
+`['']`. Root cause: the outer-pipe-strip guards consumed the sole empty cell produced by an empty
+string. Fixed by early-returning `['']` for non-string input before the loop (commit `0ab09e1`).
+All 4 tests in that file now pass. `tests/test_external_context_tool_gate.py` passed.
 
 **Timezone note.** Termux's own clock and the proot guest's clock were observed skewed by ~4
 hours. Always read the clock from inside the guest when reasoning about scheduler timing —
@@ -120,20 +123,26 @@ reading Termux's clock alone produces false "the scheduler stopped firing" concl
 
 ## Unknowns (open)
 
-1. Does the shipped pytest suite pass in the guest? Never run, per above.
+1. ~~Does the shipped pytest suite pass in the guest?~~ **CLOSED (2026-08-30):** 3157 passed,
+   1 failed (fixed, see above), 2 skipped. Suite is runnable on-device.
 2. Was `odysseus-list-pool` deliberately dropped, or lost in a rebase?
 3. Who activated `Email Calendar Events` / `Calendar Classify Events`, and why have they never run?
 4. Is the 98→1→0 saved-classification drift idempotence or silent data loss?
 5. How stale is the laptop's pricing JSON relative to the live Google Sheet?
 6. Is the `Book Bil Weekend` IMAP timeout persistent or intermittent?
 7. Is the shallow clone (depth 1) intentional, or should it be un-shallowed?
-8. Does the phone-side clone's `origin`/branch match the laptop's (`RybzXx/odysseus`,
-   `daily-driver`)? Not re-checked this session — SSH (port 8022) was refused (another instance
-   was using it) and `adb`'s Termux `RUN_COMMAND` path is blocked by a `dangerous`-level Android
-   permission (`com.termux.permission.RUN_COMMAND`) that the `adb shell`/`com.android.shell`
-   identity can't hold, so `pm grant` no-ops. Confirm on next live access.
+8. ~~Does the phone-side clone's `origin`/branch match the laptop's?~~ **CLOSED (2026-08-30):**
+   Confirmed: `origin` = `https://github.com/RybzXx/odysseus.git`, branch = `daily-driver`. Exact
+   match to laptop-side observation.
+
+## Fixes applied (phone-side session 2026-08-30)
+
+- `static/js/markdown/tableRow.js` — non-string guard: `return ['']` early for non-string
+  input instead of coercing to `''` and letting outer-pipe stripping consume the result.
+  Commit `0ab09e1` on `daily-driver`.
 
 ## Not yet done
 
-SYSTEM_RECORD Rev N (fix-as-found, oracle = the record's own Verified claims) has not been
-started — this file is a research handoff, not the fix pass itself.
+- SYSTEM_RECORD Rev N (fix-as-found pass) not started.
+- Unknowns 2–7 above remain open.
+- Security gap (ambient email lane bypasses `ToolRunSecurityContext`) confirmed but not fixed.
