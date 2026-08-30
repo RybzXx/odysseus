@@ -126,30 +126,81 @@ LOCAL_SERVED_CONTEXT_ENV = "ODYSSEUS_LOCAL_SERVED_CONTEXT"
 MAX_PLAUSIBLE_LOCAL_CONTEXT = 2_000_000
 
 
-def local_served_context_ceiling():
-    """The declared local serving window, or None when unset/malformed.
+def _coerce_served_context_value(raw, label):
+    """One validated window, or None. Shared by the default and per-model entries.
 
-    Malformed is treated as unset rather than fatal: a typo in .env must not
+    ``label`` names the offending setting in the warning, so a bad per-model
+    entry points at that model rather than at the variable as a whole.
+    """
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; ignoring", label, raw)
+        return None
+    if value <= 0:
+        logger.warning("%s=%d must be positive; ignoring", label, value)
+        return None
+    if value > MAX_PLAUSIBLE_LOCAL_CONTEXT:
+        logger.warning(
+            "%s=%d exceeds the plausible ceiling (%d); ignoring",
+            label, value, MAX_PLAUSIBLE_LOCAL_CONTEXT,
+        )
+        return None
+    return value
+
+
+def _parse_local_served_context_spec(raw):
+    """``(default_ceiling, {model: ceiling})`` from the env var's spec string.
+
+    The window a local server can actually serve is per-model, not per-host:
+    KV cache scales with the window, so a 2 GB model has headroom on this
+    card that a 25 GB one does not. A single number for every model therefore
+    either starves the small models or OOMs the large ones.
+
+    Grammar, backward compatible with the bare integer this used to be:
+        8192                          -> default 8192, no overrides
+        8192,granite4.2:3b=65536      -> default 8192, that one model 65536
+        granite4.2:3b=65536           -> that model only, no default
+    Model ids contain ':' (``gemma4:26b``), so '=' separates key from value
+    and ',' separates entries. A malformed entry is dropped, never fatal.
+    """
+    default = None
+    per_model = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if "=" in entry:
+            name, _, value = entry.partition("=")
+            name = name.strip()
+            ceiling = _coerce_served_context_value(
+                value.strip(), "%s[%s]" % (LOCAL_SERVED_CONTEXT_ENV, name)
+            )
+            if name and ceiling is not None:
+                per_model[name] = ceiling
+        else:
+            default = _coerce_served_context_value(entry, LOCAL_SERVED_CONTEXT_ENV)
+    return default, per_model
+
+
+def local_served_context_ceiling(model=""):
+    """The declared local serving window for ``model``, or None when unset.
+
+    A per-model entry wins over the bare default, so an oversized model keeps
+    a small window while a small one gets the larger window its VRAM headroom
+    actually allows. Called with no model (or a model with no entry) this
+    returns the default, which is the whole behaviour of the bare-integer form.
+
+    Malformed entries are dropped rather than fatal: a typo in .env must not
     take the whole endpoint down.
     """
     raw = (os.environ.get(LOCAL_SERVED_CONTEXT_ENV) or "").strip()
     if not raw:
         return None
-    try:
-        value = int(raw)
-    except ValueError:
-        logger.warning("%s=%r is not an integer; ignoring", LOCAL_SERVED_CONTEXT_ENV, raw)
-        return None
-    if value <= 0:
-        logger.warning("%s=%d must be positive; ignoring", LOCAL_SERVED_CONTEXT_ENV, value)
-        return None
-    if value > MAX_PLAUSIBLE_LOCAL_CONTEXT:
-        logger.warning(
-            "%s=%d exceeds the plausible ceiling (%d); ignoring",
-            LOCAL_SERVED_CONTEXT_ENV, value, MAX_PLAUSIBLE_LOCAL_CONTEXT,
-        )
-        return None
-    return value
+    default, per_model = _parse_local_served_context_spec(raw)
+    if model and model in per_model:
+        return per_model[model]
+    return default
 
 
 def is_cloud_served_model(model):
@@ -339,7 +390,7 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     # once rather than at each call site. Cloud models are exempt: the local
     # server only proxies them, so its serving window does not bound theirs.
     if is_local and not is_cloud_served_model(model):
-        ceiling = local_served_context_ceiling()
+        ceiling = local_served_context_ceiling(model)
         if ceiling is not None and ctx > ceiling:
             logger.info(
                 "Local endpoint serves %d; capping %s from %d (%s)",
