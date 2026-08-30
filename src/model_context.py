@@ -573,6 +573,40 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
         except Exception:
             pass
 
+    # Ollama /api/show — the model's own GGUF metadata, keyed
+    # "<arch>.context_length" (gemma4.context_length, nemotron_h_moe.
+    # context_length, ...). Parallel to the /slots probe above but for the other
+    # local backend: llama.cpp reports the window it is SERVING, Ollama reports
+    # the window the model SUPPORTS. The served window is a separate decision,
+    # sent per request as num_ctx and bounded by local_served_context_ceiling().
+    #
+    # Without this, every Ollama model fell back to KNOWN_CONTEXT_WINDOWS, whose
+    # prefix keys are coarse and go stale: 'qwen3' -> 131072 under-reported
+    # qwen3.6:35b-a3b's real 262144, and 'nemotron' -> 131072 under-reported
+    # nemotron-3.5-lightning:30b's real 1048576. Asking the server removes the
+    # table from this path entirely and cannot drift as models change.
+    if is_local_endpoint(endpoint_url):
+        try:
+            base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
+            r = httpx.post(f"{base}/api/show", json={"model": model}, timeout=REQUEST_TIMEOUT)
+            if r.is_success:
+                info = (r.json() or {}).get("model_info") or {}
+                for key, value in info.items():
+                    # Exclude "...rope.scaling.original_context_length": the
+                    # pre-scaling training window (gpt-oss reports 4096 there
+                    # against a real 131072), not what the model serves.
+                    if (
+                        key.endswith(".context_length")
+                        and "rope" not in key
+                        and "original" not in key
+                        and isinstance(value, int)
+                        and value > 0
+                    ):
+                        logger.info(f"Ollama /api/show reports context_length={value} for {model}")
+                        return value, True
+        except Exception:
+            pass
+
     # GitHub Copilot's /models requires auth + X-GitHub-Api-Version headers that
     # aren't available here; an unauthenticated probe just 400s. All Copilot
     # picker models are major API models covered by the known-context table, so
