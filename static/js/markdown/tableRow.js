@@ -17,7 +17,8 @@
 // Only `\|` is unescaped: a doubled backslash is left alone so cells holding
 // Windows paths are not rewritten.
 export function splitTableRow(row) {
-  const text = typeof row === 'string' ? row : '';
+  if (typeof row !== 'string') return [''];
+  const text = row;
   const cells = [];
   let cell = '';
 
