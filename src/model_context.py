@@ -118,6 +118,13 @@ REQUEST_TIMEOUT = 5
 # model host, which setup_ollama_host.ps1 owns. Unset = previous behaviour.
 LOCAL_SERVED_CONTEXT_ENV = "ODYSSEUS_LOCAL_SERVED_CONTEXT"
 
+# "Positive" alone doesn't catch a fat-fingered extra digit -- a stray zero
+# turns this into an implausible ceiling that OVER-budgets every prompt, the
+# exact silent-truncation failure this whole mechanism exists to prevent.
+# 2x the largest entry in KNOWN_CONTEXT_WINDOWS (1,048,576, Llama 4 / MiMo
+# v2.5) -- generous headroom for a real future model, not a real value today.
+MAX_PLAUSIBLE_LOCAL_CONTEXT = 2_000_000
+
 
 def local_served_context_ceiling():
     """The declared local serving window, or None when unset/malformed.
@@ -135,6 +142,12 @@ def local_served_context_ceiling():
         return None
     if value <= 0:
         logger.warning("%s=%d must be positive; ignoring", LOCAL_SERVED_CONTEXT_ENV, value)
+        return None
+    if value > MAX_PLAUSIBLE_LOCAL_CONTEXT:
+        logger.warning(
+            "%s=%d exceeds the plausible ceiling (%d); ignoring",
+            LOCAL_SERVED_CONTEXT_ENV, value, MAX_PLAUSIBLE_LOCAL_CONTEXT,
+        )
         return None
     return value
 
@@ -278,6 +291,22 @@ KNOWN_CONTEXT_WINDOWS = {
     'wizard': 32768,
     'openchat': 8192,
     'solar': 32768,
+
+    # --- Ollama-native tag spelling ---
+    # `_lookup_known` requires the key to appear verbatim in the tag, and
+    # Ollama's own library names these families with no hyphen between the
+    # family and its version digit (`gemma4`, `granite4.2`, `gpt-oss`) --
+    # the hyphenated keys above (`gemma-4`, etc.) are the vendor API/HF
+    # convention and never match an Ollama tag. Confirmed via `/api/show`
+    # model_info on this deployment's own installed models, not assumed:
+    #   ollama show gemma4:26b       -> gemma4.context_length      262144
+    #   ollama show gpt-oss:20b      -> gptoss.context_length      131072
+    #   ollama show granite4.2:30b   -> granite.context_length     131072
+    #   ollama show muse-glimmer:30b -> muse-glimmer.context_length 131072
+    'gemma4': 262144,
+    'gpt-oss': 131072,
+    'granite': 131072,
+    'muse-glimmer': 131072,
 }
 
 # ---------------------------------------------------------------------------
