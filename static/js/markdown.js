@@ -801,7 +801,15 @@ export function mdToHtml(src, opts) {
   // capture inside a repeated group, where only the last iteration survives and
   // nothing read it.
   s = s.replace(/(^|\n)((?:[^\n]*\|[^\n]*\|[^\n]*)(?:\n[^\n]*\|[^\n]*\|[^\n]*)*)/g, (match, lead, body) => {
-    if (match.includes('___CODE_BLOCK_') || match.includes('___ALLOWED_HTML_')) return match;
+    // >>> odysseus-table-inline-placeholder-guard
+    // Only a CODE BLOCK must abort the table: it is block-level and must never
+    // be absorbed into one. ___ALLOWED_HTML_ here is an inline <a> (links are
+    // placeholder-ised at line ~576, before this rule runs), and bailing on it
+    // meant any table with a link in a cell rendered as plain pipe text --
+    // which is every inbox table, since each row carries an [Open Email] link.
+    // The placeholder rides inside the cell and is restored downstream as usual.
+    if (match.includes('___CODE_BLOCK_')) return match;
+    // <<< odysseus-table-inline-placeholder-guard
 
     const rows = body.trim().split('\n');
     if (rows.length < 2) return match;
