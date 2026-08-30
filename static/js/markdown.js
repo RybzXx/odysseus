@@ -793,11 +793,19 @@ export function mdToHtml(src, opts) {
   if (sawPendingMath) _scheduleMathFlush();
 
   // Handle pipe tables
-  s = s.replace(/(?:^|\n)([^\n]*\|[^\n]*\|[^\n]*)(?:\n([^\n]*\|[^\n]*\|[^\n]*))*/g, (table) => {
-    if (table.includes('___CODE_BLOCK_') || table.includes('___ALLOWED_HTML_')) return table;
+  // >>> odysseus-table-leading-newline
+  // `lead` is the boundary this rule consumes -- '' at the start of the string,
+  // otherwise the newline that ended the previous line. It MUST be re-emitted:
+  // without it `## Results` fuses to the table and stops being a heading.
+  // The run of table lines is captured whole in `body`; the original nested a
+  // capture inside a repeated group, where only the last iteration survives and
+  // nothing read it.
+  s = s.replace(/(^|\n)((?:[^\n]*\|[^\n]*\|[^\n]*)(?:\n[^\n]*\|[^\n]*\|[^\n]*)*)/g, (match, lead, body) => {
+    if (match.includes('___CODE_BLOCK_') || match.includes('___ALLOWED_HTML_')) return match;
 
-    const rows = table.trim().split('\n');
-    if (rows.length < 2) return table;
+    const rows = body.trim().split('\n');
+    if (rows.length < 2) return match;
+  // <<< odysseus-table-leading-newline
 
     let html = '<table style="border-collapse: collapse; width: 100%; margin: 10px 0;">';
 
@@ -820,7 +828,7 @@ export function mdToHtml(src, opts) {
     });
 
     html += '</tbody></table>';
-    return html;
+    return lead + html;  // odysseus-table-leading-newline
   });
 
   // Horizontal rules (must come before bold/italic to avoid * conflicts)
