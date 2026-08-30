@@ -141,7 +141,12 @@ async def _local_model_slot(target_url: str, model: str, workload: Optional[str]
 
 class LLMConfig:
     """Configuration constants for LLM operations."""
-    DEFAULT_TIMEOUT = 30
+    # 30s assumed a fast model. Measured here at 16.8-56.2 tok/s, completions
+    # ran 26-92s and produced "LLM async call attempt 1 failed after 30.04s:"
+    # with an empty error string -- an httpx read timeout, not a server error.
+    # 120s covers the worst observed case and stays under STREAM_TIMEOUT.
+    # CONNECT_TIMEOUT is untouched, so a dead endpoint still fails fast.
+    DEFAULT_TIMEOUT = 120  # odysseus-nonstreaming-call-path
     DEFAULT_TEMPERATURE = 1.0
     DEFAULT_MAX_TOKENS = 0
     MAX_RETRIES = 3
@@ -1449,6 +1454,31 @@ def _supports_thinking(model: str) -> bool:
     m = model.lower()
     return any(p in m for p in _THINKING_MODEL_PATTERNS)
 
+# >>> odysseus-nonstreaming-call-path
+def _reasoning_channel_text(msg):
+    """The assistant message's reasoning channel, however the provider spells it.
+
+    vLLM emits `reasoning`; older builds and Mistral use `reasoning_content`;
+    some OpenAI-compatible Ollama builds use `thinking`. The streaming path
+    already accepts all three; the non-streaming path accepted only
+    `reasoning_content` at four duplicated sites, so a thinking model that spent
+    its budget reasoning returned the empty string. Measured against the live
+    endpoint: asked to reply `BANANA-42`, qwen3.6:35b-a3b returned content ""
+    with 671 characters in `reasoning`, logged as "Agent round N summary: 0 chars".
+
+        Pre:  msg is the OpenAI-shape assistant message dict.
+        Post: the first non-empty reasoning channel, or "" when none carries text.
+        Inv:  callers keep `content` ahead of this, so a normal reply is unchanged.
+    """
+    return (
+        msg.get("reasoning_content")
+        or msg.get("reasoning")
+        or msg.get("thinking")
+        or ""
+    )
+# <<< odysseus-nonstreaming-call-path
+
+
 def _normalize_mistral_content(content):
     """Mistral returns content as a structured array when reasoning is on:
         [{"type": "thinking", "thinking": [{"type": "text", "text": "..."}], "closed": true},
@@ -2056,9 +2086,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
                 if thinking_part:
                     response = thinking_part + "\n\n" + (text_part or "")
                 else:
-                    response = text_part or msg.get("reasoning_content") or ""
+                    response = text_part or _reasoning_channel_text(msg)
             else:
-                response = content or msg.get("reasoning_content") or ""
+                response = content or _reasoning_channel_text(msg)
         _set_cached_response(cache_key, response)
         return response
     except Exception:
@@ -2456,9 +2486,9 @@ async def llm_call_async(
                         if thinking_part:
                             response = thinking_part + "\n\n" + (text_part or "")
                         else:
-                            response = text_part or msg.get("reasoning_content") or ""
+                            response = text_part or _reasoning_channel_text(msg)
                     else:
-                        response = content or msg.get("reasoning_content") or ""
+                        response = content or _reasoning_channel_text(msg)
                 _set_cached_response(
                     cache_key,
                     response,
