@@ -2762,6 +2762,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
             if "error" in result:
                 return [TextContent(type="text", text=f"Error: {result['error']}")]
+            # _reply_to_email returns _send_email's result, so it carries the
+            # same agent_email_confirm staging contract that send_email and
+            # unsubscribe_email already honour. Without this branch a staged
+            # draft was reported as delivered and the original was flagged
+            # Answered before anyone approved it.
+            if result.get("pending"):
+                return [TextContent(
+                    type="text",
+                    text=(
+                        f"Reply staged for approval (pending id: {result.get('pending_id')}). "
+                        "Nothing has been sent yet, and the original message is left "
+                        "unflagged. Review and approve it in Odysseus before delivery."
+                    ),
+                )]
             # Mark original as answered
             try:
                 _set_flag(uid, arguments.get("folder", "INBOX"), "\\Answered", add=True, account=acct)
