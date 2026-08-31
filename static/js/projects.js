@@ -90,6 +90,8 @@ function _injectStyles() {
     #projects-modal .proj-btn:hover { background: var(--border, #3a3a3a); border-color: var(--accent, #e8a33d); }
     #projects-modal .proj-btn.primary { background: var(--accent, #e8a33d); color: #111; font-weight: 600; border-color: var(--accent, #e8a33d); }
     #projects-modal .proj-btn.primary:hover { opacity: 0.9; }
+    #projects-modal .proj-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    #projects-modal .proj-btn:disabled:hover { background: var(--bg-elev, #2a2a2a); border-color: var(--border, #444); }
 
     #projects-modal .proj-tabs {
       display: flex;
@@ -219,6 +221,7 @@ function _wireModalEvents(modalEl) {
   
   modalEl.querySelector('#proj-select')?.addEventListener('change', async (e) => {
     _currentProjectId = e.target.value;
+    _updateActionButtonsEnabled();
     await _loadProjectDetail(_currentProjectId);
   });
 
@@ -291,6 +294,33 @@ async function _fetchProjectsList() {
   } catch (err) {
     loggerError(err);
   }
+}
+
+// Sync Disk / Agent Session act on _currentProjectId and no-op with neither
+// error nor feedback when it's unset — indistinguishable from "broken" until
+// disabled. Called everywhere _currentProjectId can change.
+function _updateActionButtonsEnabled() {
+  const hasProject = !!_currentProjectId;
+  document.getElementById('proj-sync-btn')?.toggleAttribute('disabled', !hasProject);
+  document.getElementById('proj-agent-btn')?.toggleAttribute('disabled', !hasProject);
+}
+
+// _renderActiveTabContent() (and every tab it dispatches to) requires
+// _currentProject and silently renders nothing without it — the state with
+// zero projects that _fetchProjectsList() leaves on a fresh install, with no
+// path that ever calls it once #proj-body is left showing "Loading
+// project..." forever. Clicking tabs still toggled their own .active class
+// (that part has no guard), so it read as "the window doesn't do anything"
+// rather than "there's nothing to show yet".
+function _renderEmptyState() {
+  const bodyEl = document.getElementById('proj-body');
+  if (!bodyEl) return;
+  bodyEl.innerHTML = `
+    <div style="color:var(--fg-muted,#888); text-align:center; padding:40px;">
+      No projects yet.<br>
+      <button id="proj-empty-new-btn" class="proj-btn primary" style="margin-top:12px;">+ New Project</button>
+    </div>`;
+  bodyEl.querySelector('#proj-empty-new-btn')?.addEventListener('click', () => _renderNewProjectPrompt());
 }
 
 async function _loadProjectDetail(projectId) {
@@ -611,6 +641,7 @@ function _renderNewProjectPrompt() {
       uiModule.showToast(`Project '${name}' created!`);
       await _fetchProjectsList();
       _currentProjectId = data.project.id;
+      _updateActionButtonsEnabled();
       await _loadProjectDetail(_currentProjectId);
     })
     .catch((err) => uiModule.showError(err.message));
@@ -661,8 +692,11 @@ export function openProjects() {
   document.getElementById('tool-projects-btn')?.classList.add('active');
   
   _fetchProjectsList().then(() => {
+    _updateActionButtonsEnabled();
     if (_currentProjectId) {
       _loadProjectDetail(_currentProjectId);
+    } else {
+      _renderEmptyState();
     }
   });
 }
