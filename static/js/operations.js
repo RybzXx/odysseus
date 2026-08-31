@@ -190,6 +190,8 @@ function _injectStyles() {
     #operations-modal .ops-detail-key { color: var(--fg-muted, #888); font-weight: 600; white-space: nowrap; width: 40%; }
     #operations-modal .ops-detail-val { color: var(--fg, #eee); word-break: break-word; }
     #operations-modal .ops-detail-json { white-space: pre-wrap; word-break: break-word; font-size: 10px; margin: 0; }
+    #operations-modal .ops-detail-toggle-empty { display: inline-block; margin: 6px 0; }
+    #operations-modal .ops-detail-table-empty { margin-top: 6px; }
 
     /* Mobile: below 640px, swap the table for a card list — two DOM trees,
        not one reflowed table, matching BookingsManager.tsx's own hidden
@@ -446,16 +448,52 @@ function _operatorOptions() {
 // summary) for queue and curated requests — the two sources whose real
 // detail (queue's flat columns; curated's full questionnaire) isn't
 // otherwise on the worklist row at all.
+// null/undefined/'' and empty arrays/objects carry no information — Supabase
+// returns every column whether the submitter filled it in or not, and most
+// requests leave most of the optional questionnaire fields untouched.
+function _isEmptyDetailValue(v) {
+  if (v === null || v === undefined || v === '') return true;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === 'object') return Object.keys(v).length === 0;
+  return false;
+}
+
+function _detailRowHtml([k, v]) {
+  const display = typeof v === 'object' && v !== null
+    ? `<pre class="ops-detail-json">${_esc(JSON.stringify(v, null, 2))}</pre>`
+    : _esc(String(v));
+  return `<tr><td class="ops-detail-key">${_esc(k)}</td><td class="ops-detail-val">${display}</td></tr>`;
+}
+
 function _detailRowsHtml(record) {
   const entries = record && typeof record === 'object' ? Object.entries(record) : [];
   if (!entries.length) return '<div class="ops-card-meta">Empty record.</div>';
-  return '<table class="ops-detail-table">' + entries.map(([k, v]) => {
-    let display;
-    if (v === null || v === undefined || v === '') display = '<span style="opacity:.5">—</span>';
-    else if (typeof v === 'object') display = `<pre class="ops-detail-json">${_esc(JSON.stringify(v, null, 2))}</pre>`;
-    else display = _esc(String(v));
-    return `<tr><td class="ops-detail-key">${_esc(k)}</td><td class="ops-detail-val">${display}</td></tr>`;
-  }).join('') + '</table>';
+
+  const populated = entries.filter(([, v]) => !_isEmptyDetailValue(v));
+  const empty = entries.filter(([, v]) => _isEmptyDetailValue(v));
+
+  const populatedHtml = populated.length
+    ? '<table class="ops-detail-table">' + populated.map(_detailRowHtml).join('') + '</table>'
+    : '<div class="ops-card-meta">No populated fields.</div>';
+  const emptyHtml = empty.length
+    ? `<button type="button" class="ops-chip ops-detail-toggle-empty">Show ${empty.length} empty field${empty.length === 1 ? '' : 's'}</button>` +
+      `<table class="ops-detail-table ops-detail-table-empty" hidden>${empty.map(_detailRowHtml).join('')}</table>`
+    : '';
+  return populatedHtml + emptyHtml;
+}
+
+// The toggle button and the empty-fields table it reveals are rebuilt fresh
+// each time _detailRowsHtml runs, so this just wires the one button in the
+// freshly-inserted markup — no state to preserve across re-renders.
+function _wireDetailToggle(slot) {
+  const btn = slot.querySelector('.ops-detail-toggle-empty');
+  const table = slot.querySelector('.ops-detail-table-empty');
+  if (!btn || !table) return;
+  btn.addEventListener('click', () => {
+    table.hidden = !table.hidden;
+    const count = table.querySelectorAll('tr').length;
+    btn.textContent = `${table.hidden ? 'Show' : 'Hide'} ${count} empty field${count === 1 ? '' : 's'}`;
+  });
 }
 
 function _renderFullDetail(row, wrap) {
@@ -465,6 +503,7 @@ function _renderFullDetail(row, wrap) {
     .then((record) => {
       if (!slot.isConnected) return; // editor was closed/replaced before the fetch resolved
       slot.innerHTML = '<div class="ops-field-label">Full record (live from Supabase)</div>' + _detailRowsHtml(record);
+      _wireDetailToggle(slot);
     })
     .catch((err) => {
       if (!slot.isConnected) return;
