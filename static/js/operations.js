@@ -97,7 +97,15 @@ function _injectStyles() {
     #operations-modal #ops-body { height: 100%; display: flex; flex-direction: column; }
     #operations-modal .ops-loading, #operations-modal .ops-error { padding: 24px; color: var(--fg-muted, #888); }
     #operations-modal .ops-error { color: var(--color-danger, var(--accent-error, #d33)); }
-    #operations-modal #ops-kanban.kanban-container { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; white-space: nowrap; padding: 12px; background: var(--bg, #1a1a1a); }
+    /* jKanban({element: '#ops-kanban'}) does NOT add .kanban-container to
+       #ops-kanban itself — it creates a CHILD <div class="kanban-container">
+       inside it (confirmed live: kanban.querySelector('.kanban-container')
+       .parentElement === kanban). The compound selector this used to be,
+       #ops-kanban.kanban-container, matches an element that doesn't exist —
+       0% of this block ever applied. #ops-kanban needs its own flex sizing;
+       the real scrollable container is reached with a descendant combinator. */
+    #operations-modal #ops-kanban { flex: 1; min-height: 0; }
+    #operations-modal #ops-kanban .kanban-container { height: 100%; overflow-x: auto; overflow-y: hidden; white-space: nowrap; padding: 12px; background: var(--bg, #1a1a1a); }
     /* jkanban.min.css floats boards left; a float wraps to a new line once it
        runs out of room instead of overflowing, so the container never scrolls.
        inline-flex (inline-level, like inline-block) respects nowrap on the
