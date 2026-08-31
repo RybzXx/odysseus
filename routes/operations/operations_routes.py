@@ -1,22 +1,22 @@
 """routes/operations/operations_routes.py
 
 Human-viewable panel over the Bil Weekend operations worklist — the same
-data mcp_servers/ops_server.py already exposes to agents. Reuses that
-module's HTTP client (_call_ops_api/_config) so there is exactly one
-implementation of the Bil Weekend API contract, read by both the agent MCP
-tools and this human-facing panel.
+data mcp_servers/ops_server.py exposes to agents. Reuses that module's
+Supabase client and bookings/contacts/curated_requests/queue_requests
+merge (_fetch_merged_worklist/_project/_config) so there is exactly one
+implementation of the worklist, read by both the agent MCP tools and this
+human-facing panel.
 
-Writes (status changes from a card drag) go through Bil Weekend's existing
-propose_change endpoint — nothing here writes the worklist directly. A
-human-originated proposal is tagged author="odysseus-ui:<username>" so it's
-distinguishable from agent proposals in Bil Weekend's own records; the panel
-is expected to show the change as pending until a later read confirms it,
-since propose_change never applies anything by itself.
+Talks to Supabase directly (SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY), not to
+a Bil Weekend website API — that API was never built. See ops_server.py's
+module docstring for why.
 
-Full customer detail (name/email/phone/summary) is requested directly
-(detail=full) rather than the structural-only view ops_server.py's agent
-tools default to — the admin viewing this panel is the same person who can
-already see that data in Bil Weekend's own admin panel.
+Status-change writes are PAUSED: they targeted the same never-built
+propose_change/proposals endpoint. POST /status returns 501 with an
+explanation rather than doing an unreviewed direct write no one has signed
+off on. Full customer detail (name/email/phone/summary) is requested
+directly — the admin viewing this panel already sees that data in Bil
+Weekend's own admin panel.
 """
 
 import logging
@@ -29,7 +29,14 @@ from pydantic import BaseModel
 from core.database import SessionLocal, OperationsNote
 from core.middleware import require_admin
 from src.auth_helpers import require_user
-from mcp_servers.ops_server import _call_ops_api, _config, OpsApiError, _STATUS_ENUM
+from mcp_servers.ops_server import (
+    _fetch_merged_worklist,
+    _project,
+    _config,
+    OpsApiError,
+    _STATUS_ENUM,
+    _PROPOSE_CHANGE_PAUSED,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +67,7 @@ def _note_to_dict(note: OperationsNote) -> dict:
 def _require_ops_configured() -> None:
     if _config() is None:
         raise HTTPException(
-            503, "The operations API is not configured (OPS_API_BASE_URL / OPS_AGENT_TOKEN)."
+            503, "Supabase is not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)."
         )
 
 
@@ -75,42 +82,21 @@ def setup_operations_routes() -> APIRouter:
     ):
         require_admin(request)
         _require_ops_configured()
-        params: dict[str, str | int] = {"detail": "full"}
-        if status:
-            params["status"] = status
-        if isinstance(limit, int) and limit > 0:
-            params["limit"] = limit
         try:
-            return await _call_ops_api("GET", "/api/agent/ops/attention", params=params)
+            rows = await _fetch_merged_worklist()
         except OpsApiError as e:
             raise HTTPException(502, str(e))
+        return {"items": _project(rows, "full", status, limit)}
 
     @router.post("/status")
     async def change_status(request: Request, body: StatusChange):
         require_admin(request)
-        _require_ops_configured()
         if body.status not in _STATUS_ENUM:
             raise HTTPException(422, f"status must be one of {_STATUS_ENUM}")
-        user = require_user(request) or "unknown"
-        try:
-            return await _call_ops_api(
-                "POST",
-                "/api/agent/ops/proposals",
-                body={
-                    "author": f"odysseus-ui:{user}",
-                    "proposals": [
-                        {
-                            "key": body.key,
-                            "patch": {"status": body.status},
-                            "expectedUpdatedAt": body.expectedUpdatedAt,
-                            "rationale": body.rationale
-                            or "Status changed via Odysseus Operations board",
-                        }
-                    ],
-                },
-            )
-        except OpsApiError as e:
-            raise HTTPException(502, str(e))
+        # Paused, not a Supabase call — see _PROPOSE_CHANGE_PAUSED. Left as a
+        # named 501 rather than silently writing operations_followup direct,
+        # since nobody has decided yet whether these writes skip review.
+        raise HTTPException(501, _PROPOSE_CHANGE_PAUSED)
 
     @router.get("/notes")
     def list_notes(request: Request, key: Optional[str] = None):
