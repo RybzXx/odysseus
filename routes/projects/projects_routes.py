@@ -21,6 +21,7 @@ from src.projects_manager import (
     sync_project_disk_and_db,
     sync_tasks_to_manifest_file,
     project_to_dict,
+    get_project_structure_and_spec,
 )
 
 logger = logging.getLogger(__name__)
@@ -213,6 +214,22 @@ Description: {project.description}
             if not project:
                 raise HTTPException(404, f"Project {project_id} not found")
             return {"project": project_to_dict(project, db=db, include_tasks=True, include_links=True, include_content=True)}
+        finally:
+            db.close()
+
+    @router.get("/{project_id}/structure")
+    def get_project_structure(request: Request, project_id: str):
+        """Get file tree topology, tech stack analysis, and spec file content."""
+        db = cdb.SessionLocal()
+        try:
+            project = (
+                db.query(Project)
+                .filter((Project.id == project_id) | (Project.slug == project_id))
+                .first()
+            )
+            if not project:
+                raise HTTPException(404, f"Project {project_id} not found")
+            return get_project_structure_and_spec(project.id, db=db)
         finally:
             db.close()
 

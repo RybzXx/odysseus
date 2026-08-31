@@ -596,3 +596,136 @@ def project_to_dict(
         data["links"] = resolve_project_links(project.id, db=db)
 
     return data
+
+
+def get_project_structure_and_spec(project_id: str, db=None) -> Dict[str, Any]:
+    """Retrieve detailed workspace structure, key configs, git metadata, and spec files."""
+    close_db = False
+    if db is None:
+        db = cdb.SessionLocal()
+        close_db = True
+
+    try:
+        project = (
+            db.query(Project)
+            .filter((Project.id == project_id) | (Project.slug == project_id))
+            .first()
+        )
+        if not project:
+            return {}
+
+        folder = Path(project.folder_path) if project.folder_path else None
+        if not folder or not folder.exists():
+            return {"error": "Folder not found"}
+
+        IGNORES = {
+            ".git", "node_modules", "venv", ".venv", "__pycache__", ".next",
+            "dist", "build", ".dart_tool", ".gradle", "ios", "android", "data", "windows", "linux", "web"
+        }
+
+        # 1. Directory Tree & File Inventory
+        tree = []
+        key_files = []
+        try:
+            for entry in sorted(folder.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+                if entry.name in IGNORES:
+                    continue
+                is_dir = entry.is_dir()
+                child_count = 0
+                if is_dir:
+                    try:
+                        child_count = len([c for c in entry.iterdir() if c.name not in IGNORES])
+                    except Exception:
+                        pass
+                item_info = {
+                    "name": entry.name,
+                    "is_dir": is_dir,
+                    "size": entry.stat().st_size if not is_dir else 0,
+                    "children": child_count if is_dir else 0,
+                }
+                tree.append(item_info)
+                if not is_dir and entry.suffix.lower() in [".md", ".json", ".toml", ".yaml", ".yml", ".py", ".ts", ".js", ".xlsx", ".pdf", ".png", ".jpg"]:
+                    key_files.append(entry.name)
+        except Exception as e:
+            logger.warning(f"Error scanning folder {folder}: {e}")
+
+        # 2. Tech Stack & Configurations
+        tech = {}
+        pkg_json = folder / "package.json"
+        if pkg_json.exists():
+            try:
+                pdata = json.loads(pkg_json.read_text(encoding="utf-8", errors="ignore"))
+                tech["npm_package"] = pdata.get("name")
+                tech["scripts"] = pdata.get("scripts", {})
+                tech["dependencies"] = list(pdata.get("dependencies", {}).keys())
+            except Exception:
+                pass
+
+        req_txt = folder / "requirements.txt"
+        if req_txt.exists():
+            try:
+                tech["python_requirements"] = [
+                    l.strip() for l in req_txt.read_text(encoding="utf-8", errors="ignore").splitlines()
+                    if l.strip() and not l.startswith("#")
+                ][:15]
+            except Exception:
+                pass
+
+        # 3. Spec File Content
+        spec_content = ""
+        spec_source = "PROJECT.md"
+        spec_candidates = ["SPEC.md", "SPEC_Phase1.md", "SPECIFICATION.md", "README.md"]
+        for cand in spec_candidates:
+            cand_path = folder / cand
+            if cand_path.exists():
+                try:
+                    spec_content = cand_path.read_text(encoding="utf-8", errors="ignore")
+                    spec_source = cand
+                    break
+                except Exception:
+                    pass
+
+        if not spec_content and project.manifest_path and Path(project.manifest_path).exists():
+            try:
+                spec_content = Path(project.manifest_path).read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                pass
+
+        # 4. Sections Parsing from PROJECT.md
+        sections = {"overview": "", "extended": "", "structure": "", "spec": spec_content}
+        if project.manifest_path and Path(project.manifest_path).exists():
+            try:
+                m_raw = Path(project.manifest_path).read_text(encoding="utf-8", errors="ignore")
+                meta, body = parse_project_manifest(m_raw)
+                
+                parts = re.split(r'(?m)^##\s+', body)
+                sections["overview"] = parts[0].strip() if len(parts) > 0 else body
+                
+                for part in parts[1:]:
+                    lines = part.splitlines()
+                    header = lines[0].strip().lower()
+                    content_block = "\n".join(lines[1:]).strip()
+                    if any(k in header for k in ["architecture", "tech stack", "components", "background"]):
+                        sections["extended"] += f"## {lines[0]}\n\n{content_block}\n\n"
+                    elif any(k in header for k in ["objective", "goal", "task", "milestone"]):
+                        sections["overview"] += f"\n\n## {lines[0]}\n\n{content_block}\n\n"
+                    elif any(k in header for k in ["structure", "topology", "schema", "flow", "execution"]):
+                        sections["structure"] += f"## {lines[0]}\n\n{content_block}\n\n"
+            except Exception as e:
+                logger.warning(f"Error parsing sections: {e}")
+
+        return {
+            "project_id": project.id,
+            "slug": project.slug,
+            "folder_path": str(folder),
+            "tree": tree,
+            "key_files": key_files,
+            "tech": tech,
+            "spec_source": spec_source,
+            "spec_content": spec_content,
+            "sections": sections,
+        }
+    finally:
+        if close_db:
+            db.close()
+

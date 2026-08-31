@@ -29,6 +29,9 @@ let _composerChecklistRows = [''];
 let _composerTitle = '';
 let _composerBody = '';
 let _isEditingSummary = false;
+let _overviewSubTab = 'overview'; // 'overview' | 'extended' | 'structure' | 'spec'
+let _structureData = null;
+let _isEditingSpec = false;
 let _stylesInjected = false;
 
 const NOTE_COLORS = [
@@ -179,8 +182,180 @@ function _injectStyles() {
     .proj-overview-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
     .proj-progress-bar { background: var(--bg-elev, #242424); border-radius: 6px; height: 8px; width: 100%; overflow: hidden; margin-bottom: 16px; border: 1px solid var(--border, #333); }
     .proj-progress-fill { background: var(--accent, #e8a33d); height: 100%; transition: width 0.3s ease; }
-    .proj-markdown-content { background: var(--bg-elev, #202020); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; line-height: 1.6; }
-    .proj-summary-editor { width: 100%; height: 340px; background: var(--input-bg, #181818); color: var(--fg, #eee); border: 1px solid var(--border, #444); border-radius: 8px; padding: 12px; font-family: monospace; font-size: 12px; resize: vertical; }
+    
+    /* Overview 4-Tier Subtabs */
+    .proj-subtabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 16px;
+      background: var(--bg-elev, #222);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border, #333);
+      flex-wrap: wrap;
+    }
+    .proj-subtab {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: var(--fg-muted, #999);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .proj-subtab:hover {
+      color: var(--fg, #eee);
+      background: rgba(255,255,255,0.06);
+    }
+    .proj-subtab.active {
+      background: var(--accent, #e8a33d);
+      color: #111;
+      font-weight: 600;
+    }
+
+    .proj-markdown-content {
+      background: var(--bg-elev, #202020);
+      border: 1px solid var(--border, #333);
+      border-radius: 8px;
+      padding: 18px;
+      line-height: 1.6;
+      font-size: 13.5px;
+    }
+    .proj-markdown-content h1, .proj-markdown-content h2, .proj-markdown-content h3 {
+      margin-top: 1.2em;
+      margin-bottom: 0.6em;
+      color: var(--fg, #eee);
+    }
+    .proj-markdown-content h1:first-child, .proj-markdown-content h2:first-child { margin-top: 0; }
+    .proj-markdown-content pre {
+      background: var(--input-bg, #141414);
+      border: 1px solid var(--border, #333);
+      border-radius: 6px;
+      padding: 12px;
+      overflow-x: auto;
+    }
+    .proj-markdown-content code {
+      background: rgba(255,255,255,0.08);
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .proj-markdown-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+    }
+    .proj-markdown-content th, .proj-markdown-content td {
+      border: 1px solid var(--border, #3a3a3a);
+      padding: 8px 12px;
+      font-size: 12.5px;
+    }
+    .proj-markdown-content th {
+      background: var(--bg-elev, #262626);
+      font-weight: 600;
+    }
+
+    .proj-summary-editor {
+      width: 100%;
+      height: 380px;
+      background: var(--input-bg, #181818);
+      color: var(--fg, #eee);
+      border: 1px solid var(--border, #444);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 12px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    /* File Topology Tree & Tech Cards */
+    .proj-tree-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .proj-tree-item {
+      background: var(--bg-elev, #222);
+      border: 1px solid var(--border, #333);
+      border-radius: 6px;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+    .proj-tree-item.is-dir { border-left: 3px solid var(--accent, #e8a33d); }
+    .proj-tree-item-name { display: flex; align-items: center; gap: 6px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .proj-tree-item-meta { font-size: 10.5px; color: var(--fg-muted, #888); }
+
+    .proj-badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(232, 163, 61, 0.15);
+      color: var(--accent, #e8a33d);
+      border: 1px solid rgba(232, 163, 61, 0.3);
+      border-radius: 12px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    /* Project Manifest Tasks */
+    .proj-manifest-card {
+      background: var(--bg-elev, #202020);
+      border: 1px solid var(--border, #333);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .proj-manifest-task-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 12px 0;
+    }
+    .proj-manifest-task-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg, #1a1a1a);
+      border: 1px solid var(--border, #333);
+      border-radius: 6px;
+      padding: 8px 12px;
+      transition: background 0.15s;
+    }
+    .proj-manifest-task-row:hover { background: rgba(255,255,255,0.03); border-color: #444; }
+    .proj-manifest-task-row.done .proj-manifest-task-text { text-decoration: line-through; color: var(--fg-muted, #777); opacity: 0.7; }
+    .proj-manifest-task-checkbox {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: var(--accent, #e8a33d);
+    }
+    .proj-manifest-task-text { flex: 1; font-size: 13px; color: var(--fg, #eee); }
+    .proj-manifest-add-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .proj-manifest-add-input {
+      flex: 1;
+      background: var(--input-bg, #181818);
+      border: 1px solid var(--border, #444);
+      border-radius: 6px;
+      padding: 7px 12px;
+      color: var(--fg, #eee);
+      font-size: 12.5px;
+    }
+    .proj-manifest-add-input:focus { border-color: var(--accent, #e8a33d); outline: none; }
 
     /* Notes & To-Dos Composer */
     .proj-composer-compact {
@@ -811,9 +986,10 @@ async function _loadProjectDetail(projectId, silent = false) {
   }
 
   try {
-    const [resProj, resNotes] = await Promise.all([
+    const [resProj, resNotes, resStructure] = await Promise.all([
       fetch(`/api/projects/${projectId}`),
       fetch(`/api/notes?project_id=${projectId}`).catch(() => ({ ok: false })),
+      fetch(`/api/projects/${projectId}/structure`).catch(() => ({ ok: false })),
     ]);
 
     if (!resProj.ok) throw new Error('Failed to load project details');
@@ -825,6 +1001,12 @@ async function _loadProjectDetail(projectId, silent = false) {
       _projectNotes = notesData.notes || [];
     } else {
       _projectNotes = [];
+    }
+
+    if (resStructure.ok) {
+      _structureData = await resStructure.json();
+    } else {
+      _structureData = null;
     }
 
     // Sync header
@@ -948,7 +1130,7 @@ function _renderLandingPage() {
         <div style="font-size: 12px; color: var(--fg-muted); margin-bottom: 12px;">Status: ${_esc(p.status)}</div>
         
         <div style="font-size: 13px; line-height: 1.5; color: var(--fg); margin-bottom: 12px;">
-          ${_esc(p.agent_summary || p.description || 'No summary available.')}
+          ${_renderMarkdownSafe(p.agent_summary || p.description || 'No summary available.')}
         </div>
         
         <button class="proj-btn proj-summarize-btn" data-id="${_esc(p.id)}" style="font-size: 11px; margin-bottom: 8px;">
@@ -995,23 +1177,74 @@ function _renderLandingPage() {
   });
 }
 
+function _renderMarkdownSafe(text) {
+  if (!text || !text.trim()) return '<div style="color:var(--fg-muted,#888); font-style:italic;">No content recorded.</div>';
+  if (markdownModule && markdownModule.mdToHtml) {
+    try {
+      return markdownModule.mdToHtml(text, { shortcodes: false });
+    } catch (e) {
+      console.warn('Markdown parse error:', e);
+    }
+  }
+  return `<pre style="white-space:pre-wrap; font-family:inherit;">${_esc(text)}</pre>`;
+}
+
 function _renderOverviewTab(container) {
   const p = _currentProject;
+  if (!p) return;
   const progress = p.progress || 0;
+  const struct = _structureData || {};
+  const sections = struct.sections || {};
 
-  if (_isEditingSummary) {
-    container.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <h3 style="margin:0;">Edit PROJECT.md Manifest</h3>
-        <div style="display:flex; gap:8px;">
-          <button id="proj-cancel-summary-btn" class="proj-btn">Cancel</button>
-          <button id="proj-save-summary-btn" class="proj-btn primary">Save & Sync</button>
+  // 1. Header & Progress Bar
+  let html = `
+    <div class="proj-overview-header">
+      <div>
+        <h2 style="margin:0 0 4px;">${_esc(p.name)}</h2>
+        <div style="color:var(--fg-muted,#888); font-size:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span>Slug: <code>${_esc(p.slug)}</code></span> &bull; 
+          <span>Priority: <strong>${_esc(p.priority || 'normal')}</strong></span> &bull;
+          <span>Folder: <code>${_esc(struct.folder_path || p.folder_path || 'data/projects/' + p.slug)}</code></span>
         </div>
       </div>
-      <textarea id="proj-summary-textarea" class="proj-summary-editor">${_esc(p.content || '')}</textarea>
+      <div style="display:flex; gap:6px;">
+        <button id="proj-edit-manifest-btn" class="proj-btn" title="Edit Raw Manifest"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> ${_isEditingSummary ? 'Close Editor' : 'Edit Manifest'}</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+        <span>Progress: ${p.task_completed || 0}/${p.task_total || 0} tasks completed</span>
+        <strong>${progress}%</strong>
+      </div>
+      <div class="proj-progress-bar">
+        <div class="proj-progress-fill" style="width: ${progress}%;"></div>
+      </div>
+    </div>
+  `;
+
+  // If user clicked Edit Manifest, show full editor
+  if (_isEditingSummary) {
+    html += `
+      <div style="background:var(--bg-elev,#222); border:1px solid var(--border,#333); border-radius:8px; padding:16px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0; font-size:14px;">Edit PROJECT.md Manifest (YAML + Markdown)</h3>
+          <div style="display:flex; gap:8px;">
+            <button id="proj-cancel-summary-btn" class="proj-btn">Cancel</button>
+            <button id="proj-save-summary-btn" class="proj-btn primary">Save & Sync to Disk</button>
+          </div>
+        </div>
+        <textarea id="proj-summary-textarea" class="proj-summary-editor">${_esc(p.content || '')}</textarea>
+      </div>
     `;
+    container.innerHTML = html;
 
     container.querySelector('#proj-cancel-summary-btn')?.addEventListener('click', () => {
+      _isEditingSummary = false;
+      _renderOverviewTab(container);
+    });
+
+    container.querySelector('#proj-edit-manifest-btn')?.addEventListener('click', () => {
       _isEditingSummary = false;
       _renderOverviewTab(container);
     });
@@ -1026,7 +1259,7 @@ function _renderOverviewTab(container) {
         });
         if (!res.ok) throw new Error('Save failed');
         _isEditingSummary = false;
-        uiModule.showToast('PROJECT.md updated!');
+        uiModule.showToast('PROJECT.md updated and synced!');
         await _loadProjectDetail(p.id);
       } catch (err) {
         uiModule.showError('Save error: ' + err.message);
@@ -1035,39 +1268,193 @@ function _renderOverviewTab(container) {
     return;
   }
 
-  const renderedMarkdown = (markdownModule && markdownModule.render)
-    ? markdownModule.render(p.content || p.description || '*No summary content.*')
-    : `<pre style="white-space:pre-wrap;">${_esc(p.content || p.description || '')}</pre>`;
-
-  container.innerHTML = `
-    <div class="proj-overview-header">
-      <div>
-        <h2 style="margin:0 0 4px;">${_esc(p.name)}</h2>
-        <div style="color:var(--fg-muted,#888); font-size:12px;">
-          Slug: <code>${_esc(p.slug)}</code> &bull; Priority: <strong>${_esc(p.priority || 'normal')}</strong>
-        </div>
-      </div>
-      <button id="proj-edit-summary-btn" class="proj-btn" title="Edit Markdown Body"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Manifest</button>
-    </div>
-
-    <div style="margin-bottom:14px;">
-      <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
-        <span>Progress: ${p.task_completed || 0}/${p.task_total || 0} tasks completed</span>
-        <strong>${progress}%</strong>
-      </div>
-      <div class="proj-progress-bar">
-        <div class="proj-progress-fill" style="width: ${progress}%;"></div>
-      </div>
-    </div>
-
-    <div class="proj-markdown-content">
-      ${renderedMarkdown}
+  // 2. 4-Tier Sub-Tabs Navigation
+  html += `
+    <div class="proj-subtabs">
+      <button class="proj-subtab ${_overviewSubTab === 'overview' ? 'active' : ''}" data-subtab="overview">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 1. Overview & Goals
+      </button>
+      <button class="proj-subtab ${_overviewSubTab === 'extended' ? 'active' : ''}" data-subtab="extended">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg> 2. Extended Look & Architecture
+      </button>
+      <button class="proj-subtab ${_overviewSubTab === 'structure' ? 'active' : ''}" data-subtab="structure">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> 3. Detailed Structure & Files
+      </button>
+      <button class="proj-subtab ${_overviewSubTab === 'spec' ? 'active' : ''}" data-subtab="spec">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> 4. Spec File (${_esc(struct.spec_source || 'SPEC.md')})
+      </button>
     </div>
   `;
 
-  container.querySelector('#proj-edit-summary-btn')?.addEventListener('click', () => {
-    _isEditingSummary = true;
+  // 3. Sub-Tab Content Rendering
+  if (_overviewSubTab === 'overview') {
+    const overviewMd = sections.overview || p.description || '*No executive summary provided.*';
+    html += `
+      <div class="proj-markdown-content">
+        ${_renderMarkdownSafe(overviewMd)}
+      </div>
+    `;
+  } else if (_overviewSubTab === 'extended') {
+    const tech = struct.tech || {};
+    let techBadgesHtml = '';
+    if (tech.npm_package || (tech.dependencies && tech.dependencies.length > 0)) {
+      techBadgesHtml += `
+        <div style="margin-bottom:14px; background:var(--bg,#181818); border:1px solid var(--border,#333); border-radius:6px; padding:12px;">
+          <div style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--accent,#e8a33d); margin-bottom:8px;">Detected Node.js / Web Stack</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            ${tech.npm_package ? `<span class="proj-badge-pill">📦 ${tech.npm_package}</span>` : ''}
+            ${(tech.dependencies || []).map(d => `<span class="proj-badge-pill">${_esc(d)}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+    if (tech.python_requirements && tech.python_requirements.length > 0) {
+      techBadgesHtml += `
+        <div style="margin-bottom:14px; background:var(--bg,#181818); border:1px solid var(--border,#333); border-radius:6px; padding:12px;">
+          <div style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--accent,#e8a33d); margin-bottom:8px;">Python Environment Packages</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            ${tech.python_requirements.map(r => `<span class="proj-badge-pill">🐍 ${_esc(r)}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    const extendedMd = sections.extended || '## System Architecture\n\nComponent workflows, services, and integration parameters are managed in this workspace.';
+    html += `
+      <div class="proj-markdown-content">
+        ${techBadgesHtml}
+        ${_renderMarkdownSafe(extendedMd)}
+      </div>
+    `;
+  } else if (_overviewSubTab === 'structure') {
+    const tree = struct.tree || [];
+    const keyFiles = struct.key_files || [];
+    const tech = struct.tech || {};
+
+    let scriptsHtml = '';
+    if (tech.scripts && Object.keys(tech.scripts).length > 0) {
+      scriptsHtml = `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px; font-weight:600; color:var(--accent,#e8a33d); margin-bottom:6px; text-transform:uppercase;">NPM Execution Scripts</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            ${Object.entries(tech.scripts).map(([k, v]) => `
+              <div style="background:var(--bg,#181818); border:1px solid var(--border,#333); border-radius:6px; padding:6px 10px; font-size:11.5px;">
+                <code>npm run ${k}</code> &rarr; <span style="color:var(--fg-muted,#888);">${_esc(v)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    let keyFilesHtml = '';
+    if (keyFiles.length > 0) {
+      keyFilesHtml = `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px; font-weight:600; color:var(--accent,#e8a33d); margin-bottom:6px; text-transform:uppercase;">Key Documentation & Configuration</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            ${keyFiles.map(kf => `<span class="proj-badge-pill">📄 ${_esc(kf)}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    let treeHtml = '';
+    if (tree.length > 0) {
+      treeHtml = `
+        <div>
+          <div style="font-size:12px; font-weight:600; color:var(--accent,#e8a33d); margin-bottom:6px; text-transform:uppercase;">Workspace File Tree (${tree.length} top-level entries)</div>
+          <div class="proj-tree-grid">
+            ${tree.map(t => `
+              <div class="proj-tree-item ${t.is_dir ? 'is-dir' : ''}">
+                <div class="proj-tree-item-name">
+                  <span>${t.is_dir ? '📁' : '📄'}</span>
+                  <span>${_esc(t.name)}</span>
+                </div>
+                <div class="proj-tree-item-meta">
+                  ${t.is_dir ? (t.children + ' items') : _formatBytes(t.size)}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    const structureMd = sections.structure ? `<div style="margin-top:16px;">${_renderMarkdownSafe(sections.structure)}</div>` : '';
+
+    html += `
+      <div class="proj-markdown-content">
+        ${keyFilesHtml}
+        ${scriptsHtml}
+        ${treeHtml}
+        ${structureMd}
+      </div>
+    `;
+  } else if (_overviewSubTab === 'spec') {
+    const specMd = struct.spec_content || p.content || '# Specification\n\n*No formal spec file detected.*';
+    html += `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <span style="font-size:12px; color:var(--fg-muted,#888);">Source: <code>${_esc(struct.spec_source || 'SPEC.md')}</code></span>
+        <button id="proj-toggle-spec-edit-btn" class="proj-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> ${_isEditingSpec ? 'Preview Spec' : 'Edit Spec'}</button>
+      </div>
+
+      ${_isEditingSpec ? `
+        <textarea id="proj-spec-textarea" class="proj-summary-editor">${_esc(specMd)}</textarea>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+          <button id="proj-cancel-spec-btn" class="proj-btn">Cancel</button>
+          <button id="proj-save-spec-btn" class="proj-btn primary">Save Spec</button>
+        </div>
+      ` : `
+        <div class="proj-markdown-content">
+          ${_renderMarkdownSafe(specMd)}
+        </div>
+      `}
+    `;
+  }
+
+  container.innerHTML = html;
+
+  // Wire Subtabs switching
+  container.querySelectorAll('.proj-subtab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _overviewSubTab = btn.getAttribute('data-subtab');
+      _renderOverviewTab(container);
+    });
+  });
+
+  // Wire Edit Manifest Button
+  container.querySelector('#proj-edit-manifest-btn')?.addEventListener('click', () => {
+    _isEditingSummary = !_isEditingSummary;
     _renderOverviewTab(container);
+  });
+
+  // Wire Spec Edit Toggle & Save
+  container.querySelector('#proj-toggle-spec-edit-btn')?.addEventListener('click', () => {
+    _isEditingSpec = !_isEditingSpec;
+    _renderOverviewTab(container);
+  });
+
+  container.querySelector('#proj-cancel-spec-btn')?.addEventListener('click', () => {
+    _isEditingSpec = false;
+    _renderOverviewTab(container);
+  });
+
+  container.querySelector('#proj-save-spec-btn')?.addEventListener('click', async () => {
+    const text = container.querySelector('#proj-spec-textarea')?.value;
+    try {
+      const res = await fetch(`/api/projects/${p.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text }),
+      });
+      if (!res.ok) throw new Error('Spec save failed');
+      _isEditingSpec = false;
+      uiModule.showToast('Spec saved and synced!');
+      await _loadProjectDetail(p.id);
+    } catch (err) {
+      uiModule.showError('Spec save error: ' + err.message);
+    }
   });
 }
 
@@ -1168,6 +1555,9 @@ function _renderTasksTab(container) {
   const p = _currentProject;
   if (!p) return;
 
+  const manifestTasks = p.tasks || [];
+  const manifestCompletedCount = manifestTasks.filter(t => t.completed).length;
+
   // Filter notes
   let visibleNotes = _projectNotes.filter((n) => {
     if (_noteFilter === 'pinned') return n.pinned;
@@ -1191,6 +1581,42 @@ function _renderTasksTab(container) {
   const otherNotes = visibleNotes.filter((n) => !n.pinned);
 
   container.innerHTML = `
+    <!-- 1. Official Project Manifest Tasks (synced with PROJECT.md) -->
+    <div class="proj-manifest-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h3 style="margin:0; font-size:14px; display:flex; align-items:center; gap:6px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Project Tasks <span style="font-size:11.5px; color:var(--fg-muted,#888); font-weight:normal;">(${manifestCompletedCount}/${manifestTasks.length} done &bull; synced to PROJECT.md)</span>
+        </h3>
+      </div>
+
+      ${manifestTasks.length === 0 ? `
+        <div style="color:var(--fg-muted,#888); font-size:12px; padding:6px 0; font-style:italic;">
+          No checklist tasks defined in PROJECT.md yet. Add one below to sync it to disk!
+        </div>
+      ` : `
+        <div class="proj-manifest-task-list">
+          ${manifestTasks.map(t => `
+            <div class="proj-manifest-task-row ${t.completed ? 'done' : ''}" data-task-id="${_esc(t.id)}">
+              <input type="checkbox" class="proj-manifest-task-checkbox" ${t.completed ? 'checked' : ''} data-task-id="${_esc(t.id)}" />
+              <span class="proj-manifest-task-text">${_esc(t.title)}</span>
+              <button class="proj-card-btn del-btn proj-manifest-del-btn" data-task-id="${_esc(t.id)}" title="Delete task from PROJECT.md">🗑️</button>
+            </div>
+          `).join('')}
+        </div>
+      `}
+
+      <div class="proj-manifest-add-row">
+        <input type="text" id="proj-manifest-new-input" class="proj-manifest-add-input" placeholder="+ Add a new task to PROJECT.md (Press Enter to save)..." />
+        <button id="proj-manifest-new-btn" class="proj-btn primary">+ Add Task</button>
+      </div>
+    </div>
+
+    <!-- 2. Workspace Sticky Notes & Ad-hoc Checklists -->
+    <div style="font-size:13px; font-weight:600; color:var(--fg-muted,#888); text-transform:uppercase; letter-spacing:0.6px; margin: 18px 0 10px;">
+      Workspace Notes & Scratchpad
+    </div>
+
     <!-- Comprehensive Quick-Add Composer -->
     ${!_composerExpanded ? `
       <div class="proj-composer-compact" id="proj-composer-compact" title="Click to add note or checklist">
@@ -1302,6 +1728,86 @@ function _renderTasksTab(container) {
       </div>
     ` : ''}
   `;
+
+  // Wire Manifest Task Checkboxes (synced with PROJECT.md)
+  container.querySelectorAll('.proj-manifest-task-checkbox').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const taskId = cb.getAttribute('data-task-id');
+      const isChecked = cb.checked;
+      try {
+        const res = await fetch(`/api/projects/${p.id}/tasks/${taskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ completed: isChecked }),
+        });
+        if (!res.ok) throw new Error('Task update failed');
+        const task = (p.tasks || []).find(t => t.id === taskId);
+        if (task) task.completed = isChecked;
+        p.task_completed = (p.tasks || []).filter(t => t.completed).length;
+        p.progress = (p.task_total > 0) ? Math.round((p.task_completed / p.task_total) * 100) : 0;
+        _updateHeaderState();
+        _renderTasksTab(container);
+        uiModule.showToast(isChecked ? 'Task marked complete!' : 'Task reopened');
+      } catch (err) {
+        uiModule.showError('Task update error: ' + err.message);
+        cb.checked = !isChecked;
+      }
+    });
+  });
+
+  // Wire Manifest Task Delete
+  container.querySelectorAll('.proj-manifest-del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const taskId = btn.getAttribute('data-task-id');
+      try {
+        const res = await fetch(`/api/projects/${p.id}/tasks/${taskId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Task delete failed');
+        p.tasks = (p.tasks || []).filter(t => t.id !== taskId);
+        p.task_total = p.tasks.length;
+        p.task_completed = p.tasks.filter(t => t.completed).length;
+        p.progress = (p.task_total > 0) ? Math.round((p.task_completed / p.task_total) * 100) : 0;
+        _updateHeaderState();
+        _renderTasksTab(container);
+        uiModule.showToast('Task deleted from PROJECT.md');
+      } catch (err) {
+        uiModule.showError('Delete error: ' + err.message);
+      }
+    });
+  });
+
+  // Wire Manifest Task Add
+  const handleAddManifestTask = async () => {
+    const input = container.querySelector('#proj-manifest-new-input');
+    const title = input?.value.trim();
+    if (!title) return;
+    try {
+      const res = await fetch(`/api/projects/${p.id}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      if (!res.ok) throw new Error('Task creation failed');
+      const data = await res.json();
+      if (!p.tasks) p.tasks = [];
+      p.tasks.push(data.task);
+      p.task_total = p.tasks.length;
+      p.task_completed = p.tasks.filter(t => t.completed).length;
+      p.progress = (p.task_total > 0) ? Math.round((p.task_completed / p.task_total) * 100) : 0;
+      _updateHeaderState();
+      _renderTasksTab(container);
+      uiModule.showToast('Task added to PROJECT.md');
+    } catch (err) {
+      uiModule.showError('Add task error: ' + err.message);
+    }
+  };
+
+  container.querySelector('#proj-manifest-new-btn')?.addEventListener('click', handleAddManifestTask);
+  container.querySelector('#proj-manifest-new-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddManifestTask();
+    }
+  });
 
   // Wire compact composer click
   const compactEl = container.querySelector('#proj-composer-compact');
