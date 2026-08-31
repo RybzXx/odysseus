@@ -139,6 +139,10 @@ function _injectStyles() {
     .proj-progress-fill { background: var(--accent, #e8a33d); height: 100%; transition: width 0.3s ease; }
     .proj-markdown-content { background: var(--bg-elev, #202020); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; line-height: 1.6; }
     .proj-summary-editor { width: 100%; height: 340px; background: var(--input-bg, #181818); color: var(--fg, #eee); border: 1px solid var(--border, #444); border-radius: 8px; padding: 12px; font-family: monospace; font-size: 12px; resize: vertical; }
+    .proj-inline-form { max-width: 380px; margin: 60px auto; text-align: center; }
+    .proj-inline-form label { display: block; color: var(--fg-muted, #888); margin-bottom: 10px; }
+    .proj-inline-input { width: 100%; box-sizing: border-box; background: var(--input-bg, #181818); color: var(--fg, #eee); border: 1px solid var(--border, #444); border-radius: 6px; padding: 8px; font-size: 13px; margin-bottom: 6px; }
+    .proj-inline-form-actions { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
 
     /* Tab: Tasks */
     .proj-task-filter-bar { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; }
@@ -627,48 +631,105 @@ function _renderLinksTab(container) {
   });
 }
 
+// Was window.prompt()-based. Symptom reported live: clicking "+ New Project"
+// produced no dialog at all, in a real browser, not just this session's test
+// harness — prompt()/confirm() are exactly the kind of call a host page,
+// extension, or "prevent additional dialogs" browser state can suppress
+// silently, with the call just returning null. Inline, in-page fields can't
+// be suppressed that way — same reasoning as the Operations panel's note
+// editor earlier this session.
 function _renderNewProjectPrompt() {
-  const name = prompt('Enter New Project Name:');
-  if (!name || !name.trim()) return;
+  const bodyEl = document.getElementById('proj-body');
+  if (!bodyEl) return;
+  bodyEl.innerHTML = `
+    <div class="proj-inline-form">
+      <label for="proj-new-name-input">New project name</label>
+      <input id="proj-new-name-input" type="text" class="proj-inline-input" placeholder="Project name" />
+      <div class="proj-inline-form-actions">
+        <button id="proj-new-save-btn" class="proj-btn primary">Create</button>
+        <button id="proj-new-cancel-btn" class="proj-btn">Cancel</button>
+      </div>
+    </div>`;
 
-  fetch('/api/projects', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name.trim() }),
-  })
-    .then((r) => r.json())
-    .then(async (data) => {
-      uiModule.showToast(`Project '${name}' created!`);
-      await _fetchProjectsList();
-      _currentProjectId = data.project.id;
-      _updateActionButtonsEnabled();
-      await _loadProjectDetail(_currentProjectId);
+  const input = bodyEl.querySelector('#proj-new-name-input');
+  input.focus();
+
+  const restore = () => {
+    if (_currentProjectId) _loadProjectDetail(_currentProjectId);
+    else _renderEmptyState();
+  };
+  bodyEl.querySelector('#proj-new-cancel-btn').addEventListener('click', restore);
+
+  const submit = () => {
+    const name = input.value.trim();
+    if (!name) return;
+    fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
     })
-    .catch((err) => uiModule.showError(err.message));
+      .then((r) => r.json())
+      .then(async (data) => {
+        uiModule.showToast(`Project '${name}' created!`);
+        await _fetchProjectsList();
+        _currentProjectId = data.project.id;
+        _updateActionButtonsEnabled();
+        await _loadProjectDetail(_currentProjectId);
+      })
+      .catch((err) => uiModule.showError(err.message));
+  };
+  bodyEl.querySelector('#proj-new-save-btn').addEventListener('click', submit);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
 }
 
 function _renderAddLinkPrompt(projectId) {
-  const targetType = prompt('Enter link type (operations / email / calendar / document):', 'operations');
-  if (!targetType) return;
-  const targetId = prompt('Enter target identifier (e.g. bookings:1042, acc:INBOX:123, cal_event_uid, doc_id):');
-  if (!targetId) return;
-  const label = prompt('Enter a descriptive label:', targetId);
+  const bodyEl = document.getElementById('proj-body');
+  if (!bodyEl) return;
+  bodyEl.innerHTML = `
+    <div class="proj-inline-form">
+      <label for="proj-link-type-input">Link type (operations / email / calendar / document)</label>
+      <input id="proj-link-type-input" type="text" class="proj-inline-input" value="operations" />
+      <label for="proj-link-id-input">Target identifier (e.g. bookings:1042, acc:INBOX:123, cal_event_uid, doc_id)</label>
+      <input id="proj-link-id-input" type="text" class="proj-inline-input" placeholder="Target identifier" />
+      <label for="proj-link-label-input">Label</label>
+      <input id="proj-link-label-input" type="text" class="proj-inline-input" placeholder="Descriptive label" />
+      <div class="proj-inline-form-actions">
+        <button id="proj-link-save-btn" class="proj-btn primary">Link</button>
+        <button id="proj-link-cancel-btn" class="proj-btn">Cancel</button>
+      </div>
+    </div>`;
 
-  fetch(`/api/projects/${projectId}/links`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      target_type: targetType.trim().toLowerCase(),
-      target_id: targetId.trim(),
-      label: label?.trim() || targetId.trim(),
-    }),
-  })
-    .then((r) => r.json())
-    .then(async () => {
-      uiModule.showToast('Entity linked successfully!');
-      await _loadProjectDetail(projectId);
+  const typeInput = bodyEl.querySelector('#proj-link-type-input');
+  const idInput = bodyEl.querySelector('#proj-link-id-input');
+  const labelInput = bodyEl.querySelector('#proj-link-label-input');
+  idInput.focus();
+
+  bodyEl.querySelector('#proj-link-cancel-btn').addEventListener('click', () => _renderActiveTabContent());
+
+  const submit = () => {
+    const targetType = typeInput.value.trim();
+    const targetId = idInput.value.trim();
+    if (!targetType || !targetId) return;
+    const label = labelInput.value.trim() || targetId;
+
+    fetch(`/api/projects/${projectId}/links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target_type: targetType.toLowerCase(),
+        target_id: targetId,
+        label,
+      }),
     })
-    .catch((err) => uiModule.showError(err.message));
+      .then((r) => r.json())
+      .then(async () => {
+        uiModule.showToast('Entity linked successfully!');
+        await _loadProjectDetail(projectId);
+      })
+      .catch((err) => uiModule.showError(err.message));
+  };
+  bodyEl.querySelector('#proj-link-save-btn').addEventListener('click', submit);
+  labelInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
 }
 
 function loggerError(err) {
