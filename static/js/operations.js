@@ -36,6 +36,7 @@ let _open = false;
 let _modal = null;
 let _rowsByKey = new Map(); // worklist key -> row, for expectedUpdatedAt on drop
 let _lastRows = null; // last successful fetch — reused when switching Board/List so that doesn't refetch
+let _notesByKey = new Map(); // worklist key -> note[], fetched once per open (was: one GET per row)
 let _viewMode = 'board'; // 'board' | 'list'
 let _jkanbanPromise = null;
 let _stylesInjected = false;
@@ -85,7 +86,13 @@ function _injectStyles() {
   const style = document.createElement('style');
   style.id = 'ops-styles';
   style.textContent = `
-    #operations-modal .ops-modal-content { width: min(1100px, 92vw); height: min(680px, 86vh); display: flex; flex-direction: column; }
+    /* overflow:hidden here (both axes, one declaration) overrides the base
+       .modal-content rule (overflow-y:auto only) — that partial rule made
+       the browser treat overflow-x as auto too (CSS overflow interop:
+       "visible" on one axis becomes "auto" when the other isn't visible),
+       giving .modal-content a competing scroll boundary above #ops-kanban's
+       own and clipping the 5th column with no scrollbar ever rendering. */
+    #operations-modal .ops-modal-content { width: min(1100px, 92vw); height: min(680px, 86vh); display: flex; flex-direction: column; overflow: hidden; }
     #operations-modal .modal-body { flex: 1; overflow: hidden; padding: 0; }
     #operations-modal #ops-body { height: 100%; display: flex; flex-direction: column; }
     #operations-modal .ops-loading, #operations-modal .ops-error { padding: 24px; color: var(--fg-muted, #888); }
@@ -93,8 +100,10 @@ function _injectStyles() {
     #operations-modal #ops-kanban.kanban-container { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; white-space: nowrap; padding: 12px; background: var(--bg, #1a1a1a); }
     /* jkanban.min.css floats boards left; a float wraps to a new line once it
        runs out of room instead of overflowing, so the container never scrolls.
-       inline-block boxes respect white-space:nowrap on their container instead. */
-    #operations-modal .kanban-board { display: inline-block; float: none; width: 260px; margin-right: 12px; border-radius: 8px; background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); vertical-align: top; white-space: normal; }
+       inline-flex (inline-level, like inline-block) respects nowrap on the
+       parent, and lets each board be a column flex box internally so its
+       header stays put while .kanban-drag scrolls on its own below. */
+    #operations-modal .kanban-board { display: inline-flex; flex-direction: column; float: none; width: 260px; height: 100%; margin-right: 12px; border-radius: 8px; background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); vertical-align: top; white-space: normal; }
     #operations-modal .ops-view-toggle { display: flex; gap: 4px; margin-left: auto; margin-right: 12px; }
     #operations-modal .ops-view-btn { background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); color: var(--fg-muted, #888); border-radius: 6px; font-size: 11px; padding: 4px 10px; cursor: pointer; }
     #operations-modal .ops-view-btn.active { color: var(--fg, #eee); border-color: var(--accent, #e8a33d); }
@@ -102,10 +111,15 @@ function _injectStyles() {
     #operations-modal .ops-list-table { width: 100%; border-collapse: collapse; font-size: 12px; color: var(--fg, #eee); }
     #operations-modal .ops-list-table th { text-align: left; color: var(--fg-muted, #888); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border, #333); position: sticky; top: 0; background: var(--bg, #1a1a1a); }
     #operations-modal .ops-list-table td { padding: 6px 8px; border-bottom: 1px solid var(--border, #333); vertical-align: top; }
-    #operations-modal .kanban-board header { border-bottom: 1px solid var(--border, #333); }
+    #operations-modal .kanban-board header { border-bottom: 1px solid var(--border, #333); flex-shrink: 0; }
     #operations-modal .kanban-title-board { color: var(--fg, #eee); font-size: 13px; }
     #operations-modal .ops-col-count { color: var(--fg-muted, #888); font-weight: 400; margin-left: 4px; }
-    #operations-modal .kanban-drag { min-height: 120px; }
+    /* The scrollable part of each column — bug was #ops-kanban's own
+       overflow-y:hidden (correct, the row of boards must not grow taller
+       than the modal) with nothing giving the column itself anywhere to
+       scroll internally. flex:1 + min-height:0 + overflow-y:auto here fixes
+       that per-column, independent of the sibling columns' heights. */
+    #operations-modal .kanban-drag { flex: 1; min-height: 0; overflow-y: auto; }
     #operations-modal .kanban-item { background: var(--bg, #1a1a1a); border: 1px solid var(--border, #333); border-radius: 6px; color: var(--fg, #eee); font-size: 12px; white-space: normal; }
     #operations-modal .ops-card-title { font-weight: 600; margin-bottom: 4px; }
     #operations-modal .ops-card-contact { color: var(--fg-dim, #aaa); font-size: 11px; margin-bottom: 4px; }
@@ -115,6 +129,11 @@ function _injectStyles() {
     #operations-modal .ops-card-note b { color: var(--fg, #eee); }
     #operations-modal .kanban-item.ops-card-pending { opacity: 0.6; border-style: dashed; }
     #operations-modal .kanban-item.ops-card-pending::after { content: 'pending approval'; display: block; margin-top: 6px; font-size: 10px; color: var(--accent, #e8a33d); }
+    #operations-modal .ops-note-editor { margin-top: 6px; }
+    #operations-modal .ops-note-editor textarea { width: 100%; box-sizing: border-box; background: var(--bg, #1a1a1a); color: var(--fg, #eee); border: 1px solid var(--border, #333); border-radius: 4px; font: inherit; font-size: 11px; padding: 4px; resize: vertical; }
+    #operations-modal .ops-note-editor-actions { display: flex; gap: 6px; margin-top: 4px; }
+    #operations-modal .ops-note-editor-actions button { font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border, #333); background: var(--bg-elev, #242424); color: var(--fg, #eee); cursor: pointer; }
+    #operations-modal .ops-note-save { border-color: var(--accent, #e8a33d); }
   `;
   document.head.appendChild(style);
 }
@@ -142,11 +161,20 @@ async function _fetchWorklist() {
   return data.items || data.rows || data.worklist || (Array.isArray(data) ? data : []);
 }
 
-async function _fetchNotes(key) {
-  const res = await fetch('/api/operations/notes?key=' + encodeURIComponent(key), { credentials: 'same-origin' });
-  if (!res.ok) return [];
+// One call for every note, grouped client-side — replaces what used to be
+// one GET per visible row (61 concurrent requests on a 61-row worklist).
+// The backend already supports this: `key` on GET /api/operations/notes is
+// optional, and omitting it returns every note.
+async function _fetchAllNotes() {
+  const res = await fetch('/api/operations/notes', { credentials: 'same-origin' });
+  if (!res.ok) return new Map();
   const data = await res.json();
-  return data.notes || [];
+  const map = new Map();
+  for (const n of (data.notes || [])) {
+    if (!map.has(n.key)) map.set(n.key, []);
+    map.get(n.key).push(n);
+  }
+  return map;
 }
 
 async function _postNote(key, text) {
@@ -186,25 +214,54 @@ function _cardHtml(row) {
 
 function _wireNoteButtons(container) {
   container.querySelectorAll('.ops-card-add-note').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const key = btn.dataset.noteKey;
-      const text = window.prompt('Note for ' + key + ':');
-      if (!text) return;
-      try {
-        await _postNote(key, text);
-        _renderNotesFor(key, container);
-      } catch (err) {
-        console.warn('Operations: note save failed', err);
-      }
+      _openNoteEditor(btn, container);
     });
   });
 }
 
-async function _renderNotesFor(key, container) {
+// Inline textarea + Save/Cancel, replacing window.prompt(): a native prompt
+// is a blocking, unstyled modal dialog with no multi-line support — a real
+// UX defect independent of anything else.
+function _openNoteEditor(btn, container) {
+  if (btn.nextElementSibling && btn.nextElementSibling.classList.contains('ops-note-editor')) return;
+  const key = btn.dataset.noteKey;
+  const editor = document.createElement('div');
+  editor.className = 'ops-note-editor';
+  editor.innerHTML = `
+    <textarea rows="2" placeholder="Note…"></textarea>
+    <div class="ops-note-editor-actions">
+      <button type="button" class="ops-note-save">Save</button>
+      <button type="button" class="ops-note-cancel">Cancel</button>
+    </div>`;
+  editor.addEventListener('click', (e) => e.stopPropagation()); // don't start a card drag
+  btn.insertAdjacentElement('afterend', editor);
+  btn.style.display = 'none';
+  const textarea = editor.querySelector('textarea');
+  textarea.focus();
+
+  const close = () => { editor.remove(); btn.style.display = ''; };
+  editor.querySelector('.ops-note-cancel').addEventListener('click', close);
+  editor.querySelector('.ops-note-save').addEventListener('click', async () => {
+    const text = textarea.value.trim();
+    if (!text) { close(); return; }
+    try {
+      const saved = await _postNote(key, text);
+      if (!_notesByKey.has(key)) _notesByKey.set(key, []);
+      _notesByKey.get(key).unshift(saved);
+      _renderNotesFor(key, container);
+      close();
+    } catch (err) {
+      console.warn('Operations: note save failed', err);
+    }
+  });
+}
+
+function _renderNotesFor(key, container) {
   const slot = container.querySelector(`.ops-card-notes[data-notes-for="${CSS.escape(key)}"]`);
   if (!slot) return;
-  const notes = await _fetchNotes(key);
+  const notes = _notesByKey.get(key) || [];
   slot.innerHTML = notes
     .slice(0, 5)
     .map((n) => `<div class="ops-card-note"><b>${_esc(n.author)}:</b> ${_esc(n.text)}</div>`)
@@ -215,19 +272,33 @@ function _markPending(el) {
   el.classList.add('ops-card-pending');
 }
 
+// Recompute each column's header count from what's actually in its
+// .kanban-drag right now. Needed because Dragula moves the card's DOM node
+// on drop before dropEl fires — the header counts (static text set at
+// board-build time) go stale the instant a drag completes, regardless of
+// whether the follow-up status-change request succeeds.
+function _syncColumnCounts(kanbanEl) {
+  kanbanEl.querySelectorAll('.kanban-board').forEach((board) => {
+    const countEl = board.querySelector('.ops-col-count');
+    const drag = board.querySelector('.kanban-drag');
+    if (countEl && drag) countEl.textContent = drag.querySelectorAll('.kanban-item').length;
+  });
+}
+
 async function _render() {
   const body = _modal.querySelector('#ops-body');
   body.innerHTML = '<div class="ops-loading">Loading worklist…</div>';
 
-  let rows;
+  let rows, notesByKey;
   try {
-    [rows] = await Promise.all([_fetchWorklist(), _ensureJKanban()]);
+    [rows, notesByKey] = await Promise.all([_fetchWorklist(), _fetchAllNotes(), _ensureJKanban()]);
   } catch (err) {
     body.innerHTML = `<div class="ops-error">${_esc(err.message)}</div>`;
     return;
   }
 
   _lastRows = rows;
+  _notesByKey = notesByKey;
   _rowsByKey = new Map(rows.map((r) => [r.key, r]));
   _renderCurrentView();
 }
@@ -259,10 +330,20 @@ function _renderBoard(rows, body) {
     element: '#ops-kanban',
     boards,
     dropEl: async (el, target) => {
+      // jKanban's dropEl hands over Dragula's raw drop target, which is the
+      // .kanban-drag item-list div — the board id set via boards[].id lives
+      // as data-id on ITS PARENT (.kanban-board), confirmed by reading
+      // jkanban.min.js's own drop handler (`n.parentNode.dataset.id`).
+      // target.dataset.id is always undefined; this silently no-opped every
+      // drag (no request, no pending state, no error — just a DOM move).
       const key = el.dataset.eid;
-      const newStatus = SLUG_STATUS[target.dataset.id];
+      const newStatus = SLUG_STATUS[target.parentNode?.dataset.id];
       const row = _rowsByKey.get(key);
-      if (!key || !newStatus || !row) return;
+      _syncColumnCounts(kanbanEl); // Dragula already moved the DOM node; counts are stale either way
+      if (!key || !newStatus || !row) {
+        console.warn('Operations: drop ignored — could not resolve key/status/row', { key, newStatus, row });
+        return;
+      }
       _markPending(el);
       try {
         await _postStatus(key, newStatus, row.updatedAt || row.updated_at || null);
@@ -331,6 +412,11 @@ function _getModal() {
       <div class="modal-body"><div id="ops-body"></div></div>
     </div>`;
   document.body.appendChild(_modal);
+  // The template above hardcodes "Board" active; _viewMode persists across a
+  // close (only _lastRows/_notesByKey reset), so without this a reopen after
+  // switching to List renders the List content under a "Board" that still
+  // looks selected.
+  _modal.querySelectorAll('.ops-view-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === _viewMode));
   _modal.querySelector('#ops-close').addEventListener('click', closeOperations);
   _modal.addEventListener('click', (e) => { if (e.target === _modal) closeOperations(); });
   _modal.querySelectorAll('.ops-view-btn').forEach((btn) => {
@@ -367,10 +453,18 @@ export function openOperations() {
 }
 
 function _doClose() {
+  // Unregistering here is load-bearing: without it, ModalManager keeps this
+  // id registered against a DOM node that's about to be removed. The next
+  // click calls Modals.toggle('operations-modal'), which finds the stale
+  // registration and tries to restore/minimize a modal that no longer
+  // exists instead of returning false — so openOperations() never runs and
+  // the first click after a close silently does nothing.
+  Modals.unregister('operations-modal');
   if (_modal) _modal.remove();
   _modal = null;
   _open = false;
   _lastRows = null; // next open fetches fresh rather than showing stale data
+  _notesByKey = new Map();
 }
 
 export function closeOperations() {
