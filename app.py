@@ -857,6 +857,11 @@ logger.info("Webhook & API token routes initialized")
 from routes.note.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handler))
 
+# Operations (Bil Weekend worklist panel — reads/writes the same API
+# mcp_servers/ops_server.py exposes to agents)
+from routes.operations.operations_routes import setup_operations_routes
+app.include_router(setup_operations_routes())
+
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()

@@ -1835,6 +1835,26 @@ class Note(TimestampMixin, Base):
     agent_session_id  = Column(String, nullable=True)
 
 
+class OperationsNote(TimestampMixin, Base):
+    """A note against one Bil Weekend operations worklist key.
+
+    Local to Odysseus rather than synced to Bil Weekend: the worklist itself
+    has no notes field (see my work/OPERATIONSBilWeekend.md's data table), so
+    a local table is the right-sized fix rather than extending a production
+    schema we don't own. `key` matches the `source:id` shape ops_server.py's
+    propose_change already uses, so a note and a worklist row line up without
+    a join into any Bil Weekend data.
+    """
+    __tablename__ = "operations_notes"
+
+    id      = Column(String, primary_key=True, index=True)
+    key     = Column(String, nullable=False, index=True)
+    owner   = Column(String, nullable=True, index=True)
+    author  = Column(String, nullable=False)
+    source  = Column(String, default="user")   # "user" (Odysseus UI) or "agent"
+    text    = Column(Text, nullable=False)
+
+
 class CalendarCal(TimestampMixin, Base):
     """A calendar (e.g. 'Personal', 'TimeTree')."""
     __tablename__ = "calendars"

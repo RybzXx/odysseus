@@ -74,6 +74,10 @@ _BUILTIN_SERVERS = {
     "memory":     ("mcp_servers/memory_server.py",     "Built-in: Memory"),
     "rag":        ("mcp_servers/rag_server.py",        "Built-in: RAG"),
     "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
+    # Bil Weekend operations worklist. Inert without OPS_API_BASE_URL and
+    # OPS_AGENT_TOKEN — every tool reports the missing configuration rather
+    # than failing the connection, so registering it always is safe.
+    "ops":        ("mcp_servers/ops_server.py",        "Built-in: Operations"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)

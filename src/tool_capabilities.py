@@ -330,6 +330,48 @@ _BROWSER_MCP_READ_TOOLS = frozenset(
     }
 )
 
+# --------------------------------------------------------------- ops MCP ----
+#
+# The operations worklist is served in two shapes by mcp_servers/ops_server.py,
+# and they are classified differently because they carry different things.
+#
+# worklist_structural is an allowlist projection with every customer-written
+# field removed by the producing web app: status, operator, dates, age, overdue,
+# and the intake scorer's own verdict. Nothing in it is text an outsider can
+# write, so it is SYSTEM and reading it leaves the run able to act. That claim
+# is only true while the projection stays an allowlist; the web app's
+# scripts/verify-agent-attention.mjs is what holds it to that.
+#
+# worklist_full carries names, emails, phones and request summaries, which are
+# exactly the untrusted input this gate exists for. It arms the gate on success,
+# so a run that reads it can report and nothing else.
+#
+# Classification is per tool rather than per response because
+# McpManager._do_call sets untrusted_content only when isError is true: a server
+# cannot mark a successful response untrusted. Two tools state the same boundary
+# without having to fail a call to state it.
+#
+# propose_change posts a suggestion that changes nothing until an admin accepts
+# it, but it is still a remote write and is classified as one — so it is
+# permitted after worklist_structural and refused after worklist_full.
+_OPS_MCP_STRUCTURAL_READ_TOOLS = frozenset({"mcp__ops__worklist_structural"})
+_OPS_MCP_UNTRUSTED_READ_TOOLS = frozenset({"mcp__ops__worklist_full"})
+_OPS_MCP_WRITE_TOOLS = frozenset({"mcp__ops__propose_change"})
+
+_OPS_MCP_STRUCTURAL_READ_CAPABILITIES = _capabilities(
+    ToolEffect.BROKERED_NETWORK_READ,
+    result_integrity=ResultIntegrity.SYSTEM,
+)
+_OPS_MCP_UNTRUSTED_READ_CAPABILITIES = _capabilities(
+    ToolEffect.BROKERED_NETWORK_READ,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_OPS_MCP_WRITE_CAPABILITIES = _capabilities(
+    ToolEffect.NETWORK_EGRESS,
+    ToolEffect.EXTERNAL_SIDE_EFFECT,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+
 
 def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
     """Return deterministic capabilities; malformed and unknown tools fail high."""
@@ -345,6 +387,12 @@ def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
             return capabilities
     if tool_name in _BROWSER_MCP_READ_TOOLS:
         return _BROWSER_MCP_READ_CAPABILITIES
+    if tool_name in _OPS_MCP_STRUCTURAL_READ_TOOLS:
+        return _OPS_MCP_STRUCTURAL_READ_CAPABILITIES
+    if tool_name in _OPS_MCP_UNTRUSTED_READ_TOOLS:
+        return _OPS_MCP_UNTRUSTED_READ_CAPABILITIES
+    if tool_name in _OPS_MCP_WRITE_TOOLS:
+        return _OPS_MCP_WRITE_CAPABILITIES
     return _UNKNOWN_CAPABILITIES
 
 
