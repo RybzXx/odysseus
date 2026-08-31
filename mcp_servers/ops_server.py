@@ -346,6 +346,33 @@ async def _fetch_merged_worklist() -> list[dict]:
     return rows
 
 
+async def _fetch_full_record(source: str, source_id: str) -> dict | None:
+    """Every field Supabase holds for one request — not the worklist's
+    composed summary, the raw submitted record. For the three jsonb sources
+    that's the whole `data` blob (curated_requests carries the full
+    questionnaire: accommodation, dietary needs, walking comfort, etc. — none
+    of it is in the worklist row); for queue_requests, which is already flat,
+    it's every column. Returns None if the key doesn't resolve to a row.
+    """
+    if source == "queue":
+        rows = await _sb_request("GET", "queue_requests", params={"select": "*", "row_id": f"eq.{source_id}"})
+        return rows[0] if rows else None
+
+    table = _JSONB_SOURCES.get(source, (None,))[0]
+    if not table:
+        return None
+    rows = await _sb_request("GET", table, params={"select": "id,data", "id": f"eq.{source_id}"})
+    if not rows:
+        return None
+    data = rows[0].get("data") or {}
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+    return data
+
+
 def _sort_worklist(rows: list[dict]) -> list[dict]:
     """nextActionDate ascending (undated rows last), then created_at
     (submittedAt) descending — read from operationsWorklist.ts:

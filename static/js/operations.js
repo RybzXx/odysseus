@@ -59,6 +59,8 @@ let _operatorFilter = new Set();
 let _spamOnly = false;
 let _search = '';                 // not persisted across close — matches the real site keeping search local
 let _selectedKeys = new Set();    // Table row selection for bulk moderation — not persisted
+let _openFilterDim = null;        // which filter dropdown ('status'|'flags'|'source'|'operator') is open, or null
+let _filterCloseHandler = null;   // the single outside-click listener that closes an open filter dropdown
 let _jkanbanPromise = null;
 let _stylesInjected = false;
 
@@ -151,8 +153,15 @@ function _injectStyles() {
     /* ---- Table (primary view) ---- */
     #operations-modal .ops-table-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
     #operations-modal .ops-filters { flex-shrink: 0; padding: 10px 14px; border-bottom: 1px solid var(--border, #333); display: flex; flex-direction: column; gap: 6px; }
-    #operations-modal .ops-filter-group { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-    #operations-modal .ops-filter-group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--fg-muted, #888); width: 56px; flex-shrink: 0; }
+    #operations-modal .ops-filters-row1 { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; }
+    #operations-modal .ops-filter-dropdown { position: relative; }
+    #operations-modal .ops-filter-toggle { font-size: 11px; padding: 3px 10px; border-radius: 12px; border: 1px solid var(--border, #333); background: var(--bg-elev, #242424); color: var(--fg-muted, #888); cursor: pointer; }
+    #operations-modal .ops-filter-toggle.active { background: var(--accent, #e8a33d); color: #111; border-color: var(--accent, #e8a33d); }
+    #operations-modal .ops-filter-caret { font-size: 9px; opacity: 0.8; }
+    #operations-modal .ops-filter-panel { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; min-width: 190px; max-height: 260px; overflow-y: auto; background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); border-radius: 8px; padding: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+    #operations-modal .ops-filter-option { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg, #eee); padding: 4px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+    #operations-modal .ops-filter-option:hover { background: var(--bg, #1a1a1a); }
+    #operations-modal .ops-filter-option .ops-chip-count { margin-left: auto; opacity: 0.6; }
     #operations-modal .ops-chip.active { background: var(--accent, #e8a33d); color: #111; border-color: var(--accent, #e8a33d); }
     #operations-modal .ops-chip .ops-chip-count { opacity: 0.7; margin-left: 2px; }
     #operations-modal .ops-filters-row2 { display: flex; align-items: center; gap: 10px; }
@@ -175,6 +184,12 @@ function _injectStyles() {
     #operations-modal .ops-editor-actions { display: flex; gap: 8px; align-items: center; }
     #operations-modal .ops-editor-hint { font-size: 11px; color: var(--fg-muted, #888); }
     #operations-modal .ops-summary-chip { color: var(--fg-muted, #888); font-size: 11px; }
+    #operations-modal .ops-full-detail { margin: 4px 0 10px; border-top: 1px dashed var(--border, #333); padding-top: 8px; }
+    #operations-modal .ops-detail-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    #operations-modal .ops-detail-table td { padding: 3px 6px; border-bottom: 1px solid var(--border, #2a2a2a); vertical-align: top; }
+    #operations-modal .ops-detail-key { color: var(--fg-muted, #888); font-weight: 600; white-space: nowrap; width: 40%; }
+    #operations-modal .ops-detail-val { color: var(--fg, #eee); word-break: break-word; }
+    #operations-modal .ops-detail-json { white-space: pre-wrap; word-break: break-word; font-size: 10px; margin: 0; }
 
     /* Mobile: below 640px, swap the table for a card list — two DOM trees,
        not one reflowed table, matching BookingsManager.tsx's own hidden
@@ -216,6 +231,13 @@ async function _fetchWorklist() {
   if (!res.ok) throw await _errorFromResponse(res, 'Failed to load operations worklist');
   const data = await res.json();
   return data.items || data.rows || data.worklist || (Array.isArray(data) ? data : []);
+}
+
+async function _fetchFullRecord(key) {
+  const res = await fetch('/api/operations/detail?key=' + encodeURIComponent(key), { credentials: 'same-origin' });
+  if (!res.ok) throw await _errorFromResponse(res, 'Failed to load full record');
+  const data = await res.json();
+  return data.record;
 }
 
 async function _fetchAllNotes() {
@@ -353,7 +375,7 @@ function _matchingExcept(pool, except) {
 
 function _notesHtml(key) {
   return `<div class="ops-card-notes" data-notes-for="${_esc(key)}"></div>` +
-    `<button type="button" class="ops-card-add-note" data-note-key="${_esc(key)}" style="margin-top:4px;">+ note</button>`;
+    `<button type="button" class="ops-card-add-note" data-note-key="${_esc(key)}" style="margin-top:4px;">+ agent note</button>`;
 }
 
 function _wireNoteButtons(container) {
@@ -420,6 +442,36 @@ function _operatorOptions() {
   return [...set].sort();
 }
 
+// Full raw record (fetched fresh from Supabase, not the worklist's composed
+// summary) for queue and curated requests — the two sources whose real
+// detail (queue's flat columns; curated's full questionnaire) isn't
+// otherwise on the worklist row at all.
+function _detailRowsHtml(record) {
+  const entries = record && typeof record === 'object' ? Object.entries(record) : [];
+  if (!entries.length) return '<div class="ops-card-meta">Empty record.</div>';
+  return '<table class="ops-detail-table">' + entries.map(([k, v]) => {
+    let display;
+    if (v === null || v === undefined || v === '') display = '<span style="opacity:.5">—</span>';
+    else if (typeof v === 'object') display = `<pre class="ops-detail-json">${_esc(JSON.stringify(v, null, 2))}</pre>`;
+    else display = _esc(String(v));
+    return `<tr><td class="ops-detail-key">${_esc(k)}</td><td class="ops-detail-val">${display}</td></tr>`;
+  }).join('') + '</table>';
+}
+
+function _renderFullDetail(row, wrap) {
+  if (row.source !== 'queue' && row.source !== 'curated') return;
+  const slot = wrap.querySelector('.ops-full-detail');
+  _fetchFullRecord(row.key)
+    .then((record) => {
+      if (!slot.isConnected) return; // editor was closed/replaced before the fetch resolved
+      slot.innerHTML = '<div class="ops-field-label">Full record (live from Supabase)</div>' + _detailRowsHtml(record);
+    })
+    .catch((err) => {
+      if (!slot.isConnected) return;
+      slot.innerHTML = `<div class="ops-field-label">Full record (live from Supabase)</div><div class="ops-error" style="padding:4px 0;">${_esc(err.message)}</div>`;
+    });
+}
+
 function _renderEditor(row, container) {
   const eff = _effectiveRow(row);
   const draft = {
@@ -454,8 +506,9 @@ function _renderEditor(row, container) {
       <button type="button" class="ops-chip ops-editor-cancel">Cancel</button>
       <span class="ops-editor-hint"></span>
     </div>
+    ${(row.source === 'queue' || row.source === 'curated') ? `<div class="ops-full-detail"><div class="ops-field-label">Full record (live from Supabase)</div><div class="ops-loading" style="padding:6px 0;">Loading…</div></div>` : ''}
     <div class="ops-card-notes" data-notes-for="${_esc(row.key)}"></div>
-    <button type="button" class="ops-card-add-note" data-note-key="${_esc(row.key)}">+ note</button>
+    <button type="button" class="ops-card-add-note" data-note-key="${_esc(row.key)}">+ agent note</button>
   `;
   wrap.addEventListener('click', (e) => e.stopPropagation());
 
@@ -497,6 +550,7 @@ function _renderEditor(row, container) {
   _wireNoteButtons(wrap);
   container.appendChild(wrap);
   _renderNotesFor(row.key, wrap);
+  _renderFullDetail(row, wrap);
 }
 
 function _syncViewBadge() {
@@ -628,6 +682,30 @@ async function _renderBoard(rows, body) {
 // Table (primary view) — filters + desktop table + mobile cards.
 // ---------------------------------------------------------------------------
 
+// One filter axis rendered as a toggle button + a checkbox-list popover —
+// replaces the old always-visible chip row. `_openFilterDim` (module state)
+// decides which single dropdown, if any, is expanded; it survives the
+// re-render a checkbox click triggers so picking several values in a row
+// doesn't close the panel.
+function _filterDropdownHtml(dim, label, values, valueLabel, filterSet, countFor) {
+  const activeCount = filterSet.size;
+  const open = _openFilterDim === dim;
+  return `
+    <div class="ops-filter-dropdown">
+      <button type="button" class="ops-filter-toggle${activeCount ? ' active' : ''}" data-toggle-dim="${dim}">
+        ${_esc(label)}${activeCount ? ` (${activeCount})` : ''} <span class="ops-filter-caret">${open ? '▴' : '▾'}</span>
+      </button>
+      ${open ? `<div class="ops-filter-panel">
+        ${values.map((v) => `
+          <label class="ops-filter-option">
+            <input type="checkbox" data-dim="${dim}" data-val="${_esc(v)}" ${filterSet.has(v) ? 'checked' : ''} />
+            <span>${_esc(valueLabel(v))}</span>
+            <span class="ops-chip-count">(${countFor(v)})</span>
+          </label>`).join('')}
+      </div>` : ''}
+    </div>`;
+}
+
 function _filtersHtml(pool) {
   const countingBase = {
     status: _matchingExcept(pool, 'status'),
@@ -647,23 +725,13 @@ function _filtersHtml(pool) {
 
   return `
     <div class="ops-filters">
-      <div class="ops-filter-group">
-        <span class="ops-filter-group-label">Status</span>
+      <div class="ops-filters-row1">
         <button type="button" class="ops-chip${openActive ? ' active' : ''}" data-open-preset="1">Open</button>
-        ${STATUSES.map((s) => `<button type="button" class="ops-chip${_statusFilter.has(s) ? ' active' : ''}" data-dim="status" data-val="${_esc(s)}">${_esc(s)} <span class="ops-chip-count">(${countFor('status', s)})</span></button>`).join('')}
+        ${_filterDropdownHtml('status', 'Status', STATUSES, (v) => v, _statusFilter, (v) => countFor('status', v))}
+        ${_filterDropdownHtml('flags', 'Flags', FLAGS, (v) => FLAG_LABELS[v], _flagFilter, (v) => countFor('flags', v))}
+        ${_filterDropdownHtml('source', 'Source', SOURCES, (v) => SOURCE_LABELS[v], _sourceFilter, (v) => countFor('source', v))}
+        ${operators.length ? _filterDropdownHtml('operator', 'Operator', operators, (v) => v, _operatorFilter, (v) => countFor('operator', v)) : ''}
       </div>
-      <div class="ops-filter-group">
-        <span class="ops-filter-group-label">Flags</span>
-        ${FLAGS.map((f) => `<button type="button" class="ops-chip${_flagFilter.has(f) ? ' active' : ''}" data-dim="flags" data-val="${f}">${_esc(FLAG_LABELS[f])} <span class="ops-chip-count">(${countFor('flags', f)})</span></button>`).join('')}
-      </div>
-      <div class="ops-filter-group">
-        <span class="ops-filter-group-label">Source</span>
-        ${SOURCES.map((s) => `<button type="button" class="ops-chip${_sourceFilter.has(s) ? ' active' : ''}" data-dim="source" data-val="${s}">${_esc(SOURCE_LABELS[s])} <span class="ops-chip-count">(${countFor('source', s)})</span></button>`).join('')}
-      </div>
-      ${operators.length ? `<div class="ops-filter-group">
-        <span class="ops-filter-group-label">Operator</span>
-        ${operators.map((o) => `<button type="button" class="ops-chip${_operatorFilter.has(o) ? ' active' : ''}" data-dim="operator" data-val="${_esc(o)}">${_esc(o)} <span class="ops-chip-count">(${countFor('operator', o)})</span></button>`).join('')}
-      </div>` : ''}
       <div class="ops-filters-row2">
         <input type="text" class="ops-search-input" placeholder="Search name, email, phone, operator…" value="${_esc(_search)}" />
         <button type="button" class="ops-chip${_spamOnly ? ' active' : ''}" id="ops-spam-toggle">Spam</button>
@@ -825,16 +893,36 @@ function _renderTable(body) {
   const bulkClear = body.querySelector('#ops-bulk-clear');
   if (bulkClear) bulkClear.addEventListener('click', () => { _selectedKeys = new Set(); _renderTable(body); });
 
-  // Filter chip wiring
-  body.querySelectorAll('[data-dim]').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      const dim = chip.dataset.dim, val = chip.dataset.val;
+  // Filter dropdown wiring — one open panel at a time (_openFilterDim),
+  // reopened automatically after the re-render a checkbox click triggers.
+  if (_filterCloseHandler) { document.removeEventListener('click', _filterCloseHandler); _filterCloseHandler = null; }
+  body.querySelectorAll('.ops-filter-toggle').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const dim = btn.dataset.toggleDim;
+      _openFilterDim = _openFilterDim === dim ? null : dim;
+      _renderTable(body);
+    });
+  });
+  body.querySelectorAll('.ops-filter-panel input[type="checkbox"]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const dim = cb.dataset.dim, val = cb.dataset.val;
       const set = dim === 'status' ? _statusFilter : dim === 'flags' ? _flagFilter : dim === 'source' ? _sourceFilter : _operatorFilter;
       if (set.has(val)) set.delete(val); else set.add(val);
       _selectedKeys = new Set();
       _renderTable(body);
     });
   });
+  if (_openFilterDim) {
+    _filterCloseHandler = (e) => {
+      if (e.target.closest('.ops-filter-dropdown')) return;
+      _openFilterDim = null;
+      document.removeEventListener('click', _filterCloseHandler);
+      _filterCloseHandler = null;
+      _renderTable(body);
+    };
+    document.addEventListener('click', _filterCloseHandler);
+  }
   const openPreset = body.querySelector('[data-open-preset]');
   if (openPreset) {
     openPreset.addEventListener('click', () => {
@@ -1020,6 +1108,8 @@ function _doClose() {
   _stagedByKey = new Map();
   _selectedKeys = new Set();
   _search = '';
+  _openFilterDim = null;
+  if (_filterCloseHandler) { document.removeEventListener('click', _filterCloseHandler); _filterCloseHandler = null; }
 }
 
 export function closeOperations() {

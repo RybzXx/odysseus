@@ -31,6 +31,7 @@ from core.middleware import require_admin
 from src.auth_helpers import require_user
 from mcp_servers.ops_server import (
     _fetch_merged_worklist,
+    _fetch_full_record,
     _project,
     _config,
     OpsApiError,
@@ -94,6 +95,21 @@ def setup_operations_routes() -> APIRouter:
         except OpsApiError as e:
             raise HTTPException(502, str(e))
         return {"items": _project(rows, "full", status, limit)}
+
+    @router.get("/detail")
+    async def get_full_record(request: Request, key: str):
+        require_admin(request)
+        _require_ops_configured()
+        if ":" not in key:
+            raise HTTPException(422, "key must be 'source:source_id'")
+        source, source_id = key.split(":", 1)
+        try:
+            record = await _fetch_full_record(source, source_id)
+        except OpsApiError as e:
+            raise HTTPException(502, str(e))
+        if record is None:
+            raise HTTPException(404, "No record for that key.")
+        return {"key": key, "record": record}
 
     @router.post("/stage")
     def stage_change(request: Request, body: StagePatch):
