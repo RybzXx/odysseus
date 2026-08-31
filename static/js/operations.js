@@ -42,6 +42,10 @@ const FLAG_LABELS = { overdue: 'Overdue', untouched: 'Untouched', suspected: 'Su
 
 const MODERATIONS = ['flagged', 'spam'];
 
+// Sentinel filter value for "operator is blank" — distinct from any real
+// operator name, which is always a Bil Weekend username.
+const UNASSIGNED_OPERATOR = '__unassigned__';
+
 // One patch field -> its human label, for the Push view's "what changed" line.
 const PATCH_FIELD_LABELS = { status: 'Status', operator: 'Operator', next_action_date: 'Next action', moderation: 'Moderation' };
 
@@ -61,6 +65,8 @@ let _search = '';                 // not persisted across close — matches the 
 let _selectedKeys = new Set();    // Table row selection for bulk moderation — not persisted
 let _openFilterDim = null;        // which filter dropdown ('status'|'flags'|'source'|'operator') is open, or null
 let _filterCloseHandler = null;   // the single outside-click listener that closes an open filter dropdown
+let _agentQueueItems = [];        // requests set aside to hand an agent later — local, never touches Supabase
+let _agentQueueOpen = false;      // whether the Agent queue section (top of Table view) is expanded
 let _jkanbanPromise = null;
 let _stylesInjected = false;
 
@@ -118,6 +124,13 @@ function _injectStyles() {
     #operations-modal .ops-view-btn { background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); color: var(--fg-muted, #888); border-radius: 6px; font-size: 11px; padding: 4px 10px; cursor: pointer; position: relative; }
     #operations-modal .ops-view-btn.active { color: var(--fg, #eee); border-color: var(--accent, #e8a33d); }
     #operations-modal .ops-view-btn .ops-badge { background: var(--accent, #e8a33d); color: #111; border-radius: 8px; font-size: 9px; font-weight: 700; padding: 0 4px; margin-left: 4px; }
+    #operations-modal .ops-refresh-btn { background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); color: var(--fg-muted, #888); border-radius: 6px; font-size: 13px; line-height: 1; padding: 4px 8px; cursor: pointer; margin-right: 8px; }
+    #operations-modal .ops-refresh-btn:hover { color: var(--fg, #eee); }
+
+    /* ---- Agent queue (top of Table view) ---- */
+    #operations-modal .ops-agent-queue { flex-shrink: 0; padding: 8px 14px; border-bottom: 1px solid var(--border, #333); }
+    #operations-modal .ops-agent-queue-table { width: 100%; border-collapse: collapse; font-size: 12px; color: var(--fg, #eee); margin-top: 8px; }
+    #operations-modal .ops-agent-queue-table td { padding: 6px 8px; border-bottom: 1px solid var(--border, #333); vertical-align: top; }
 
     /* ---- Board (secondary view) ---- */
     #operations-modal #ops-kanban { flex: 1; min-height: 0; }
@@ -303,6 +316,33 @@ async function _postPush() {
   return res.json();
 }
 
+async function _fetchAgentQueue() {
+  const res = await fetch('/api/operations/agent-queue', { credentials: 'same-origin' });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.items || [];
+}
+
+async function _postAgentQueueAppend(key, note) {
+  const res = await fetch('/api/operations/agent-queue', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, note }),
+  });
+  if (!res.ok) throw await _errorFromResponse(res, 'Failed to add to agent queue');
+  return res.json();
+}
+
+async function _deleteAgentQueueItem(id) {
+  const res = await fetch('/api/operations/agent-queue/' + encodeURIComponent(id), {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  });
+  if (!res.ok) throw await _errorFromResponse(res, 'Failed to remove agent-queue item');
+  return res.json();
+}
+
 // ---------------------------------------------------------------------------
 // Domain helpers — ported from Bil Weekend's own admin source this session,
 // not invented. See ops_server.py's mirrors of the same logic server-side.
@@ -361,7 +401,10 @@ function _matchesDimension(row, dimension, except) {
   if (dimension === 'status') return _statusFilter.size === 0 || _statusFilter.has(row.status);
   if (dimension === 'flags') return _flagFilter.size === 0 || [...FLAGS].some((f) => _flagFilter.has(f) && _hasFlag(row, f));
   if (dimension === 'source') return _sourceFilter.size === 0 || _sourceFilter.has(row.source);
-  if (dimension === 'operator') return _operatorFilter.size === 0 || (row.operator && _operatorFilter.has(row.operator));
+  if (dimension === 'operator') {
+    if (_operatorFilter.size === 0) return true;
+    return row.operator ? _operatorFilter.has(row.operator) : _operatorFilter.has(UNASSIGNED_OPERATOR);
+  }
   return true;
 }
 
@@ -433,6 +476,53 @@ function _renderNotesFor(key, container) {
 }
 
 // ---------------------------------------------------------------------------
+// "+ agent queue" — appends a request to the Agent queue section at the top
+// of the Table view (Table editor only; the Board's cards keep just notes).
+// Same inline-textarea interaction as _openNoteEditor, but the note here is
+// optional (appending with no comment is the common case) and it writes to
+// _agentQueueItems + _refreshAgentQueueSection rather than the notes store.
+// ---------------------------------------------------------------------------
+
+function _wireAgentQueueButton(wrap, row) {
+  const btn = wrap.querySelector('.ops-card-add-agent-queue');
+  if (!btn) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _openAgentQueueEditor(btn, row);
+  });
+}
+
+function _openAgentQueueEditor(btn, row) {
+  if (btn.nextElementSibling && btn.nextElementSibling.classList.contains('ops-note-editor')) return;
+  const editor = document.createElement('div');
+  editor.className = 'ops-note-editor';
+  editor.innerHTML = `
+    <textarea rows="2" placeholder="Note for your agent (optional)…"></textarea>
+    <div class="ops-note-editor-actions">
+      <button type="button" class="ops-note-save">Add to agent queue</button>
+      <button type="button" class="ops-chip">Cancel</button>
+    </div>`;
+  editor.addEventListener('click', (e) => e.stopPropagation());
+  btn.insertAdjacentElement('afterend', editor);
+  btn.style.display = 'none';
+  const textarea = editor.querySelector('textarea');
+  textarea.focus();
+
+  const close = () => { editor.remove(); btn.style.display = ''; };
+  editor.querySelector('.ops-chip').addEventListener('click', close);
+  editor.querySelector('.ops-note-save').addEventListener('click', async () => {
+    try {
+      const saved = await _postAgentQueueAppend(row.key, textarea.value.trim() || null);
+      _agentQueueItems.push(saved);
+      _refreshAgentQueueSection();
+      close();
+    } catch (err) {
+      console.warn('Operations: agent-queue append failed', err);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Shared expand-in-place editor — status/operator/date/moderation, staged
 // on Save. One component, used from both the Table and (implicitly, via
 // drag) the Board.
@@ -455,6 +545,10 @@ function _isEmptyDetailValue(v) {
   if (v === null || v === undefined || v === '') return true;
   if (Array.isArray(v)) return v.length === 0;
   if (typeof v === 'object') return Object.keys(v).length === 0;
+  // queue_requests stores "Not known" as a literal column value (Bil
+  // Weekend's own placeholder for a field the submitter left blank) rather
+  // than null — same absence of information, so treat it the same way.
+  if (typeof v === 'string' && v.trim().toLowerCase() === 'not known') return true;
   return false;
 }
 
@@ -548,6 +642,7 @@ function _renderEditor(row, container) {
     ${(row.source === 'queue' || row.source === 'curated') ? `<div class="ops-full-detail"><div class="ops-field-label">Full record (live from Supabase)</div><div class="ops-loading" style="padding:6px 0;">Loading…</div></div>` : ''}
     <div class="ops-card-notes" data-notes-for="${_esc(row.key)}"></div>
     <button type="button" class="ops-card-add-note" data-note-key="${_esc(row.key)}">+ agent note</button>
+    <button type="button" class="ops-card-add-agent-queue">+ agent queue</button>
   `;
   wrap.addEventListener('click', (e) => e.stopPropagation());
 
@@ -587,6 +682,7 @@ function _renderEditor(row, container) {
   wrap.querySelector('.ops-editor-cancel').addEventListener('click', () => _renderCurrentView());
 
   _wireNoteButtons(wrap);
+  _wireAgentQueueButton(wrap, row);
   container.appendChild(wrap);
   _renderNotesFor(row.key, wrap);
   _renderFullDetail(row, wrap);
@@ -609,9 +705,11 @@ async function _render() {
   const body = _modal.querySelector('#ops-body');
   body.innerHTML = '<div class="ops-loading">Loading worklist…</div>';
 
-  let rows, notesByKey, stagedByKey;
+  let rows, notesByKey, stagedByKey, agentQueueItems;
   try {
-    [rows, notesByKey, stagedByKey] = await Promise.all([_fetchWorklist(), _fetchAllNotes(), _fetchStaged()]);
+    [rows, notesByKey, stagedByKey, agentQueueItems] = await Promise.all([
+      _fetchWorklist(), _fetchAllNotes(), _fetchStaged(), _fetchAgentQueue(),
+    ]);
   } catch (err) {
     body.innerHTML = `<div class="ops-error">${_esc(err.message)}</div>`;
     return;
@@ -620,6 +718,7 @@ async function _render() {
   _lastRows = rows;
   _notesByKey = notesByKey;
   _stagedByKey = stagedByKey;
+  _agentQueueItems = agentQueueItems;
   _rowsByKey = new Map(rows.map((r) => [r.key, r]));
   _selectedKeys = new Set();
   _renderCurrentView();
@@ -718,6 +817,70 @@ async function _renderBoard(rows, body) {
 }
 
 // ---------------------------------------------------------------------------
+// Agent queue — requests the operator sets aside to hand an agent later.
+// Local bookmark list, pinned above the filters at the top of the Table
+// view. Rebuilt fresh from _agentQueueItems on every call; the toggle and
+// remove buttons are wired by _wireAgentQueueSection right after.
+// ---------------------------------------------------------------------------
+
+function _agentQueueRowHtml(item) {
+  const row = _rowsByKey.get(item.key);
+  const title = row ? (row.name || row.email || item.key) : item.key;
+  return `
+    <tr data-agent-queue-id="${_esc(item.id)}">
+      <td class="ops-card-title">${_esc(title)}</td>
+      <td>${item.note ? _esc(item.note) : '<span style="opacity:.5">—</span>'}</td>
+      <td><button type="button" class="ops-chip ops-agent-queue-remove" data-id="${_esc(item.id)}">Remove</button></td>
+    </tr>`;
+}
+
+function _agentQueueHtml() {
+  const items = _agentQueueItems;
+  const open = _agentQueueOpen;
+  const body = !open ? '' : items.length
+    ? `<table class="ops-agent-queue-table">${items.map(_agentQueueRowHtml).join('')}</table>`
+    : '<div class="ops-card-meta" style="padding:6px 0;">Nothing queued yet — expand a request below and use "+ agent queue".</div>';
+  return `
+    <div class="ops-agent-queue">
+      <button type="button" class="ops-chip ops-agent-queue-toggle">Agent queue (${items.length}) ${open ? '▴' : '▾'}</button>
+      ${body}
+    </div>`;
+}
+
+// Surgical update — replaces only the .ops-agent-queue block in place, so
+// appending/removing an item doesn't tear down whatever else is on screen
+// (in particular, a currently-expanded row's editor).
+function _refreshAgentQueueSection() {
+  if (!_modal) return;
+  const container = _modal.querySelector('.ops-agent-queue');
+  if (!container) return; // Table view isn't the one currently rendered
+  container.outerHTML = _agentQueueHtml();
+  _wireAgentQueueSection(_modal.querySelector('.ops-agent-queue'));
+}
+
+function _wireAgentQueueSection(container) {
+  if (!container) return;
+  const toggle = container.querySelector('.ops-agent-queue-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      _agentQueueOpen = !_agentQueueOpen;
+      _refreshAgentQueueSection();
+    });
+  }
+  container.querySelectorAll('.ops-agent-queue-remove').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await _deleteAgentQueueItem(btn.dataset.id);
+        _agentQueueItems = _agentQueueItems.filter((i) => i.id !== btn.dataset.id);
+        _refreshAgentQueueSection();
+      } catch (err) {
+        console.warn('Operations: agent-queue remove failed', err);
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Table (primary view) — filters + desktop table + mobile cards.
 // ---------------------------------------------------------------------------
 
@@ -756,9 +919,13 @@ function _filtersHtml(pool) {
     if (dim === 'status') return countingBase.status.filter((r) => r.status === value).length;
     if (dim === 'flags') return countingBase.flags.filter((r) => _hasFlag(r, value)).length;
     if (dim === 'source') return countingBase.source.filter((r) => r.source === value).length;
-    return countingBase.operator.filter((r) => r.operator === value).length;
+    return countingBase.operator.filter((r) => value === UNASSIGNED_OPERATOR ? !r.operator : r.operator === value).length;
   };
-  const operators = [...new Set(pool.map((r) => r.operator).filter(Boolean))].sort();
+  // Unassigned always offered, even when the current pool happens to have
+  // no unassigned rows — matches "Open" always being offered regardless of
+  // the current filter state.
+  const operatorValues = [UNASSIGNED_OPERATOR, ...new Set(pool.map((r) => r.operator).filter(Boolean))].sort((a, b) => (a === UNASSIGNED_OPERATOR ? -1 : b === UNASSIGNED_OPERATOR ? 1 : a.localeCompare(b)));
+  const operatorLabel = (v) => v === UNASSIGNED_OPERATOR ? 'No operator assigned' : v;
   const openActive = OPEN_STATUSES.length === _statusFilter.size && OPEN_STATUSES.every((s) => _statusFilter.has(s));
   const anyActive = _statusFilter.size || _flagFilter.size || _sourceFilter.size || _operatorFilter.size || _search;
 
@@ -769,7 +936,7 @@ function _filtersHtml(pool) {
         ${_filterDropdownHtml('status', 'Status', STATUSES, (v) => v, _statusFilter, (v) => countFor('status', v))}
         ${_filterDropdownHtml('flags', 'Flags', FLAGS, (v) => FLAG_LABELS[v], _flagFilter, (v) => countFor('flags', v))}
         ${_filterDropdownHtml('source', 'Source', SOURCES, (v) => SOURCE_LABELS[v], _sourceFilter, (v) => countFor('source', v))}
-        ${operators.length ? _filterDropdownHtml('operator', 'Operator', operators, (v) => v, _operatorFilter, (v) => countFor('operator', v)) : ''}
+        ${_filterDropdownHtml('operator', 'Operator', operatorValues, operatorLabel, _operatorFilter, (v) => countFor('operator', v))}
       </div>
       <div class="ops-filters-row2">
         <input type="text" class="ops-search-input" placeholder="Search name, email, phone, operator…" value="${_esc(_search)}" />
@@ -790,6 +957,7 @@ function _renderTable(body) {
 
   body.innerHTML = `
     <div class="ops-table-view">
+      ${_agentQueueHtml()}
       ${_filtersHtml(pool)}
       <div class="ops-bulk-bar" style="display:${_selectedKeys.size ? 'flex' : 'none'}">
         <span>${_selectedKeys.size} selected</span>
@@ -995,6 +1163,8 @@ function _renderTable(body) {
   const tableWrap = body.querySelector('.ops-table-desktop, .ops-table-mobile');
   if (tableWrap) _wireNoteButtons(tableWrap.parentElement);
   rows.forEach((r) => _renderNotesFor(r.key, body));
+
+  _wireAgentQueueSection(body.querySelector('.ops-agent-queue'));
 }
 
 // ---------------------------------------------------------------------------
@@ -1096,12 +1266,14 @@ function _getModal() {
           <button type="button" class="ops-view-btn active" data-view="table">Table</button>
           <button type="button" class="ops-view-btn" data-view="push">Push</button>
         </div>
+        <button type="button" class="ops-refresh-btn" id="ops-refresh" title="Refresh">⟳</button>
         <button class="close-btn" id="ops-close">✖</button>
       </div>
       <div class="modal-body"><div id="ops-body"></div></div>
     </div>`;
   document.body.appendChild(_modal);
   _modal.querySelectorAll('.ops-view-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === _viewMode));
+  _modal.querySelector('#ops-refresh').addEventListener('click', () => _render());
   _modal.querySelector('#ops-close').addEventListener('click', closeOperations);
   _modal.addEventListener('click', (e) => { if (e.target === _modal) closeOperations(); });
   _modal.querySelectorAll('.ops-view-btn').forEach((btn) => {
@@ -1149,6 +1321,8 @@ function _doClose() {
   _search = '';
   _openFilterDim = null;
   if (_filterCloseHandler) { document.removeEventListener('click', _filterCloseHandler); _filterCloseHandler = null; }
+  _agentQueueItems = [];
+  _agentQueueOpen = false;
 }
 
 export function closeOperations() {
