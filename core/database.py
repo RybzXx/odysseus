@@ -1842,7 +1842,7 @@ class OperationsNote(TimestampMixin, Base):
     has no notes field (see my work/OPERATIONSBilWeekend.md's data table), so
     a local table is the right-sized fix rather than extending a production
     schema we don't own. `key` matches the `source:id` shape ops_server.py's
-    propose_change already uses, so a note and a worklist row line up without
+    stage_change already uses, so a note and a worklist row line up without
     a join into any Bil Weekend data.
     """
     __tablename__ = "operations_notes"
@@ -1853,6 +1853,29 @@ class OperationsNote(TimestampMixin, Base):
     author  = Column(String, nullable=False)
     source  = Column(String, default="user")   # "user" (Odysseus UI) or "agent"
     text    = Column(Text, nullable=False)
+
+
+class OperationsStagedChange(TimestampMixin, Base):
+    """A patch to one worklist key, held locally until a human pushes it.
+
+    Neither a human edit (the panel's expand-in-place editor) nor an agent
+    suggestion writes Supabase directly — both land here first. `patch` is a
+    JSON object over the same fields the worklist merge reads (status/
+    operator/next_action_date/moderation), `expected_updated_at` is the row's
+    updated_at as seen when the change was staged, checked again at push time
+    so a push never overwrites a change made elsewhere in between. `conflict`
+    marks an item a push refused; it stays in the table for the admin to
+    review rather than being silently dropped.
+    """
+    __tablename__ = "operations_staged_changes"
+
+    id                  = Column(String, primary_key=True, index=True)
+    key                 = Column(String, nullable=False, index=True)
+    patch               = Column(Text, nullable=False)  # JSON: subset of status/operator/next_action_date/moderation
+    expected_updated_at = Column(String, nullable=True)
+    author              = Column(String, nullable=False)  # "user:<name>" or "agent:<lane>"
+    rationale           = Column(Text, nullable=True)
+    conflict            = Column(Boolean, default=False)
 
 
 class CalendarCal(TimestampMixin, Base):

@@ -2,21 +2,21 @@
 
 Human-viewable panel over the Bil Weekend operations worklist — the same
 data mcp_servers/ops_server.py exposes to agents. Reuses that module's
-Supabase client and bookings/contacts/curated_requests/queue_requests
-merge (_fetch_merged_worklist/_project/_config) so there is exactly one
-implementation of the worklist, read by both the agent MCP tools and this
-human-facing panel.
+Supabase client, merge, and staging logic so there is exactly one
+implementation of the worklist and exactly one place writes get queued,
+read by both the agent MCP tools and this human-facing panel.
 
 Talks to Supabase directly (SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY), not to
 a Bil Weekend website API — that API was never built. See ops_server.py's
 module docstring for why.
 
-Status-change writes are PAUSED: they targeted the same never-built
-propose_change/proposals endpoint. POST /status returns 501 with an
-explanation rather than doing an unreviewed direct write no one has signed
-off on. Full customer detail (name/email/phone/summary) is requested
-directly — the admin viewing this panel already sees that data in Bil
-Weekend's own admin panel.
+Writes are staged locally, not applied immediately: a human or an agent
+stages a patch (POST /stage), it's reviewable and discardable (GET/DELETE
+/staged), and only a deliberate POST /push actually writes Supabase — in one
+batch, with a per-item optimistic-concurrency check against each item's
+expected_updated_at. Full customer detail (name/email/phone/summary) is
+requested directly for the merged worklist — the admin viewing this panel
+already sees that data in Bil Weekend's own admin panel.
 """
 
 import logging
@@ -35,16 +35,23 @@ from mcp_servers.ops_server import (
     _config,
     OpsApiError,
     _STATUS_ENUM,
-    _PROPOSE_CHANGE_PAUSED,
+    _MODERATION_ENUM,
+    _stage_change,
+    _list_staged,
+    _discard_staged,
+    _push_staged_changes,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class StatusChange(BaseModel):
+class StagePatch(BaseModel):
     key: str
-    status: str
-    expectedUpdatedAt: Optional[str] = None
+    status: Optional[str] = None
+    operator: Optional[str] = None
+    next_action_date: Optional[str] = None
+    moderation: Optional[str] = None
+    expected_updated_at: Optional[str] = None
     rationale: Optional[str] = None
 
 
@@ -88,15 +95,53 @@ def setup_operations_routes() -> APIRouter:
             raise HTTPException(502, str(e))
         return {"items": _project(rows, "full", status, limit)}
 
-    @router.post("/status")
-    async def change_status(request: Request, body: StatusChange):
+    @router.post("/stage")
+    def stage_change(request: Request, body: StagePatch):
         require_admin(request)
-        if body.status not in _STATUS_ENUM:
-            raise HTTPException(422, f"status must be one of {_STATUS_ENUM}")
-        # Paused, not a Supabase call — see _PROPOSE_CHANGE_PAUSED. Left as a
-        # named 501 rather than silently writing operations_followup direct,
-        # since nobody has decided yet whether these writes skip review.
-        raise HTTPException(501, _PROPOSE_CHANGE_PAUSED)
+        user = require_user(request) or "unknown"
+        patch = {}
+        if body.status is not None:
+            if body.status not in _STATUS_ENUM:
+                raise HTTPException(422, f"status must be one of {_STATUS_ENUM}")
+            patch["status"] = body.status
+        if body.operator is not None:
+            patch["operator"] = body.operator or None
+        if body.next_action_date is not None:
+            patch["next_action_date"] = body.next_action_date or None
+        if body.moderation is not None:
+            if body.moderation not in (*_MODERATION_ENUM, ""):
+                raise HTTPException(422, f"moderation must be one of {_MODERATION_ENUM} or empty")
+            patch["moderation"] = body.moderation or None
+        if not patch:
+            raise HTTPException(422, "at least one of status/operator/next_action_date/moderation is required")
+
+        try:
+            return _stage_change(
+                body.key, patch, body.expected_updated_at, f"user:{user}", body.rationale,
+            )
+        except OpsApiError as e:
+            raise HTTPException(422, str(e))
+
+    @router.get("/staged")
+    def list_staged(request: Request):
+        require_admin(request)
+        return {"staged": _list_staged()}
+
+    @router.delete("/staged/{staged_id}")
+    def discard_staged(request: Request, staged_id: str):
+        require_admin(request)
+        if not _discard_staged(staged_id):
+            raise HTTPException(404, "No staged change with that id.")
+        return {"discarded": staged_id}
+
+    @router.post("/push")
+    async def push_staged(request: Request):
+        require_admin(request)
+        _require_ops_configured()
+        try:
+            return await _push_staged_changes()
+        except OpsApiError as e:
+            raise HTTPException(502, str(e))
 
     @router.get("/notes")
     def list_notes(request: Request, key: Optional[str] = None):
