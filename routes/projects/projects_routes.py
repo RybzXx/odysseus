@@ -66,6 +66,11 @@ class LinkCreateRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class TaskSessionRequest(BaseModel):
+    task_id: Optional[str] = None
+    task_title: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Router Definition
 # ---------------------------------------------------------------------------
@@ -378,8 +383,8 @@ def setup_projects_routes() -> APIRouter:
     # -----------------------------------------------------------------------
 
     @router.post("/{project_id}/agent_session")
-    def create_project_agent_session(request: Request, project_id: str):
-        """Spawn a dedicated chat session pre-configured with the project context."""
+    def create_project_agent_session(request: Request, project_id: str, body: Optional[TaskSessionRequest] = None):
+        """Spawn a dedicated chat session pre-configured with the project or task context."""
         owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
@@ -392,9 +397,10 @@ def setup_projects_routes() -> APIRouter:
                 raise HTTPException(404, f"Project {project_id} not found")
 
             session_id = str(uuid.uuid4())
+            session_name = f"Task: {body.task_title}" if (body and body.task_title) else f"Project: {project.name}"
             session = Session(
                 id=session_id,
-                name=f"Project: {project.name}",
+                name=session_name,
                 endpoint_url="",
                 model="",
                 owner=owner,
@@ -403,10 +409,15 @@ def setup_projects_routes() -> APIRouter:
             )
             db.add(session)
             db.flush()
-            project.agent_session_id = session_id
+            if body and body.task_id:
+                task = db.query(ProjectTask).filter(ProjectTask.id == body.task_id).first()
+                if task:
+                    task.agent_session_id = session_id
+            else:
+                project.agent_session_id = session_id
             db.commit()
 
-            return {"session_id": session_id, "project_id": project.id}
+            return {"session_id": session_id, "project_id": project.id, "task_id": body.task_id if body else None}
         finally:
             db.close()
 
