@@ -455,6 +455,10 @@ function _isEmptyDetailValue(v) {
   if (v === null || v === undefined || v === '') return true;
   if (Array.isArray(v)) return v.length === 0;
   if (typeof v === 'object') return Object.keys(v).length === 0;
+  // queue_requests stores "Not known" as a literal column value (Bil
+  // Weekend's own placeholder for a field the submitter left blank) rather
+  // than null — same absence of information, so treat it the same way.
+  if (typeof v === 'string' && v.trim().toLowerCase() === 'not known') return true;
   return false;
 }
 
