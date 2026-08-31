@@ -5,7 +5,6 @@
  * document browsing, and cross-module link management (Operations, Email, Calendar, Docs).
  */
 
-import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
@@ -653,7 +652,12 @@ export function openProjects() {
   _injectStyles();
   _modal = _renderModalSkeleton();
   _open = true;
-  Modals.show('projects-modal');
+  // _renderModalSkeleton() builds the element with class="modal hidden" and
+  // appends it to <body> itself; nothing else ever removed "hidden" — this
+  // called Modals.show(), which modalManager.js has never exported (its
+  // open/close primitives are register/toggle/close), so every open threw
+  // before reaching _fetchProjectsList() and the panel never appeared.
+  _modal.classList.remove('hidden');
   document.getElementById('tool-projects-btn')?.classList.add('active');
   
   _fetchProjectsList().then(() => {
@@ -665,7 +669,7 @@ export function openProjects() {
 
 export function closeProjects() {
   _open = false;
-  Modals.hide('projects-modal');
+  if (_modal) _modal.classList.add('hidden');
   document.getElementById('tool-projects-btn')?.classList.remove('active');
 }
 
