@@ -62,6 +62,9 @@ window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+window.projectsModule = projectsModule;
+window.operationsModule = operationsModule;
+window.notesModule = notesModule;
 
 function _isMobileChatInput() {
   return window.innerWidth <= 768;

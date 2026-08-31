@@ -8,6 +8,7 @@
 import { makeWindowDraggable } from './windowDrag.js';
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
+import { spawnConfetti } from './compare/vote.js';
 
 let _open = false;
 let _modal = null;
@@ -145,13 +146,31 @@ function _injectStyles() {
     .proj-inline-form-actions { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
 
     /* Tab: Tasks */
+    .proj-task-input-bar { display: flex; gap: 8px; margin-bottom: 16px; background: var(--bg-elev, #222); padding: 6px; border-radius: 8px; border: 1px solid var(--border, #333); }
+    .proj-task-input-wrap { flex: 1; display: flex; align-items: center; gap: 8px; background: var(--input-bg, #181818); border: 1px solid var(--border, #444); border-radius: 6px; padding: 0 10px; }
+    .proj-task-input-wrap:focus-within { border-color: var(--accent, #e8a33d); }
+    .proj-task-input { flex: 1; background: transparent; border: none; outline: none; padding: 8px 0; color: var(--fg, #eee); font-size: 13px; }
     .proj-task-filter-bar { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; }
     .proj-task-list { display: flex; flex-direction: column; gap: 8px; }
-    .proj-task-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--bg-elev, #222); border: 1px solid var(--border, #333); border-radius: 6px; }
-    .proj-task-item.completed span { text-decoration: line-through; color: var(--fg-muted, #777); }
-    .proj-task-checkbox { cursor: pointer; width: 16px; height: 16px; }
-    .proj-task-input-bar { display: flex; gap: 8px; margin-bottom: 16px; }
-    .proj-task-input { flex: 1; background: var(--input-bg, #1e1e1e); border: 1px solid var(--border, #444); border-radius: 6px; padding: 8px 12px; color: var(--fg, #eee); font-size: 13px; }
+    .proj-task-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--bg-elev, #222); border: 1px solid var(--border, #333); border-radius: 8px; transition: border-color 0.2s, transform 0.15s; }
+    .proj-task-item:hover { border-color: color-mix(in srgb, var(--accent, #e8a33d) 50%, var(--border, #333)); transform: translateY(-1px); }
+    .proj-check-dot { width: 18px; height: 18px; border-radius: 50%; border: 1.75px solid color-mix(in srgb, var(--fg, #eee) 35%, transparent); background: var(--input-bg, #181818); flex-shrink: 0; position: relative; cursor: pointer; transform-origin: left center; transition: background 0.2s, border-color 0.2s, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1); display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+    .proj-check-dot:hover { border-color: var(--accent, #e8a33d); transform: scale(1.15); }
+    .proj-check-dot:active { transform: scale(0.9); }
+    .proj-check-dot::after { content: ''; position: absolute; left: 50%; top: 45%; width: 7px; height: 3.5px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: translate(-50%, -50%) rotate(-45deg) scale(0); transform-origin: center; transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
+    .proj-task-item.completed .proj-check-dot { background: var(--accent, #e8a33d); border-color: var(--accent, #e8a33d); animation: proj-check-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+    .proj-task-item.completed .proj-check-dot::after { transform: translate(-50%, -50%) rotate(-45deg) scale(1); }
+    @keyframes proj-check-pop { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+    .proj-task-text { flex: 1; font-size: 13px; line-height: 1.4; cursor: text; border-radius: 4px; padding: 2px 6px; transition: opacity 0.2s, background 0.15s; outline: none; word-break: break-word; }
+    .proj-task-text:hover:not([contenteditable="true"]) { background: rgba(255, 255, 255, 0.05); }
+    .proj-task-text[contenteditable="true"] { background: var(--input-bg, #181818); box-shadow: 0 0 0 1.5px var(--accent, #e8a33d); }
+    .proj-task-item.completed .proj-task-text { text-decoration: line-through; color: var(--fg-muted, #777); opacity: 0.6; }
+    .proj-task-actions { display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 0.15s ease; }
+    .proj-task-item:hover .proj-task-actions { opacity: 1; }
+    .proj-task-action-btn { background: transparent; border: none; color: var(--fg-muted, #888); font-size: 13px; padding: 4px 6px; border-radius: 4px; cursor: pointer; transition: all 0.15s; }
+    .proj-task-action-btn:hover { background: var(--border, #3a3a3a); color: var(--fg, #eee); }
+    .proj-task-action-btn.agent-btn:hover { color: var(--accent, #e8a33d); }
+    .proj-task-action-btn.del-btn:hover { color: #e74c3c; }
 
     /* Tab: Documents */
     .proj-docs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
@@ -295,8 +314,14 @@ async function _fetchProjectsList() {
       `).join('');
     }
 
-    if (!_currentProjectId && _projects.length > 0) {
+    if ((!_currentProjectId || !_projects.some((p) => p.id === _currentProjectId)) && _projects.length > 0) {
       _currentProjectId = _projects[0].id;
+    } else if (_projects.length === 0) {
+      _currentProjectId = null;
+    }
+
+    if (selectEl && _currentProjectId) {
+      selectEl.value = _currentProjectId;
     }
   } catch (err) {
     loggerError(err);
@@ -472,6 +497,82 @@ function _renderOverviewTab(container) {
   });
 }
 
+function _startProjectTaskEdit(p, taskId, spanEl) {
+  if (spanEl.isContentEditable) return;
+  const task = (p.tasks || []).find((t) => t.id === taskId);
+  if (!task) return;
+
+  spanEl.textContent = task.title || '';
+  spanEl.contentEditable = "true";
+  spanEl.spellcheck = false;
+  spanEl.focus();
+
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(spanEl);
+  sel.removeAllRanges();
+  sel.addRange(range);
+
+  const save = async () => {
+    if (!spanEl.isContentEditable) return;
+    spanEl.contentEditable = "false";
+    const newTitle = spanEl.textContent.trim();
+    const oldTitle = (task.title || '').trim();
+
+    if (!newTitle) {
+      const idx = (p.tasks || []).findIndex((t) => t.id === taskId);
+      if (idx >= 0) {
+        const removed = p.tasks.splice(idx, 1)[0];
+        p.task_total = Math.max(0, (p.task_total || 0) - 1);
+        if (removed.completed) p.task_completed = Math.max(0, (p.task_completed || 0) - 1);
+        _updateHeaderState();
+        _renderActiveTabContent();
+        try {
+          await fetch(`/api/projects/${p.id}/tasks/${taskId}`, { method: 'DELETE' });
+          await _loadProjectDetail(p.id, true);
+        } catch (err) {
+          uiModule.showError(err.message);
+        }
+      }
+      return;
+    }
+
+    if (newTitle === oldTitle) return;
+
+    task.title = newTitle;
+    _renderActiveTabContent();
+
+    try {
+      const res = await fetch(`/api/projects/${p.id}/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      if (!res.ok) throw new Error('Failed to update task');
+      await _loadProjectDetail(p.id, true);
+    } catch (err) {
+      task.title = oldTitle;
+      _renderActiveTabContent();
+      uiModule.showError('Update failed: ' + err.message);
+    }
+  };
+
+  const onKeydown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      save();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      spanEl.contentEditable = "false";
+      spanEl.textContent = task.title;
+      _renderActiveTabContent();
+    }
+  };
+
+  spanEl.addEventListener('blur', save, { once: true });
+  spanEl.addEventListener('keydown', onKeydown);
+}
+
 function _renderTasksTab(container) {
   const p = _currentProject;
   if (!p) return;
@@ -483,8 +584,13 @@ function _renderTasksTab(container) {
 
   container.innerHTML = `
     <form id="proj-task-form" class="proj-task-input-bar">
-      <input id="proj-new-task-input" type="text" class="proj-task-input" placeholder="Add a new task or checklist item..." autocomplete="off" />
-      <button type="submit" id="proj-add-task-btn" class="proj-btn primary">+ Add Task</button>
+      <div class="proj-task-input-wrap">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--fg-muted,#888); flex-shrink:0;">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+        </svg>
+        <input id="proj-new-task-input" type="text" class="proj-task-input" placeholder="Add a to-do or checklist item... (Press Enter)" autocomplete="off" />
+      </div>
+      <button type="submit" id="proj-add-task-btn" class="proj-btn primary">+ Add</button>
     </form>
 
     <div class="proj-task-filter-bar">
@@ -495,13 +601,16 @@ function _renderTasksTab(container) {
     </div>
 
     <div class="proj-task-list">
-      ${tasks.length === 0 ? '<div style="color:var(--fg-muted,#888); padding:20px; text-align:center;">No tasks found in this view.</div>' : ''}
+      ${tasks.length === 0 ? '<div style="color:var(--fg-muted,#888); padding:30px; text-align:center;">No tasks found in this view.</div>' : ''}
       ${tasks.map((t) => `
         <div class="proj-task-item ${t.completed ? 'completed' : ''}" data-id="${_esc(t.id)}">
-          <input type="checkbox" class="proj-task-checkbox" ${t.completed ? 'checked' : ''} data-id="${_esc(t.id)}" />
-          <span style="flex:1;">${_esc(t.title)}</span>
-          ${t.due_date ? `<span style="font-size:11px; color:var(--fg-muted,#888);">📅 ${_esc(t.due_date)}</span>` : ''}
-          <button type="button" class="proj-btn proj-task-del-btn" data-id="${_esc(t.id)}" title="Delete Task">🗑️</button>
+          <button type="button" class="proj-check-dot" data-id="${_esc(t.id)}" title="${t.completed ? 'Mark uncompleted' : 'Mark completed'}" aria-label="Toggle task completion"></button>
+          <span class="proj-task-text" data-id="${_esc(t.id)}" tabindex="0" title="Click to edit task">${_esc(t.title)}</span>
+          ${t.due_date ? `<span style="font-size:11px; color:var(--fg-muted,#888); flex-shrink:0;">📅 ${_esc(t.due_date)}</span>` : ''}
+          <div class="proj-task-actions">
+            <button type="button" class="proj-task-action-btn agent-btn proj-task-agent-btn" data-id="${_esc(t.id)}" title="Solve with Agent">🤖</button>
+            <button type="button" class="proj-task-action-btn del-btn proj-task-del-btn" data-id="${_esc(t.id)}" title="Delete Task">✕</button>
+          </div>
         </div>
       `).join('')}
     </div>
@@ -515,6 +624,7 @@ function _renderTasksTab(container) {
     const val = inputEl?.value.trim();
     if (!val) return;
     inputEl.value = '';
+    inputEl.focus();
 
     // Optimistic task append
     const tmpId = 'tmp_' + Date.now();
@@ -544,16 +654,29 @@ function _renderTasksTab(container) {
     }
   });
 
-  container.querySelectorAll('.proj-task-checkbox').forEach((cb) => {
-    cb.addEventListener('change', async (e) => {
-      const taskId = e.target.getAttribute('data-id');
-      const isDone = e.target.checked;
+  // Check-dot toggles with confetti
+  container.querySelectorAll('.proj-check-dot').forEach((dot) => {
+    dot.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const taskId = dot.getAttribute('data-id');
       const tObj = (p.tasks || []).find((t) => t.id === taskId);
-      if (tObj) tObj.completed = isDone;
+      if (!tObj) return;
+
+      const isDone = !tObj.completed;
+      tObj.completed = isDone;
       if (isDone) p.task_completed = (p.task_completed || 0) + 1;
       else p.task_completed = Math.max(0, (p.task_completed || 0) - 1);
+
       _updateHeaderState();
       _renderTasksTab(container);
+
+      // Confetti celebration if 100% complete
+      if (isDone && p.task_completed === p.task_total && p.task_total > 0) {
+        const r = dot.getBoundingClientRect();
+        if (typeof spawnConfetti === 'function') {
+          spawnConfetti(r.left + r.width / 2, r.top + r.height / 2, 70);
+        }
+      }
 
       try {
         await fetch(`/api/projects/${p.id}/tasks/${taskId}`, {
@@ -568,14 +691,57 @@ function _renderTasksTab(container) {
     });
   });
 
+  // Inline editing
+  container.querySelectorAll('.proj-task-text').forEach((span) => {
+    span.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const taskId = span.getAttribute('data-id');
+      _startProjectTaskEdit(p, taskId, span);
+    });
+    span.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !span.isContentEditable) {
+        e.preventDefault();
+        const taskId = span.getAttribute('data-id');
+        _startProjectTaskEdit(p, taskId, span);
+      }
+    });
+  });
+
+  // Solve with Agent button
+  container.querySelectorAll('.proj-task-agent-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const taskId = btn.getAttribute('data-id');
+      const tObj = (p.tasks || []).find((t) => t.id === taskId);
+      if (!tObj) return;
+
+      try {
+        uiModule.showToast(`Launching Agent for: "${tObj.title}"...`);
+        const res = await fetch(`/api/projects/${p.id}/agent_session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task_id: taskId, task_title: tObj.title })
+        });
+        if (!res.ok) throw new Error('Failed to launch agent session');
+        const data = await res.json();
+        closeProjects();
+        if (window.sessionModule?.switchSession) {
+          window.sessionModule.switchSession(data.session_id);
+        }
+      } catch (err) {
+        uiModule.showError('Agent launch error: ' + err.message);
+      }
+    });
+  });
+
+  // Delete button
   container.querySelectorAll('.proj-task-del-btn').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const taskId = btn.getAttribute('data-id');
       const idx = (p.tasks || []).findIndex((t) => t.id === taskId);
       if (idx >= 0) {
-        const removed = p.tasks[idx];
-        p.tasks.splice(idx, 1);
+        const removed = p.tasks.splice(idx, 1)[0];
         p.task_total = Math.max(0, (p.task_total || 0) - 1);
         if (removed.completed) p.task_completed = Math.max(0, (p.task_completed || 0) - 1);
         _updateHeaderState();
@@ -591,6 +757,7 @@ function _renderTasksTab(container) {
     });
   });
 
+  // Filter chips
   container.querySelectorAll('.proj-task-filter-bar button').forEach((fb) => {
     fb.addEventListener('click', () => {
       _taskFilter = fb.getAttribute('data-filter');
