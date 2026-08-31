@@ -332,14 +332,14 @@ function _renderEmptyState(tab = _activeTab) {
   bodyEl.querySelector('#proj-empty-new-btn')?.addEventListener('click', () => _renderNewProjectPrompt());
 }
 
-async function _loadProjectDetail(projectId) {
+async function _loadProjectDetail(projectId, silent = false) {
   if (!projectId) {
     _currentProject = null;
     _renderEmptyState();
     return;
   }
   const bodyEl = document.getElementById('proj-body');
-  if (bodyEl) {
+  if (bodyEl && !silent) {
     bodyEl.innerHTML = `<div style="color:var(--fg-muted,#888); text-align:center; padding:40px;">Loading project details...</div>`;
   }
 
@@ -352,7 +352,7 @@ async function _loadProjectDetail(projectId) {
     _updateHeaderState();
     _renderActiveTabContent();
   } catch (err) {
-    if (bodyEl) {
+    if (bodyEl && !silent) {
       bodyEl.innerHTML = `<div style="color:var(--color-danger,#d33); padding:20px;">Error: ${_esc(err.message)}</div>`;
     }
   }
@@ -474,6 +474,7 @@ function _renderOverviewTab(container) {
 
 function _renderTasksTab(container) {
   const p = _currentProject;
+  if (!p) return;
   const tasks = (p.tasks || []).filter((t) => {
     if (_taskFilter === 'active') return !t.completed;
     if (_taskFilter === 'completed') return t.completed;
@@ -481,10 +482,10 @@ function _renderTasksTab(container) {
   });
 
   container.innerHTML = `
-    <div class="proj-task-input-bar">
-      <input id="proj-new-task-input" type="text" class="proj-task-input" placeholder="Add a new task or checklist item..." />
-      <button id="proj-add-task-btn" class="proj-btn primary">+ Add Task</button>
-    </div>
+    <form id="proj-task-form" class="proj-task-input-bar">
+      <input id="proj-new-task-input" type="text" class="proj-task-input" placeholder="Add a new task or checklist item..." autocomplete="off" />
+      <button type="submit" id="proj-add-task-btn" class="proj-btn primary">+ Add Task</button>
+    </form>
 
     <div class="proj-task-filter-bar">
       <span style="font-size:12px; color:var(--fg-muted,#888);">Filter:</span>
@@ -500,18 +501,30 @@ function _renderTasksTab(container) {
           <input type="checkbox" class="proj-task-checkbox" ${t.completed ? 'checked' : ''} data-id="${_esc(t.id)}" />
           <span style="flex:1;">${_esc(t.title)}</span>
           ${t.due_date ? `<span style="font-size:11px; color:var(--fg-muted,#888);">📅 ${_esc(t.due_date)}</span>` : ''}
-          <button class="proj-btn proj-task-del-btn" data-id="${_esc(t.id)}" title="Delete Task">🗑️</button>
+          <button type="button" class="proj-btn proj-task-del-btn" data-id="${_esc(t.id)}" title="Delete Task">🗑️</button>
         </div>
       `).join('')}
     </div>
   `;
 
+  const formEl = container.querySelector('#proj-task-form');
   const inputEl = container.querySelector('#proj-new-task-input');
-  const addBtn = container.querySelector('#proj-add-task-btn');
 
-  const submitNewTask = async () => {
+  formEl?.addEventListener('submit', async (e) => {
+    e.preventDefault();
     const val = inputEl?.value.trim();
     if (!val) return;
+    inputEl.value = '';
+
+    // Optimistic task append
+    const tmpId = 'tmp_' + Date.now();
+    const optTask = { id: tmpId, title: val, completed: false, sort_order: (p.tasks || []).length };
+    if (!p.tasks) p.tasks = [];
+    p.tasks.push(optTask);
+    p.task_total = (p.task_total || 0) + 1;
+    _updateHeaderState();
+    _renderTasksTab(container);
+
     try {
       const res = await fetch(`/api/projects/${p.id}/tasks`, {
         method: 'POST',
@@ -519,29 +532,36 @@ function _renderTasksTab(container) {
         body: JSON.stringify({ title: val }),
       });
       if (!res.ok) throw new Error('Failed to add task');
-      inputEl.value = '';
-      await _loadProjectDetail(p.id);
+      const data = await res.json();
+      if (data.task) optTask.id = data.task.id;
+      await _loadProjectDetail(p.id, true);
     } catch (err) {
       uiModule.showError(err.message);
+      p.tasks = p.tasks.filter((t) => t.id !== tmpId);
+      p.task_total = Math.max(0, (p.task_total || 0) - 1);
+      _updateHeaderState();
+      _renderTasksTab(container);
     }
-  };
-
-  addBtn?.addEventListener('click', submitNewTask);
-  inputEl?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitNewTask();
   });
 
   container.querySelectorAll('.proj-task-checkbox').forEach((cb) => {
     cb.addEventListener('change', async (e) => {
       const taskId = e.target.getAttribute('data-id');
       const isDone = e.target.checked;
+      const tObj = (p.tasks || []).find((t) => t.id === taskId);
+      if (tObj) tObj.completed = isDone;
+      if (isDone) p.task_completed = (p.task_completed || 0) + 1;
+      else p.task_completed = Math.max(0, (p.task_completed || 0) - 1);
+      _updateHeaderState();
+      _renderTasksTab(container);
+
       try {
         await fetch(`/api/projects/${p.id}/tasks/${taskId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ completed: isDone }),
         });
-        await _loadProjectDetail(p.id);
+        await _loadProjectDetail(p.id, true);
       } catch (err) {
         uiModule.showError(err.message);
       }
@@ -550,10 +570,21 @@ function _renderTasksTab(container) {
 
   container.querySelectorAll('.proj-task-del-btn').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const taskId = btn.getAttribute('data-id');
+      const idx = (p.tasks || []).findIndex((t) => t.id === taskId);
+      if (idx >= 0) {
+        const removed = p.tasks[idx];
+        p.tasks.splice(idx, 1);
+        p.task_total = Math.max(0, (p.task_total || 0) - 1);
+        if (removed.completed) p.task_completed = Math.max(0, (p.task_completed || 0) - 1);
+        _updateHeaderState();
+        _renderTasksTab(container);
+      }
+
       try {
         await fetch(`/api/projects/${p.id}/tasks/${taskId}`, { method: 'DELETE' });
-        await _loadProjectDetail(p.id);
+        await _loadProjectDetail(p.id, true);
       } catch (err) {
         uiModule.showError(err.message);
       }

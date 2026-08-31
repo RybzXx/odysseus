@@ -339,6 +339,52 @@ def save_project_content_to_disk(project_id: str, content: str, owner: Optional[
             db.close()
 
 
+def sync_tasks_to_manifest_file(project_id: str, db=None) -> None:
+    """Rewrite the tasks section in PROJECT.md to match current database tasks."""
+    close_db = False
+    if db is None:
+        db = cdb.SessionLocal()
+        close_db = True
+    try:
+        project = db.query(Project).filter((Project.id == project_id) | (Project.slug == project_id)).first()
+        if not project or not project.manifest_path:
+            return
+        manifest_path = Path(project.manifest_path)
+        if not manifest_path.exists():
+            return
+        raw_text = manifest_path.read_text(encoding="utf-8")
+        metadata, body = parse_project_manifest(raw_text)
+
+        tasks = (
+            db.query(ProjectTask)
+            .filter(ProjectTask.project_id == project.id)
+            .order_by(ProjectTask.sort_order.asc())
+            .all()
+        )
+        task_lines = []
+        for t in tasks:
+            mark = "x" if t.completed else " "
+            task_lines.append(f"- [{mark}] {t.title}")
+
+        task_block = "\n".join(task_lines)
+        if re.search(r"^## Active Tasks.*?(?=^## |\Z)", body, flags=re.MULTILINE | re.DOTALL):
+            body = re.sub(
+                r"^## Active Tasks.*?(?=^## |\Z)",
+                f"## Active Tasks\n{task_block}\n\n",
+                body,
+                flags=re.MULTILINE | re.DOTALL,
+            )
+        else:
+            body = f"{body.strip()}\n\n## Active Tasks\n{task_block}\n"
+
+        manifest_path.write_text(serialize_project_manifest(metadata, body), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to sync tasks to manifest file for {project_id}: {e}")
+    finally:
+        if close_db:
+            db.close()
+
+
 # ---------------------------------------------------------------------------
 # Cross-Module Link Resolution
 # ---------------------------------------------------------------------------

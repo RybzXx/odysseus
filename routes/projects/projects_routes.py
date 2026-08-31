@@ -19,6 +19,7 @@ from src.projects_manager import (
     create_project,
     save_project_content_to_disk,
     sync_project_disk_and_db,
+    sync_tasks_to_manifest_file,
     project_to_dict,
 )
 
@@ -227,6 +228,7 @@ def setup_projects_routes() -> APIRouter:
 
             db.commit()
             db.refresh(task)
+            sync_tasks_to_manifest_file(project.id, db=db)
             return {"task": {
                 "id": task.id,
                 "title": task.title,
@@ -267,6 +269,8 @@ def setup_projects_routes() -> APIRouter:
 
             db.commit()
             db.refresh(task)
+            if project:
+                sync_tasks_to_manifest_file(project.id, db=db)
             return {"task": {
                 "id": task.id,
                 "title": task.title,
@@ -295,6 +299,8 @@ def setup_projects_routes() -> APIRouter:
 
             db.delete(task)
             db.commit()
+            if project:
+                sync_tasks_to_manifest_file(project.id, db=db)
             return {"ok": True}
         finally:
             db.close()
