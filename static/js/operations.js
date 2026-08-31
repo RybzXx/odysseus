@@ -26,10 +26,17 @@ const STATUSES = ['New', 'In Progress', 'Replied', 'On Hold', 'Confirmed', 'Reje
 // jKanban board ids can't safely carry spaces; slug for the DOM, map back for the API.
 const STATUS_SLUG = Object.fromEntries(STATUSES.map((s) => [s, s.toLowerCase().replace(/\s+/g, '-')]));
 const SLUG_STATUS = Object.fromEntries(STATUSES.map((s) => [s.toLowerCase().replace(/\s+/g, '-'), s]));
+// Replied requests are the bulk of the worklist and rarely need attention —
+// hidden from both views by default. Not user-configurable yet; that's the
+// obvious next step if one hidden status isn't enough.
+const HIDDEN_STATUSES = new Set(['Replied']);
+const VISIBLE_STATUSES = STATUSES.filter((s) => !HIDDEN_STATUSES.has(s));
 
 let _open = false;
 let _modal = null;
 let _rowsByKey = new Map(); // worklist key -> row, for expectedUpdatedAt on drop
+let _lastRows = null; // last successful fetch — reused when switching Board/List so that doesn't refetch
+let _viewMode = 'board'; // 'board' | 'list'
 let _jkanbanPromise = null;
 let _stylesInjected = false;
 
@@ -83,8 +90,18 @@ function _injectStyles() {
     #operations-modal #ops-body { height: 100%; display: flex; flex-direction: column; }
     #operations-modal .ops-loading, #operations-modal .ops-error { padding: 24px; color: var(--fg-muted, #888); }
     #operations-modal .ops-error { color: var(--color-danger, var(--accent-error, #d33)); }
-    #operations-modal #ops-kanban.kanban-container { flex: 1; overflow-x: auto; overflow-y: hidden; white-space: nowrap; padding: 12px; background: var(--bg, #1a1a1a); }
-    #operations-modal .kanban-board { width: 260px; margin-right: 12px; border-radius: 8px; background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); vertical-align: top; }
+    #operations-modal #ops-kanban.kanban-container { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; white-space: nowrap; padding: 12px; background: var(--bg, #1a1a1a); }
+    /* jkanban.min.css floats boards left; a float wraps to a new line once it
+       runs out of room instead of overflowing, so the container never scrolls.
+       inline-block boxes respect white-space:nowrap on their container instead. */
+    #operations-modal .kanban-board { display: inline-block; float: none; width: 260px; margin-right: 12px; border-radius: 8px; background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); vertical-align: top; white-space: normal; }
+    #operations-modal .ops-view-toggle { display: flex; gap: 4px; margin-left: auto; margin-right: 12px; }
+    #operations-modal .ops-view-btn { background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); color: var(--fg-muted, #888); border-radius: 6px; font-size: 11px; padding: 4px 10px; cursor: pointer; }
+    #operations-modal .ops-view-btn.active { color: var(--fg, #eee); border-color: var(--accent, #e8a33d); }
+    #operations-modal #ops-list { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+    #operations-modal .ops-list-table { width: 100%; border-collapse: collapse; font-size: 12px; color: var(--fg, #eee); }
+    #operations-modal .ops-list-table th { text-align: left; color: var(--fg-muted, #888); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border, #333); position: sticky; top: 0; background: var(--bg, #1a1a1a); }
+    #operations-modal .ops-list-table td { padding: 6px 8px; border-bottom: 1px solid var(--border, #333); vertical-align: top; }
     #operations-modal .kanban-board header { border-bottom: 1px solid var(--border, #333); }
     #operations-modal .kanban-title-board { color: var(--fg, #eee); font-size: 13px; }
     #operations-modal .ops-col-count { color: var(--fg-muted, #888); font-weight: 400; margin-left: 4px; }
@@ -210,11 +227,26 @@ async function _render() {
     return;
   }
 
+  _lastRows = rows;
   _rowsByKey = new Map(rows.map((r) => [r.key, r]));
+  _renderCurrentView();
+}
+
+// Switching Board/List re-renders from _lastRows — no network round trip,
+// since neither view mode nor the Replied filter change what's on the server.
+function _renderCurrentView() {
+  if (!_modal || !_lastRows) return;
+  const body = _modal.querySelector('#ops-body');
+  const rows = _lastRows.filter((r) => !HIDDEN_STATUSES.has(r.status));
+  if (_viewMode === 'list') _renderList(rows, body);
+  else _renderBoard(rows, body);
+}
+
+function _renderBoard(rows, body) {
   body.innerHTML = '<div id="ops-kanban"></div>';
   const kanbanEl = body.querySelector('#ops-kanban');
 
-  const boards = STATUSES.map((status) => {
+  const boards = VISIBLE_STATUSES.map((status) => {
     const rowsInStatus = rows.filter((r) => r.status === status);
     return {
       id: STATUS_SLUG[status],
@@ -245,6 +277,40 @@ async function _render() {
   rows.forEach((r) => _renderNotesFor(r.key, kanbanEl));
 }
 
+// Table view — same data as the board, laid out the way Bil Weekend's own
+// "All Requests" admin view does (a flat list, not a spatial board), but not
+// a clone of it: no per-source-type columns, no built-in sort/filter chrome.
+function _renderList(rows, body) {
+  body.innerHTML = '<div id="ops-list"></div>';
+  const el = body.querySelector('#ops-list');
+  const table = document.createElement('table');
+  table.className = 'ops-list-table';
+  table.innerHTML = `
+    <thead><tr><th>Status</th><th>Request</th><th>Operator</th><th>Updated</th><th>Notes</th></tr></thead>
+    <tbody>
+      ${rows.map((r) => {
+        const contact = [r.name, r.email, r.phone].filter(Boolean).join(' · ');
+        return `
+        <tr>
+          <td>${_esc(r.status)}</td>
+          <td>
+            <div class="ops-card-title">${_esc(r.summary || r.name || r.email || r.key)}</div>
+            ${contact ? `<div class="ops-card-contact">${_esc(contact)}</div>` : ''}
+          </td>
+          <td>${_esc(r.operator || '—')}</td>
+          <td>${_esc((r.updated_at || '').slice(0, 10) || '—')}</td>
+          <td>
+            <div class="ops-card-notes" data-notes-for="${_esc(r.key)}"></div>
+            <button type="button" class="ops-card-add-note" data-note-key="${_esc(r.key)}">+ note</button>
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody>`;
+  el.appendChild(table);
+  _wireNoteButtons(el);
+  rows.forEach((r) => _renderNotesFor(r.key, el));
+}
+
 function _getModal() {
   if (_modal) return _modal;
   _injectStyles();
@@ -256,6 +322,10 @@ function _getModal() {
     <div class="modal-content ops-modal-content">
       <div class="modal-header">
         <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="9.5" y="4" width="5" height="10" rx="1"/><rect x="16" y="4" width="5" height="13" rx="1"/></svg>Operations</h4>
+        <div class="ops-view-toggle">
+          <button type="button" class="ops-view-btn active" data-view="board">Board</button>
+          <button type="button" class="ops-view-btn" data-view="list">List</button>
+        </div>
         <button class="close-btn" id="ops-close">✖</button>
       </div>
       <div class="modal-body"><div id="ops-body"></div></div>
@@ -263,6 +333,13 @@ function _getModal() {
   document.body.appendChild(_modal);
   _modal.querySelector('#ops-close').addEventListener('click', closeOperations);
   _modal.addEventListener('click', (e) => { if (e.target === _modal) closeOperations(); });
+  _modal.querySelectorAll('.ops-view-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      _viewMode = btn.dataset.view;
+      _modal.querySelectorAll('.ops-view-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      _renderCurrentView();
+    });
+  });
   const content = _modal.querySelector('.modal-content');
   const header = _modal.querySelector('.modal-header');
   if (content && header) makeWindowDraggable(_modal, { content, header });
@@ -293,6 +370,7 @@ function _doClose() {
   if (_modal) _modal.remove();
   _modal = null;
   _open = false;
+  _lastRows = null; // next open fetches fresh rather than showing stale data
 }
 
 export function closeOperations() {
