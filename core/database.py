@@ -1878,6 +1878,22 @@ class OperationsStagedChange(TimestampMixin, Base):
     conflict            = Column(Boolean, default=False)
 
 
+class OperationsAgentQueueItem(TimestampMixin, Base):
+    """A worklist key the human operator set aside to hand an agent later.
+
+    Purely a human-facing bookmark list — nothing here reaches Supabase or
+    any agent tool. `key` matches the `source:id` shape every other
+    operations table uses, and `note` is the operator's own reminder of
+    what they want done with it (optional — appending is often enough).
+    """
+    __tablename__ = "operations_agent_queue"
+
+    id        = Column(String, primary_key=True, index=True)
+    key       = Column(String, nullable=False, index=True)
+    note      = Column(Text, nullable=True)
+    added_by  = Column(String, nullable=False)
+
+
 class CalendarCal(TimestampMixin, Base):
     """A calendar (e.g. 'Personal', 'TimeTree')."""
     __tablename__ = "calendars"
