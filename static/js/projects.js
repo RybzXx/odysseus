@@ -26,6 +26,8 @@ let _composerColor = 'default';
 let _composerPinned = false;
 let _composerAttachments = [];
 let _composerChecklistRows = [''];
+let _composerTitle = '';
+let _composerBody = '';
 let _isEditingSummary = false;
 let _stylesInjected = false;
 
@@ -645,24 +647,24 @@ function _renderModalSkeleton() {
         <select id="proj-select" class="proj-select" aria-label="Select Project"></select>
         <span id="proj-status-badge" class="proj-pill active">ACTIVE</span>
         <button id="proj-new-btn" class="proj-btn primary" title="Create Project">+ New Project</button>
-        <button id="proj-sync-btn" class="proj-btn" title="Sync with disk PROJECT.md">🔄 Sync Disk</button>
-        <button id="proj-agent-btn" class="proj-btn" title="Spawn Agent Session">🤖 Agent Session</button>
+        <button id="proj-sync-btn" class="proj-btn" title="Sync with disk PROJECT.md"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21v-5h5"/></svg> Sync Disk</button>
+        <button id="proj-agent-btn" class="proj-btn" title="Spawn Agent Session"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg> Agent Session</button>
         <div style="margin-left:auto; display:flex; gap:6px;">
-          <button id="proj-close-btn" class="proj-btn close-btn" title="Close">✕</button>
+          <button id="proj-close-btn" class="proj-btn close-btn" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
       </div>
       <div class="proj-tabs">
         <button class="proj-tab ${(_activeTab === 'overview') ? 'active' : ''}" data-tab="overview">
-          📋 Overview & Summary
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h8"/><path d="M8 18h4"/></svg> Overview & Summary
         </button>
         <button class="proj-tab ${(_activeTab === 'tasks') ? 'active' : ''}" data-tab="tasks">
-          📝 Notes & To-Dos <span id="proj-tasks-badge" class="proj-tab-badge">0</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Notes & To-Dos <span id="proj-tasks-badge" class="proj-tab-badge">0</span>
         </button>
         <button class="proj-tab ${(_activeTab === 'docs') ? 'active' : ''}" data-tab="docs">
-          📁 Documents & Files
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Documents & Files
         </button>
         <button class="proj-tab ${(_activeTab === 'links') ? 'active' : ''}" data-tab="links">
-          🔗 Linked Work <span id="proj-links-badge" class="proj-tab-badge">0</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> Linked Work <span id="proj-links-badge" class="proj-tab-badge">0</span>
         </button>
       </div>
       <div id="proj-body" class="proj-body">
@@ -763,7 +765,7 @@ async function _fetchProjectsList() {
       selectEl.value = _currentProjectId;
     }
   } catch (err) {
-    loggerError(err);
+    _loggerError(err);
   }
 }
 
@@ -798,7 +800,7 @@ async function _loadProjectDetail(projectId, silent = false) {
     _updateHeaderState();
     _renderActiveTabContent();
   } catch (err) {
-    loggerError(err);
+    _loggerError(err);
     if (body) {
       body.innerHTML = `<div style="color:#e74c3c; text-align:center; padding:40px;">Error: ${_esc(err.message)}</div>`;
     }
@@ -915,7 +917,7 @@ function _renderOverviewTab(container) {
           Slug: <code>${_esc(p.slug)}</code> &bull; Priority: <strong>${_esc(p.priority || 'normal')}</strong>
         </div>
       </div>
-      <button id="proj-edit-summary-btn" class="proj-btn" title="Edit Markdown Body">✏️ Edit Manifest</button>
+      <button id="proj-edit-summary-btn" class="proj-btn" title="Edit Markdown Body"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Manifest</button>
     </div>
 
     <div style="margin-bottom:14px;">
@@ -969,9 +971,9 @@ function _openImageLightbox(url, title = 'Image Preview') {
     <img src="${_esc(url)}" class="lightbox-img" alt="${_esc(title)}" />
     <div class="lightbox-bar">
       <span style="font-weight:600; font-size:13px;">${_esc(title)}</span>
-      <a href="${_esc(url)}" download="${_esc(title)}" class="proj-btn" style="text-decoration:none;">⬇️ Download</a>
-      <button id="lightbox-copy-btn" class="proj-btn">🔗 Copy Link</button>
-      <button id="lightbox-close-btn" class="proj-btn close-btn" style="background:#e74c3c; color:#fff; border:none;">✕ Close</button>
+      <a href="${_esc(url)}" download="${_esc(title)}" class="proj-btn" style="text-decoration:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download</a>
+      <button id="lightbox-copy-btn" class="proj-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> Copy Link</button>
+      <button id="lightbox-close-btn" class="proj-btn close-btn" style="background:#e74c3c; color:#fff; border:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Close</button>
     </div>
   `;
 
@@ -997,12 +999,12 @@ function _openDocumentViewer(url, title = 'Document Viewer', mime = '') {
     <div class="doc-viewer-card">
       <div class="doc-viewer-header">
         <div style="font-weight:600; font-size:13.5px; display:flex; align-items:center; gap:8px;">
-          <span>${isPdf ? '📄' : '📝'}</span>
+          <span>${isPdf ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15h6"/><path d="M9 11h6"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>'}</span>
           <span>${_esc(title)}</span>
         </div>
         <div style="display:flex; gap:8px;">
-          <a href="${_esc(url)}" download="${_esc(title)}" class="proj-btn" style="text-decoration:none;">⬇️ Download</a>
-          <button id="doc-viewer-close-btn" class="proj-btn close-btn">✕</button>
+          <a href="${_esc(url)}" download="${_esc(title)}" class="proj-btn" style="text-decoration:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download</a>
+          <button id="doc-viewer-close-btn" class="proj-btn close-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
       </div>
       <div class="doc-viewer-body" id="doc-viewer-body">
@@ -1067,20 +1069,20 @@ function _renderTasksTab(container) {
         </svg>
         <span style="color:var(--fg-muted,#888); font-size:13px;">Take a note, create a checklist, or attach files...</span>
         <div style="margin-left:auto; display:flex; gap:6px;">
-          <button type="button" class="proj-card-btn" data-mode="todo" title="New checklist">✓</button>
-          <button type="button" class="proj-card-btn" data-mode="note" title="New note">📝</button>
-          <button type="button" class="proj-card-btn" data-mode="file" title="Attach file">📎</button>
+          <button type="button" class="proj-card-btn" data-mode="todo" title="New checklist"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
+          <button type="button" class="proj-card-btn" data-mode="note" title="New note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+          <button type="button" class="proj-card-btn" data-mode="file" title="Attach file"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
         </div>
       </div>
     ` : `
       <div class="proj-composer-box">
         <div class="proj-composer-types">
-          <button type="button" class="proj-type-pill ${_composerType === 'note' ? 'active' : ''}" data-type="note">📝 Note</button>
-          <button type="button" class="proj-type-pill ${_composerType === 'todo' ? 'active' : ''}" data-type="todo">✓ Checklist</button>
-          <button type="button" class="proj-type-pill ${_composerType === 'file' ? 'active' : ''}" data-type="file">📎 Attach File</button>
+          <button type="button" class="proj-type-pill ${_composerType === 'note' ? 'active' : ''}" data-type="note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Note</button>
+          <button type="button" class="proj-type-pill ${_composerType === 'todo' ? 'active' : ''}" data-type="todo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Checklist</button>
+          <button type="button" class="proj-type-pill ${_composerType === 'file' ? 'active' : ''}" data-type="file"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> Attach File</button>
         </div>
 
-        <input id="proj-comp-title-input" type="text" class="proj-comp-title" placeholder="${_composerType === 'todo' ? 'Checklist Title (e.g. Sprint Launch Tasks)...' : 'Note Title (e.g. Architecture Decisions)...'}" />
+        <input id="proj-comp-title-input" type="text" class="proj-comp-title" placeholder="${_composerType === 'todo' ? 'Checklist Title (e.g. Sprint Launch Tasks)...' : 'Note Title (e.g. Architecture Decisions)...'}" value="${_esc(_composerTitle)}" />
 
         ${_composerType === 'note' ? `
           <textarea id="proj-comp-content-input" class="proj-comp-content" placeholder="Take a note, write specifications, or paste references..."></textarea>
@@ -1099,7 +1101,7 @@ function _renderTasksTab(container) {
 
         ${_composerType === 'file' ? `
           <div id="proj-comp-dropzone" class="proj-comp-dropzone">
-            <div style="font-size:24px; margin-bottom:6px;">📎</div>
+            <div style="margin-bottom:6px;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="opacity:0.7;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></div>
             <div style="font-weight:600; margin-bottom:4px;">Drag & Drop files here or click to browse</div>
             <div style="color:var(--fg-muted,#888); font-size:11px;">Supports Images, PDFs, Documents, Code files, Audio</div>
             <input type="file" id="proj-comp-file-input" multiple style="display:none;" />
@@ -1113,7 +1115,7 @@ function _renderTasksTab(container) {
               <div class="proj-comp-att-chip">
                 <span>${_isImageMime(att.mime_type, att.filename) ? '🖼️' : '📄'}</span>
                 <span>${_esc(att.filename)} (${_formatBytes(att.size)})</span>
-                <span class="remove-att" data-idx="${idx}">✕</span>
+                <span class="remove-att" data-idx="${idx}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
               </div>
             `).join('')}
           </div>
@@ -1141,12 +1143,12 @@ function _renderTasksTab(container) {
 
     <!-- Filter & Search Bar -->
     <div class="proj-filter-bar">
-      <input type="text" id="proj-note-search" class="proj-search-input" placeholder="🔍 Search notes & tasks..." value="${_esc(_noteSearchQuery)}" />
+      <input type="text" id="proj-note-search" class="proj-search-input" placeholder="Search notes & tasks..." value="${_esc(_noteSearchQuery)}" />
       <button class="proj-btn ${_noteFilter === 'all' ? 'primary' : ''}" data-filter="all">All (${_projectNotes.length})</button>
-      <button class="proj-btn ${_noteFilter === 'pinned' ? 'primary' : ''}" data-filter="pinned">📌 Pinned (${_projectNotes.filter((n) => n.pinned).length})</button>
-      <button class="proj-btn ${_noteFilter === 'checklist' ? 'primary' : ''}" data-filter="checklist">✓ Checklists</button>
-      <button class="proj-btn ${_noteFilter === 'note' ? 'primary' : ''}" data-filter="note">📝 Notes</button>
-      <button class="proj-btn ${_noteFilter === 'files' ? 'primary' : ''}" data-filter="files">📎 Files</button>
+      <button class="proj-btn ${_noteFilter === 'pinned' ? 'primary' : ''}" data-filter="pinned"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg> Pinned (${_projectNotes.filter((n) => n.pinned).length})</button>
+      <button class="proj-btn ${_noteFilter === 'checklist' ? 'primary' : ''}" data-filter="checklist"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Checklists</button>
+      <button class="proj-btn ${_noteFilter === 'note' ? 'primary' : ''}" data-filter="note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Notes</button>
+      <button class="proj-btn ${_noteFilter === 'files' ? 'primary' : ''}" data-filter="files"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> Files</button>
     </div>
 
     <!-- Notes Masonry Grid -->
@@ -1157,7 +1159,7 @@ function _renderTasksTab(container) {
     ` : ''}
 
     ${pinnedNotes.length > 0 ? `
-      <div class="proj-section-title">📌 Pinned</div>
+      <div class="proj-section-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg> Pinned</div>
       <div class="proj-notes-grid">
         ${pinnedNotes.map((n) => _renderNoteCardHtml(n)).join('')}
       </div>
@@ -1197,6 +1199,7 @@ function _renderTasksTab(container) {
   // Wire composer mode switches
   container.querySelectorAll('.proj-type-pill').forEach((pill) => {
     pill.addEventListener('click', () => {
+      _saveComposerState(container);
       _composerType = pill.getAttribute('data-type');
       _renderTasksTab(container);
     });
@@ -1205,6 +1208,7 @@ function _renderTasksTab(container) {
   // Wire composer color selection
   container.querySelectorAll('.proj-color-dot').forEach((dot) => {
     dot.addEventListener('click', () => {
+      _saveComposerState(container);
       _composerColor = dot.getAttribute('data-color');
       _renderTasksTab(container);
     });
@@ -1355,13 +1359,20 @@ function _renderTasksTab(container) {
   // Search filter
   const searchInput = container.querySelector('#proj-note-search');
   searchInput?.addEventListener('input', () => {
+    _saveComposerState(container);
     _noteSearchQuery = searchInput.value;
     _renderTasksTab(container);
+    const newSearch = container.querySelector('#proj-note-search');
+    if (newSearch) {
+      newSearch.focus();
+      newSearch.setSelectionRange(_noteSearchQuery.length, _noteSearchQuery.length);
+    }
   });
 
   // Filter buttons
   container.querySelectorAll('.proj-filter-bar button[data-filter]').forEach((btn) => {
     btn.addEventListener('click', () => {
+      _saveComposerState(container);
       _noteFilter = btn.getAttribute('data-filter');
       _renderTasksTab(container);
     });
@@ -1396,11 +1407,11 @@ function _renderNoteCardHtml(note) {
         <div class="proj-note-toolbar">
           <button type="button" class="proj-card-btn pin-btn ${note.pinned ? 'active' : ''}" data-id="${_esc(note.id)}" title="${note.pinned ? 'Unpin' : 'Pin to top'}">📌</button>
           <label class="proj-card-btn" title="Attach file" style="cursor:pointer;">
-            📎
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
             <input type="file" class="proj-card-attach-input" data-id="${_esc(note.id)}" multiple style="display:none;" />
           </label>
-          <button type="button" class="proj-card-btn agent-btn proj-card-agent-btn" data-id="${_esc(note.id)}" title="Solve with Agent">🤖</button>
-          <button type="button" class="proj-card-btn del-btn proj-card-del-btn" data-id="${_esc(note.id)}" title="Delete Note">🗑️</button>
+          <button type="button" class="proj-card-btn agent-btn proj-card-agent-btn" data-id="${_esc(note.id)}" title="Solve with Agent"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></button>
+          <button type="button" class="proj-card-btn del-btn proj-card-del-btn" data-id="${_esc(note.id)}" title="Delete Note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>
       </div>
 
@@ -1410,7 +1421,7 @@ function _renderNoteCardHtml(note) {
             <div class="proj-note-check-item ${(it.done || it.checked) ? 'done' : ''}" data-idx="${idx}">
               <button type="button" class="proj-check-dot proj-card-check-dot" data-note-id="${_esc(note.id)}" data-idx="${idx}" title="Toggle completed"></button>
               <span class="proj-check-text" data-note-id="${_esc(note.id)}" data-idx="${idx}" tabindex="0">${_esc(it.text || '')}</span>
-              <button type="button" class="proj-card-btn del-btn proj-del-item-btn" data-note-id="${_esc(note.id)}" data-idx="${idx}" title="Remove item" style="padding:0 3px; font-size:10px; opacity:0.5;">✕</button>
+              <button type="button" class="proj-card-btn del-btn proj-del-item-btn" data-note-id="${_esc(note.id)}" data-idx="${idx}" title="Remove item" style="padding:0 3px; font-size:10px; opacity:0.5;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
           `).join('')}
           <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
@@ -1418,7 +1429,7 @@ function _renderNoteCardHtml(note) {
           </div>
           ${totalCount > 0 ? `
             <div style="font-size:11px; color:var(--fg-muted,#888); margin-top:2px;">
-              ✓ ${completedCount}/${totalCount} completed
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> ${completedCount}/${totalCount} completed
             </div>
           ` : ''}
         </div>
@@ -1442,7 +1453,7 @@ function _renderNoteCardHtml(note) {
             return `
               <div class="proj-att-file-chip" data-url="${_esc(att.url)}" data-title="${_esc(att.filename)}" data-mime="${_esc(att.mime_type || '')}" title="Click to view document">
                 <div class="proj-att-file-info">
-                  <span>${isPdf ? '📄' : '📝'}</span>
+                  <span>${isPdf ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15h6"/><path d="M9 11h6"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>'}</span>
                   <span class="proj-att-file-name">${_esc(att.filename)}</span>
                 </div>
                 <span style="color:var(--fg-muted,#888); font-size:10px;">${_formatBytes(att.size)}</span>
@@ -1488,6 +1499,54 @@ function _wireNoteCards(container, project) {
       }
     });
   });
+
+  
+  // Inline edit checklist text
+  container.querySelectorAll('.proj-check-text').forEach((el) => {
+    el.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      el.setAttribute('contenteditable', 'true');
+      el.focus();
+      
+      // Select all text on edit
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
+
+    el.addEventListener('blur', async (e) => {
+      if (el.getAttribute('contenteditable') !== 'true') return;
+      el.removeAttribute('contenteditable');
+      const noteId = el.getAttribute('data-note-id');
+      const idx = parseInt(el.getAttribute('data-idx'));
+      const text = el.innerText.trim();
+      const note = _projectNotes.find((n) => n.id === noteId);
+      if (note && Array.isArray(note.items) && note.items[idx]) {
+        if (note.items[idx].text !== text) {
+          note.items[idx].text = text;
+          try {
+            await fetch(`/api/notes/${noteId}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ items: note.items }),
+            });
+          } catch (err) {
+            if(window.uiModule) window.uiModule.showError(err.message);
+          }
+        }
+      }
+    });
+
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        el.blur();
+      }
+    });
+  });
+
 
   // Add checklist item inline on card
   container.querySelectorAll('.proj-card-add-item-input').forEach((input) => {
@@ -1649,6 +1708,7 @@ function _wireNoteCards(container, project) {
   container.querySelectorAll('.proj-card-del-btn').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
+      if (!confirm('Are you sure you want to delete this note?')) return;
       const noteId = btn.getAttribute('data-id');
       const idx = _projectNotes.findIndex((n) => n.id === noteId);
       if (idx >= 0) {
@@ -1682,22 +1742,22 @@ function _renderDocsTab(container) {
 
     <div class="proj-docs-grid">
       <div class="proj-doc-card" id="proj-open-manifest-card">
-        <div style="font-size:24px; margin-bottom:6px;">📄</div>
+        <div style="margin-bottom:6px;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="opacity:0.7;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></div>
         <div style="font-weight:600; font-size:13px; margin-bottom:4px;">PROJECT.md</div>
         <div style="font-size:11px; color:var(--fg-muted,#888);">Living Spec & Manifest</div>
       </div>
       <div class="proj-doc-card">
-        <div style="font-size:24px; margin-bottom:6px;">📁</div>
+        <div style="margin-bottom:6px;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="opacity:0.7;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
         <div style="font-weight:600; font-size:13px; margin-bottom:4px;">docs/</div>
         <div style="font-size:11px; color:var(--fg-muted,#888);">Reference Documentation</div>
       </div>
       <div class="proj-doc-card">
-        <div style="font-size:24px; margin-bottom:6px;">📁</div>
+        <div style="margin-bottom:6px;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="opacity:0.7;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
         <div style="font-weight:600; font-size:13px; margin-bottom:4px;">tasks/</div>
         <div style="font-size:11px; color:var(--fg-muted,#888);">Detailed Task Specs</div>
       </div>
       <div class="proj-doc-card">
-        <div style="font-size:24px; margin-bottom:6px;">📁</div>
+        <div style="margin-bottom:6px;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="opacity:0.7;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
         <div style="font-weight:600; font-size:13px; margin-bottom:4px;">logs/</div>
         <div style="font-size:11px; color:var(--fg-muted,#888);">Agent Execution Runs</div>
       </div>
@@ -1733,7 +1793,7 @@ function _renderLinksTab(container) {
         <div class="proj-link-card">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <span class="proj-link-type-badge">${_esc(l.target_type)}</span>
-            <button class="proj-btn proj-del-link-btn" data-id="${_esc(l.id)}" title="Unlink" style="padding:2px 6px;">✕</button>
+            <button class="proj-btn proj-del-link-btn" data-id="${_esc(l.id)}" title="Unlink" style="padding:2px 6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
           <div style="font-weight:600; font-size:13px;">${_esc(l.label)}</div>
           <div class="proj-link-target">${_esc(l.target_id)}</div>
@@ -1883,8 +1943,8 @@ function _renderAddLinkInlineForm() {
   });
 }
 
-function loggerError(err) {
-  console.error('[Projects]', err);
+function _loggerError(err) {
+  _loggerError('[Projects]', err);
 }
 
 // ---------------------------------------------------------------------------
