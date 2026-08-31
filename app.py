@@ -941,6 +941,14 @@ async def serve_gallery(request: Request):
 async def serve_tasks(request: Request):
     return await serve_index(request)
 
+@app.get("/projects")
+async def serve_projects(request: Request):
+    return await serve_index(request)
+
+@app.get("/operations")
+async def serve_operations(request: Request):
+    return await serve_index(request)
+
 @app.get("/library")
 async def serve_library(request: Request):
     return await serve_index(request)
