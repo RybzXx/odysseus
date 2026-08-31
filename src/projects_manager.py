@@ -385,6 +385,65 @@ def sync_tasks_to_manifest_file(project_id: str, db=None) -> None:
             db.close()
 
 
+def sync_notes_to_manifest_file(project_id: str, db=None) -> None:
+    """Rewrite the notes and attachment sections in PROJECT.md to match database notes."""
+    close_db = False
+    if db is None:
+        db = cdb.SessionLocal()
+        close_db = True
+    try:
+        project = db.query(Project).filter((Project.id == project_id) | (Project.slug == project_id)).first()
+        if not project or not project.manifest_path:
+            return
+        manifest_path = Path(project.manifest_path)
+        if not manifest_path.exists():
+            return
+        raw_text = manifest_path.read_text(encoding="utf-8")
+        metadata, body = parse_project_manifest(raw_text)
+
+        from core.database import Note
+        notes = (
+            db.query(Note)
+            .filter(Note.project_id == project.id, Note.archived == False)
+            .order_by(Note.pinned.desc(), Note.sort_order.asc(), Note.updated_at.desc())
+            .all()
+        )
+
+        note_blocks = []
+        for n in notes:
+            if n.note_type == "checklist" and n.items:
+                try:
+                    items = json.loads(n.items) if isinstance(n.items, str) else n.items
+                    lines = [f"### {n.title or 'Checklist'}"]
+                    for it in items:
+                        mk = "x" if (it.get("done") or it.get("checked")) else " "
+                        lines.append(f"- [{mk}] {it.get('text', '')}")
+                    note_blocks.append("\n".join(lines))
+                except Exception:
+                    pass
+            elif n.content:
+                title_line = f"### {n.title}\n" if n.title else ""
+                note_blocks.append(f"{title_line}{n.content}")
+
+        notes_section = "\n\n".join(note_blocks)
+        if re.search(r"^## Project Notes.*?(?=^## |\Z)", body, flags=re.MULTILINE | re.DOTALL):
+            body = re.sub(
+                r"^## Project Notes.*?(?=^## |\Z)",
+                f"## Project Notes\n{notes_section}\n\n" if notes_section else "",
+                body,
+                flags=re.MULTILINE | re.DOTALL,
+            )
+        elif notes_section:
+            body = f"{body.strip()}\n\n## Project Notes\n{notes_section}\n"
+
+        manifest_path.write_text(serialize_project_manifest(metadata, body), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to sync notes to manifest for {project_id}: {e}")
+    finally:
+        if close_db:
+            db.close()
+
+
 # ---------------------------------------------------------------------------
 # Cross-Module Link Resolution
 # ---------------------------------------------------------------------------

@@ -1833,6 +1833,9 @@ class Note(TimestampMixin, Base):
     # Chat session spawned by the note's "Agent" button (solve-this-todo).
     # The note shows a clickable tag that opens this session for review.
     agent_session_id  = Column(String, nullable=True)
+    project_id        = Column(String, nullable=True, index=True)
+    attachments       = Column(Text, nullable=True)        # JSON string of [{id, filename, mime_type, size, url}]
+
 
 
 class OperationsNote(TimestampMixin, Base):
@@ -2257,6 +2260,22 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _migrate_notes_project_and_attachments()
+
+
+def _migrate_notes_project_and_attachments():
+    """Ensure project_id and attachments columns exist on the notes table."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(notes)"))]
+            if "project_id" not in cols:
+                conn.execute(text("ALTER TABLE notes ADD COLUMN project_id TEXT"))
+                conn.commit()
+            if "attachments" not in cols:
+                conn.execute(text("ALTER TABLE notes ADD COLUMN attachments TEXT"))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"notes project_id and attachments migration: {e}")
 
 
 def _migrate_backfill_task_folders():
