@@ -26,7 +26,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, OperationsNote
+from core.database import SessionLocal, OperationsNote, OperationsAgentQueueItem
 from core.middleware import require_admin
 from src.auth_helpers import require_user
 from mcp_servers.ops_server import (
@@ -61,6 +61,11 @@ class NoteCreate(BaseModel):
     text: str
 
 
+class AgentQueueAppend(BaseModel):
+    key: str
+    note: Optional[str] = None
+
+
 def _note_to_dict(note: OperationsNote) -> dict:
     return {
         "id": note.id,
@@ -69,6 +74,16 @@ def _note_to_dict(note: OperationsNote) -> dict:
         "source": note.source,
         "text": note.text,
         "created_at": note.created_at.isoformat() if note.created_at else None,
+    }
+
+
+def _agent_queue_item_to_dict(item: OperationsAgentQueueItem) -> dict:
+    return {
+        "id": item.id,
+        "key": item.key,
+        "note": item.note,
+        "added_by": item.added_by,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
 
@@ -190,6 +205,49 @@ def setup_operations_routes() -> APIRouter:
             db.commit()
             db.refresh(note)
             return _note_to_dict(note)
+        finally:
+            db.close()
+
+    @router.get("/agent-queue")
+    def list_agent_queue(request: Request):
+        require_admin(request)
+        db = SessionLocal()
+        try:
+            items = db.query(OperationsAgentQueueItem).order_by(OperationsAgentQueueItem.created_at.asc()).all()
+            return {"items": [_agent_queue_item_to_dict(i) for i in items]}
+        finally:
+            db.close()
+
+    @router.post("/agent-queue")
+    def append_agent_queue(request: Request, body: AgentQueueAppend):
+        require_admin(request)
+        user = require_user(request) or "unknown"
+        db = SessionLocal()
+        try:
+            item = OperationsAgentQueueItem(
+                id=str(uuid.uuid4()),
+                key=body.key,
+                note=body.note or None,
+                added_by=user,
+            )
+            db.add(item)
+            db.commit()
+            db.refresh(item)
+            return _agent_queue_item_to_dict(item)
+        finally:
+            db.close()
+
+    @router.delete("/agent-queue/{item_id}")
+    def remove_agent_queue(request: Request, item_id: str):
+        require_admin(request)
+        db = SessionLocal()
+        try:
+            item = db.query(OperationsAgentQueueItem).filter(OperationsAgentQueueItem.id == item_id).first()
+            if not item:
+                raise HTTPException(404, "No agent-queue item with that id.")
+            db.delete(item)
+            db.commit()
+            return {"removed": item_id}
         finally:
             db.close()
 
