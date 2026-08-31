@@ -1420,6 +1420,8 @@ const _AUTO_WIRE = {
   // Prompt window opens from the overflow menu (no rail/sidebar button), but
   // wiring it here makes tab-down use the new .minimized-dock-chip instead of
   // the legacy .modal-dock-item.
+  'projects-modal':       { rail: 'rail-projects',  sidebar: 'tool-projects-btn' },
+  'operations-modal':     { rail: 'rail-operations',sidebar: 'tool-operations-btn' },
   'custom-preset-modal':  { rail: null,             sidebar: null },
 };
 

@@ -182,16 +182,15 @@ function _renderModalSkeleton() {
   modalEl.setAttribute('aria-label', 'Projects Hub');
 
   modalEl.innerHTML = `
-    <div class="modal-backdrop"></div>
-    <div class="proj-modal-content">
-      <div class="proj-header">
+    <div class="modal-content proj-modal-content">
+      <div class="proj-header modal-header">
         <select id="proj-select" class="proj-select" aria-label="Select Project"></select>
         <span id="proj-status-badge" class="proj-pill active">ACTIVE</span>
         <button id="proj-new-btn" class="proj-btn primary" title="Create Project">+ New Project</button>
         <button id="proj-sync-btn" class="proj-btn" title="Sync with disk PROJECT.md">🔄 Sync Disk</button>
         <button id="proj-agent-btn" class="proj-btn" title="Spawn Agent Session">🤖 Agent Session</button>
         <div style="margin-left:auto; display:flex; gap:6px;">
-          <button id="proj-close-btn" class="proj-btn" title="Close">✕</button>
+          <button id="proj-close-btn" class="proj-btn close-btn" title="Close">✕</button>
         </div>
       </div>
       <div class="proj-tabs">
@@ -220,7 +219,7 @@ function _renderModalSkeleton() {
 }
 
 function _wireModalEvents(modalEl) {
-  modalEl.querySelector('.modal-backdrop')?.addEventListener('click', closeProjects);
+  modalEl.addEventListener('click', (e) => { if (e.target === modalEl) closeProjects(); });
   modalEl.querySelector('#proj-close-btn')?.addEventListener('click', closeProjects);
   
   modalEl.querySelector('#proj-select')?.addEventListener('change', async (e) => {
@@ -269,7 +268,11 @@ function _wireModalEvents(modalEl) {
     });
   });
 
-  makeWindowDraggable(modalEl.querySelector('.proj-modal-content'), modalEl.querySelector('.proj-header'));
+  const content = modalEl.querySelector('.proj-modal-content');
+  const header = modalEl.querySelector('.proj-header');
+  if (content && header) {
+    makeWindowDraggable(modalEl, { content, header });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -312,23 +315,29 @@ function _updateActionButtonsEnabled() {
 // _renderActiveTabContent() (and every tab it dispatches to) requires
 // _currentProject and silently renders nothing without it — the state with
 // zero projects that _fetchProjectsList() leaves on a fresh install, with no
-// path that ever calls it once #proj-body is left showing "Loading
-// project..." forever. Clicking tabs still toggled their own .active class
-// (that part has no guard), so it read as "the window doesn't do anything"
-// rather than "there's nothing to show yet".
-function _renderEmptyState() {
+function _renderEmptyState(tab = _activeTab) {
   const bodyEl = document.getElementById('proj-body');
   if (!bodyEl) return;
+
+  let msg = 'No projects yet.';
+  if (tab === 'tasks') msg = 'No project selected. Create a project to track tasks & to-dos.';
+  else if (tab === 'docs') msg = 'No project selected. Create a project to view workspace files and documentation.';
+  else if (tab === 'links') msg = 'No project selected. Create a project to link operations, emails, and events.';
+
   bodyEl.innerHTML = `
     <div style="color:var(--fg-muted,#888); text-align:center; padding:40px;">
-      No projects yet.<br>
-      <button id="proj-empty-new-btn" class="proj-btn primary" style="margin-top:12px;">+ New Project</button>
+      ${_esc(msg)}<br>
+      <button id="proj-empty-new-btn" class="proj-btn primary" style="margin-top:14px; font-weight:600;">+ New Project</button>
     </div>`;
   bodyEl.querySelector('#proj-empty-new-btn')?.addEventListener('click', () => _renderNewProjectPrompt());
 }
 
 async function _loadProjectDetail(projectId) {
-  if (!projectId) return;
+  if (!projectId) {
+    _currentProject = null;
+    _renderEmptyState();
+    return;
+  }
   const bodyEl = document.getElementById('proj-body');
   if (bodyEl) {
     bodyEl.innerHTML = `<div style="color:var(--fg-muted,#888); text-align:center; padding:40px;">Loading project details...</div>`;
@@ -374,7 +383,11 @@ function _updateHeaderState() {
 
 function _renderActiveTabContent() {
   const bodyEl = document.getElementById('proj-body');
-  if (!bodyEl || !_currentProject) return;
+  if (!bodyEl) return;
+  if (!_currentProject) {
+    _renderEmptyState(_activeTab);
+    return;
+  }
 
   if (_activeTab === 'overview') {
     _renderOverviewTab(bodyEl);
@@ -777,3 +790,8 @@ export default {
   closeProjects,
   isProjectsOpen,
 };
+
+if (typeof window !== 'undefined') {
+  window.projectsModule = { openProjects, closeProjects, isProjectsOpen };
+}
+
