@@ -1974,6 +1974,7 @@ class Project(TimestampMixin, Base):
     manifest_path = Column(String, nullable=False)                # path to PROJECT.md
     task_total    = Column(Integer, default=0)
     task_completed = Column(Integer, default=0)
+    agent_summary   = Column(Text, nullable=True)                 # Short AI-generated overview
     agent_session_id = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
 
     tasks = relationship("ProjectTask", back_populates="project", cascade="all, delete-orphan", order_by="ProjectTask.sort_order")
@@ -2155,12 +2156,26 @@ def _migrate_seed_email_account():
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
 # temporarily disabled around the migration workflow.
+
+def _migrate_project_agent_summary():
+    with engine.connect() as conn:
+        if engine.dialect.name == "sqlite":
+            try:
+                conn.execute(text("SELECT agent_summary FROM projects LIMIT 1"))
+            except Exception:
+                try:
+                    conn.execute(text("ALTER TABLE projects ADD COLUMN agent_summary TEXT"))
+                    conn.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to migrate projects table for agent_summary: {e}")
+
 def init_db():
     """
     Initialize the database by creating all tables.
     Should be called when starting the application.
     """
     _migrate_model_endpoints()
+    _migrate_project_agent_summary()
     Base.metadata.create_all(bind=engine)
     # Lock the DB file (and any SQLite sidecars) to 0o600 — it holds bearer-token
     # + bcrypt hashes and encrypted provider keys. POSIX only; safe_chmod no-ops

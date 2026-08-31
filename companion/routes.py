@@ -22,10 +22,27 @@ import html
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
+from typing import Optional
+from pydantic import BaseModel
+
 from core.middleware import require_admin
 from src.auth_helpers import _auth_disabled, get_current_user
 
 from companion import pairing as _pairing
+from companion import todos as _todos
+
+
+class TodoToggleRequest(BaseModel):
+    id: str
+    completed: Optional[bool] = None
+
+
+class TodoCreateRequest(BaseModel):
+    title: str
+    target_type: Optional[str] = "note"
+    target_id: Optional[str] = None
+    due_date: Optional[str] = None
+
 
 
 def token_owner(request: Request) -> str | None:
@@ -261,5 +278,85 @@ def setup_companion_routes() -> APIRouter:
   device must be on the same network, and the server must bind to your LAN.</p>
 </div></body></html>"""
         return HTMLResponse(page)
+
+    # --- UNIFIED TO-DOS GATEWAY FOR COMPANION / WIDGET ---
+
+    @router.get("/todos")
+    def list_todos(
+        request: Request,
+        include_completed: bool = False,
+        source: str = "all",
+        limit: int = 50,
+    ):
+        """Fetch aggregated active to-dos from Notes checklists and Project tasks."""
+        from datetime import datetime as _dt, timezone as _tz
+        from core.database import SessionLocal
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            items = _todos.fetch_all_todos(
+                db=db,
+                owner=owner,
+                include_completed=include_completed,
+                source=source,
+                limit=limit,
+            )
+            return {
+                "ok": True,
+                "count": len(items),
+                "items": items,
+                "server_time": _dt.now(_tz.utc).isoformat(),
+            }
+        finally:
+            db.close()
+
+    @router.patch("/todos/toggle")
+    def toggle_todo_item(request: Request, body: TodoToggleRequest):
+        """Toggle or set the completion status of a to-do item."""
+        from core.database import SessionLocal
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            return _todos.toggle_todo(
+                db=db,
+                owner=owner,
+                item_id=body.id,
+                completed=body.completed,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except PermissionError:
+            raise HTTPException(403, "Forbidden")
+        finally:
+            db.close()
+
+    @router.post("/todos")
+    def create_todo_item(request: Request, body: TodoCreateRequest):
+        """Create a new to-do item in Notes or Projects."""
+        from core.database import SessionLocal
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            return _todos.create_todo(
+                db=db,
+                owner=owner,
+                title=body.title,
+                target_type=body.target_type or "note",
+                target_id=body.target_id,
+                due_date=body.due_date,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except PermissionError:
+            raise HTTPException(403, "Forbidden")
+        finally:
+            db.close()
 
     return router

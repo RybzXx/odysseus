@@ -522,6 +522,7 @@ def project_to_dict(
     include_tasks: bool = True,
     include_links: bool = True,
     include_content: bool = False,
+    include_pinned_notes: bool = False,
 ) -> Dict[str, Any]:
     """Serialize a Project SQLAlchemy row into a structured dictionary."""
     content = ""
@@ -536,6 +537,7 @@ def project_to_dict(
         "slug": project.slug,
         "name": project.name,
         "description": project.description,
+        "agent_summary": getattr(project, "agent_summary", None),
         "status": project.status,
         "priority": project.priority,
         "owner": project.owner,
@@ -551,6 +553,31 @@ def project_to_dict(
 
     if include_content:
         data["content"] = content
+
+
+    if include_pinned_notes and db:
+        from core.database import Note
+        import json
+        
+        pinned = db.query(Note).filter(Note.project_id == project.id, Note.pinned == True).all()
+        pinned_list = []
+        for n in pinned:
+            parsed_items = []
+            if n.items:
+                try:
+                    parsed_items = json.loads(n.items)
+                except Exception:
+                    pass
+            pinned_list.append({
+                "id": n.id,
+                "title": n.title,
+                "content": n.content,
+                "note_type": n.note_type,
+                "items": parsed_items,
+                "color": n.color,
+                "pinned": n.pinned
+            })
+        data["pinned_notes"] = pinned_list
 
     if include_tasks:
         data["tasks"] = [
