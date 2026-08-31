@@ -114,7 +114,9 @@ try:
         name = metadata.get("name") or folder.name
         status = metadata.get("status", "active")
         priority = metadata.get("priority", "normal")
-        owner = metadata.get("owner", "default")
+        owner = metadata.get("owner")
+        if owner == "default":
+            owner = None
         
         task_total = len(tasks)
         task_completed = sum(1 for t in tasks if t.get("completed"))

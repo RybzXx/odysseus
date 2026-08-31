@@ -689,7 +689,7 @@ def generate_project_manifests():
             "slug": proj["slug"],
             "status": proj["status"],
             "priority": proj["priority"],
-            "owner": "default",
+            "owner": None,
             "created_at": now_iso,
             "updated_at": now_iso,
             "links": [],
