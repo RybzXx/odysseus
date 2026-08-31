@@ -102,9 +102,21 @@ function _injectStyles() {
   document.head.appendChild(style);
 }
 
+// FastAPI's HTTPException bodies are {"detail": "..."} — surface that text
+// instead of a bare status code, so "not configured" reads as "not
+// configured" rather than "503".
+async function _errorFromResponse(res, fallback) {
+  let detail = null;
+  try {
+    const body = await res.json();
+    detail = body && (body.detail || body.message);
+  } catch (_) { /* body wasn't JSON — fall back below */ }
+  return new Error(detail || (fallback + ' (' + res.status + ')'));
+}
+
 async function _fetchWorklist() {
   const res = await fetch('/api/operations', { credentials: 'same-origin' });
-  if (!res.ok) throw new Error('Failed to load operations worklist (' + res.status + ')');
+  if (!res.ok) throw await _errorFromResponse(res, 'Failed to load operations worklist');
   const data = await res.json();
   // Field/wrapper names come from Bil Weekend's own API, which this module
   // hasn't been exercised against live — fall back across the plausible
@@ -127,7 +139,7 @@ async function _postNote(key, text) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, text }),
   });
-  if (!res.ok) throw new Error('Failed to save note (' + res.status + ')');
+  if (!res.ok) throw await _errorFromResponse(res, 'Failed to save note');
   return res.json();
 }
 
@@ -138,7 +150,7 @@ async function _postStatus(key, status, expectedUpdatedAt) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, status, expectedUpdatedAt }),
   });
-  if (!res.ok) throw new Error('Failed to submit status change (' + res.status + ')');
+  if (!res.ok) throw await _errorFromResponse(res, 'Failed to submit status change');
   return res.json();
 }
 
