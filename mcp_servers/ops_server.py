@@ -232,10 +232,25 @@ async def _fetch_merged_worklist() -> list[dict]:
     Supabase project — out of reach of this service-role key, so it's absent
     from this worklist entirely.
     """
-    followup_rows = await _sb_request("GET", "operations_followup", params={"select": "*"})
+    # All six reads are independent — fire them together rather than one
+    # round-trip after another. This was the actual cause of "always takes a
+    # while to load": six sequential Supabase requests, not the absence of a
+    # cache. loadWorklistInputs() in Bil Weekend's own source does the same
+    # six reads with Promise.all — this mirrors that, which the first version
+    # of this function didn't.
+    source_tables = list(_JSONB_SOURCES.items())
+    followup_rows, tour_rows, queue_rows, *source_results = await asyncio.gather(
+        _sb_request("GET", "operations_followup", params={"select": "*"}),
+        _sb_request("GET", "tours", params={"select": "id,data"}),
+        _sb_request("GET", "queue_requests", params={"select": "*"}),
+        *(
+            _sb_request("GET", table, params={"select": "id,data"})
+            for _, (table, *_rest) in source_tables
+        ),
+    )
+
     followup_by_key = {(r["source"], r["source_id"]): r for r in followup_rows}
 
-    tour_rows = await _sb_request("GET", "tours", params={"select": "id,data"})
     tour_names = {}
     for t in tour_rows:
         tdata = t.get("data") or {}
@@ -248,8 +263,7 @@ async def _fetch_merged_worklist() -> list[dict]:
 
     rows: list[dict] = []
 
-    for source, (table, name_f, email_f, phone_f) in _JSONB_SOURCES.items():
-        source_rows = await _sb_request("GET", table, params={"select": "id,data"})
+    for (source, (table, name_f, email_f, phone_f)), source_rows in zip(source_tables, source_results):
         for r in source_rows:
             source_id = r["id"]
             data = r.get("data") or {}
@@ -301,7 +315,6 @@ async def _fetch_merged_worklist() -> list[dict]:
                 "summary": [s for s in summary if s],
             })
 
-    queue_rows = await _sb_request("GET", "queue_requests", params={"select": "*"})
     for r in queue_rows:
         moderation = r.get("moderation")
         summary = [
