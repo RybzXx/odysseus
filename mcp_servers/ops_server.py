@@ -2,17 +2,20 @@
 ops_server.py
 
 MCP server exposing the Bil Weekend operations worklist and the agent's
-proposal channel.
+staging channel.
 
 Talks to Supabase directly (the actual data store — bookings, contacts,
-curated_requests, queue_requests, operations_followup) rather than to a
-Bil Weekend website API. That website API (/api/agent/ops/attention,
-/api/agent/ops/proposals) was never built — no agent_proposals table exists
-in Supabase either — so this reads the same tables Bil Weekend's own admin
-panel reads, using the service-role key, and does the source-table +
-operations_followup merge in Python instead of in Bil Weekend's backend.
+curated_requests, queue_requests, operations_followup, tours) rather than to
+a Bil Weekend website API. That website API (/api/agent/ops/attention,
+/api/agent/ops/proposals) was never built, so this reads the same tables
+Bil Weekend's own admin panel reads, using the service-role key, and does
+the source-table + operations_followup merge in Python instead of in Bil
+Weekend's backend. The merge logic (summary composition, phone formatting,
+sort order, risk verdict) was read directly out of Bil Weekend's actual
+admin source (OperationsWorklist.tsx / operationsWorklist.ts / antiAbuse.ts)
+during a research pass, not guessed.
 
-Four tools. The split between the first two is a security boundary, not a
+Five tools. The split between the first two is a security boundary, not a
 convenience:
 
   worklist_structural  the worklist with every customer-written field removed.
@@ -22,9 +25,12 @@ convenience:
                        Classified EXTERNAL_UNTRUSTED, so reading it arms the
                        external-context gate and the run may only report
                        afterwards.
-  propose_change       PAUSED. It targeted the never-built proposals endpoint;
-                       see the error it raises for why, and what has to be
-                       decided before it does anything again.
+  stage_change          Writes a patch (status/operator/next_action_date/
+                       moderation) to Odysseus's own local staging table —
+                       never touches Supabase. A human reviews and pushes
+                       staged changes from the Operations panel's Push view.
+                       Replaces the old propose_change, which targeted a
+                       Bil Weekend proposals endpoint that was never built.
   add_note             leaves a note against one worklist key, visible to the
                        human operator in Odysseus's Operations panel. Written
                        to Odysseus's own store, not Supabase's — works even
@@ -61,7 +67,7 @@ from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.database import SessionLocal, OperationsNote
+from core.database import SessionLocal, OperationsNote, OperationsStagedChange
 
 server = Server("ops")
 
@@ -83,7 +89,7 @@ def _config() -> tuple[str, str] | None:
 
 
 class OpsApiError(RuntimeError):
-    """A failed call to Supabase, or a deliberately paused write path.
+    """A failed call to Supabase, or a rejected local operation.
 
     Raised rather than returned, and that is load-bearing. worklist_structural
     is classified SYSTEM, so its results do not arm the external-context gate;
@@ -138,42 +144,111 @@ async def _sb_request(
         raise OpsApiError("Supabase returned a body that is not JSON.") from exc
 
 
-# source label -> (table, data.name key, data.email key, data.phone key, data.summary key)
-# Confirmed against the live schema (2026-08-31): bookings/contacts/
-# curated_requests store the submitted form as a jsonb `data` blob; only
-# queue_requests is flat (handled separately below). `phone`/`summary` are
-# None where that source has no such field.
+_STATUS_ENUM = ["New", "In Progress", "Replied", "On Hold", "Confirmed", "Rejected"]
+_OPEN_STATUSES = ["New", "In Progress", "Replied", "On Hold"]
+_CLOSED_STATUSES = ["Confirmed", "Rejected"]
+_MODERATION_ENUM = ["flagged", "spam"]
+
+# source label -> (table, data.name key, data.email key, data.phone key)
+# Confirmed against the live schema: bookings/contacts/curated_requests store
+# the submitted form as a jsonb `data` blob; only queue_requests is flat
+# (handled separately below).
 _JSONB_SOURCES = {
-    "booking": ("bookings", "name", "email", "phone", None),
-    "contact": ("contacts", "name", "email", None, "message"),
-    "curated": ("curated_requests", "name", "email", "phone", None),
+    "booking": ("bookings", "name", "email", "phone"),
+    "contact": ("contacts", "name", "email", None),
+    "curated": ("curated_requests", "name", "email", "phone"),
 }
 
 _STRUCTURAL_FIELDS = (
     "key", "source", "source_id", "status", "operator", "next_action_date",
-    "moderation", "updated_at", "created_at", "risk_score", "flagged",
+    "moderation", "updated_at", "created_at", "risk_score", "flagged", "risk",
 )
+
+
+def _phone_display(country_code, phone) -> str | None:
+    """Country code + number, as Bil Weekend's phoneDisplay() renders it.
+
+    Read from app/lib/phone.ts's call sites rather than the file itself
+    (not opened this session) — country_code and phone are stored as
+    separate fields on every source that has a phone, and every call site
+    passes them together. Falls back to the bare number when there's no
+    country code to prefix, rather than dropping the phone entirely.
+    """
+    if not phone:
+        return None
+    return f"{country_code} {phone}".strip() if country_code else str(phone)
+
+
+def _risk_verdict(
+    risk_score,
+    flagged,
+    moderation: str | None,
+    intake_status,
+    scored: bool,
+) -> str:
+    """'confirmed-spam' | 'suspected' | 'clean' | 'not-scored'.
+
+    Read verbatim from app/lib/antiAbuse.ts:riskVerdict() during this
+    session's research pass — an admin's own moderation="spam" or an
+    intake-time honeypot hit outrank the scorer and both read as
+    confirmed-spam; an unscored source (queue, app_booking) is never
+    "clean", since that would claim a verdict nothing ever computed.
+    """
+    if moderation == "spam":
+        return "confirmed-spam"
+    if intake_status == "spam":
+        return "confirmed-spam"
+    if not scored:
+        return "not-scored"
+    if flagged is True:
+        return "suspected"
+    # shouldFlag()'s threshold was not read this session — 50 is a stated
+    # assumption, not sourced. Flag via `flagged` (which IS sourced) in the
+    # meantime; the exact cutoff is a follow-up.
+    if isinstance(risk_score, (int, float)) and risk_score >= 50:
+        return "suspected"
+    return "clean"
+
+
+def _curated_travel_window(data: dict) -> str | None:
+    """Read from operationsWorklist.ts:curatedTravelWindow()."""
+    if data.get("travelDateMode") == "exact":
+        return data.get("exactDate") or None
+    parts = [p for p in (data.get("travelMonth"), data.get("travelYear")) if p]
+    return " ".join(str(p) for p in parts) if parts else None
 
 
 async def _fetch_merged_worklist() -> list[dict]:
     """The unified worklist: bookings + contacts + curated_requests (each a
     Supabase jsonb blob, keyed by id) left-joined against operations_followup
-    on (source, source_id) — the same key shape propose_change already used
-    — plus queue_requests, which is flat and self-contained already.
+    on (source, source_id), plus queue_requests, which is flat and
+    self-contained already.
 
-    This merge used to be Bil Weekend's Next.js API's job. That API was
-    never built, so it lives here now instead.
+    Summary composition, phone formatting and risk verdict match Bil
+    Weekend's own admin source exactly (operationsWorklist.ts, antiAbuse.ts),
+    read during this session's research pass rather than guessed.
 
-    Note: Bil Weekend's fourth source, "App Bookings", lives in a *separate*
-    Supabase project per my work/OPERATIONSBilWeekend.md — out of reach of
-    this service-role key, so it's absent from this worklist entirely.
+    Note: Bil Weekend's fifth source, "App Bookings", lives in a *separate*
+    Supabase project — out of reach of this service-role key, so it's absent
+    from this worklist entirely.
     """
     followup_rows = await _sb_request("GET", "operations_followup", params={"select": "*"})
     followup_by_key = {(r["source"], r["source_id"]): r for r in followup_rows}
 
+    tour_rows = await _sb_request("GET", "tours", params={"select": "id,data"})
+    tour_names = {}
+    for t in tour_rows:
+        tdata = t.get("data") or {}
+        if isinstance(tdata, str):
+            try:
+                tdata = json.loads(tdata)
+            except (json.JSONDecodeError, TypeError):
+                tdata = {}
+        tour_names[t["id"]] = tdata.get("name")
+
     rows: list[dict] = []
 
-    for source, (table, name_f, email_f, phone_f, summary_f) in _JSONB_SOURCES.items():
+    for source, (table, name_f, email_f, phone_f) in _JSONB_SOURCES.items():
         source_rows = await _sb_request("GET", table, params={"select": "id,data"})
         for r in source_rows:
             source_id = r["id"]
@@ -184,6 +259,29 @@ async def _fetch_merged_worklist() -> list[dict]:
                 except (json.JSONDecodeError, TypeError):
                     data = {}
             followup = followup_by_key.get((source, source_id)) or {}
+
+            if source == "booking":
+                summary = [
+                    tour_names.get(data.get("tourId")),
+                    f"{data['partySize']} guests" if data.get("partySize") else None,
+                ]
+            elif source == "contact":
+                summary = [(data.get("message") or "")[:70] or None]
+            elif source == "curated":
+                summary = [
+                    ", ".join(data["regions"]) if data.get("regions") else None,
+                    f"{data['tripDays']} days" if data.get("tripDays") else None,
+                    f"{data['numberOfPeople']} people" if data.get("numberOfPeople") else None,
+                    _curated_travel_window(data),
+                ]
+            else:
+                summary = []
+
+            risk_score = data.get("riskScore")
+            flagged = data.get("flagged")
+            moderation = followup.get("moderation")
+            intake_status = data.get("status")
+
             rows.append({
                 "key": f"{source}:{source_id}",
                 "source": source,
@@ -191,19 +289,26 @@ async def _fetch_merged_worklist() -> list[dict]:
                 "status": followup.get("status") or "New",
                 "operator": followup.get("operator"),
                 "next_action_date": followup.get("next_action_date"),
-                "moderation": followup.get("moderation"),
-                "updated_at": followup.get("updated_at") or data.get("submittedAt"),
+                "moderation": moderation,
+                "updated_at": followup.get("updated_at"),
                 "created_at": data.get("submittedAt"),
-                "risk_score": data.get("riskScore"),
-                "flagged": data.get("flagged"),
+                "risk_score": risk_score,
+                "flagged": flagged,
+                "risk": _risk_verdict(risk_score, flagged, moderation, intake_status, scored=True),
                 "name": data.get(name_f),
                 "email": data.get(email_f) if email_f else None,
-                "phone": data.get(phone_f) if phone_f else None,
-                "summary": data.get(summary_f) if summary_f else None,
+                "phone": _phone_display(data.get("countryCode"), data.get(phone_f)) if phone_f else None,
+                "summary": [s for s in summary if s],
             })
 
     queue_rows = await _sb_request("GET", "queue_requests", params={"select": "*"})
     for r in queue_rows:
+        moderation = r.get("moderation")
+        summary = [
+            r.get("service_type"), r.get("request_type"), r.get("regions"),
+            f"{r['trip_days']} days" if r.get("trip_days") else None,
+            r.get("travel_date"),
+        ]
         rows.append({
             "key": f"queue:{r.get('row_id')}",
             "source": "queue",
@@ -211,25 +316,40 @@ async def _fetch_merged_worklist() -> list[dict]:
             "status": r.get("status") or "New",
             "operator": r.get("operator"),
             "next_action_date": r.get("next_action_date"),
-            "moderation": r.get("moderation"),
+            "moderation": moderation,
             "updated_at": r.get("updated_at"),
             "created_at": r.get("created_at") or r.get("submitted_at"),
             "risk_score": None,
             "flagged": None,
+            # The queue is typed in by the data-entry team and never scored —
+            # the only verdict it can carry is an admin's own moderation call.
+            "risk": _risk_verdict(None, None, moderation, None, scored=False),
             "name": r.get("full_name"),
             "email": r.get("customer_email") or r.get("respondent_email"),
             "phone": r.get("phone"),
-            "summary": r.get("entry_notes") or r.get("trip_focus"),
+            "summary": [s for s in summary if s],
         })
 
     return rows
+
+
+def _sort_worklist(rows: list[dict]) -> list[dict]:
+    """nextActionDate ascending (undated rows last), then created_at
+    (submittedAt) descending — read from operationsWorklist.ts:
+    buildWorklist()'s own .sort(). Replaces this module's earlier
+    (unsourced) updated_at-only sort."""
+    has_date = [r for r in rows if r.get("next_action_date")]
+    no_date = [r for r in rows if not r.get("next_action_date")]
+    has_date.sort(key=lambda r: r["next_action_date"])
+    no_date.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return has_date + no_date
 
 
 def _project(rows: list[dict], detail: str, status: str | None, limit: int | None) -> list[dict]:
     """Filter/sort/trim, then strip customer-written fields for 'structural'."""
     if status:
         rows = [r for r in rows if r["status"] == status]
-    rows = sorted(rows, key=lambda r: r.get("updated_at") or "", reverse=True)
+    rows = _sort_worklist(rows)
     if limit:
         rows = rows[:limit]
     if detail == "structural":
@@ -258,7 +378,7 @@ def _write_note(key: str, author: str, text: str) -> dict:
     """Persist a note in Odysseus's own store.
 
     Local, not a Supabase call — runs even when SUPABASE_URL/
-    SUPABASE_SERVICE_ROLE_KEY are unset, unlike the other three tools.
+    SUPABASE_SERVICE_ROLE_KEY are unset, unlike the worklist tools.
     """
     db = SessionLocal()
     try:
@@ -284,7 +404,195 @@ def _write_note(key: str, author: str, text: str) -> dict:
         db.close()
 
 
-_STATUS_ENUM = ["New", "In Progress", "Replied", "On Hold", "Confirmed", "Rejected"]
+_PATCH_FIELDS = {"status", "operator", "next_action_date", "moderation"}
+
+
+def _validate_patch(patch: dict) -> str | None:
+    """None if valid, else a human-readable reason it isn't."""
+    if not isinstance(patch, dict) or not patch:
+        return "patch must be a non-empty object"
+    unknown = set(patch.keys()) - _PATCH_FIELDS
+    if unknown:
+        return f"unknown patch field(s): {', '.join(sorted(unknown))}"
+    if "status" in patch and patch["status"] not in _STATUS_ENUM:
+        return f"status must be one of {_STATUS_ENUM}"
+    if "moderation" in patch and patch["moderation"] not in (*_MODERATION_ENUM, None):
+        return f"moderation must be one of {_MODERATION_ENUM} or null"
+    return None
+
+
+def _stage_change(
+    key: str,
+    patch: dict,
+    expected_updated_at: str | None,
+    author: str,
+    rationale: str | None,
+) -> dict:
+    """Write one staged patch to Odysseus's own store. Never touches Supabase
+    — see routes/operations/operations_routes.py's push endpoint for that."""
+    reason = _validate_patch(patch)
+    if reason:
+        raise OpsApiError(f"Invalid patch: {reason}")
+
+    db = SessionLocal()
+    try:
+        row = OperationsStagedChange(
+            id=str(uuid.uuid4()),
+            key=key,
+            patch=json.dumps(patch),
+            expected_updated_at=expected_updated_at,
+            author=author,
+            rationale=rationale,
+            conflict=False,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return _staged_to_dict(row)
+    finally:
+        db.close()
+
+
+async def _current_updated_at(source: str, source_id: str) -> str | None:
+    """The live updated_at for one worklist key, right now — None if no row
+    exists yet (a followup row that's never been touched)."""
+    if source == "queue":
+        rows = await _sb_request(
+            "GET", "queue_requests",
+            params={"select": "updated_at", "row_id": f"eq.{source_id}"},
+        )
+    else:
+        rows = await _sb_request(
+            "GET", "operations_followup",
+            params={"select": "updated_at", "source": f"eq.{source}", "source_id": f"eq.{source_id}"},
+        )
+    return rows[0]["updated_at"] if rows else None
+
+
+async def _apply_patch(source: str, source_id: str, patch: dict) -> None:
+    """Write a merged patch to its owning Supabase table.
+
+    Pre: the conflict check (_current_updated_at vs. the group's expected
+    value) has already passed.
+    Post: the row is written. Raises OpsApiError on failure — a caller that
+    swallowed this would report a push as successful when nothing landed.
+    Inv: queue_requests rows always pre-exist (PATCH); operations_followup
+    rows may not (upsert via merge-duplicates) — an untouched request has no
+    follow-up row until its first edit.
+    """
+    if source == "queue":
+        await _sb_request(
+            "PATCH", "queue_requests",
+            params={"row_id": f"eq.{source_id}"},
+            json_body=patch,
+        )
+    else:
+        await _sb_request(
+            "POST", "operations_followup",
+            params={"on_conflict": "source,source_id"},
+            json_body={"source": source, "source_id": source_id, **patch},
+            prefer="resolution=merge-duplicates",
+        )
+
+
+async def _push_staged_changes() -> dict:
+    """Batch-apply every non-conflict staged change to Supabase.
+
+    Pre: none — safe to call with an empty staging table.
+    Post: every key with staged changes is either fully applied (its staged
+    rows deleted) or marked conflict=True (kept, for review) — never a
+    silent partial write for one key.
+    Inv: staged changes for the same key are merged into one write and
+    checked against the earliest one's expected_updated_at — pushing two
+    edits to the same key can never conflict with itself just because the
+    first write in the batch moved the row's own updated_at.
+    """
+    if _config() is None:
+        raise OpsApiError(_CONFIG_ERROR)
+
+    db = SessionLocal()
+    try:
+        staged = db.query(OperationsStagedChange).filter(
+            OperationsStagedChange.conflict.is_(False)
+        ).order_by(OperationsStagedChange.created_at.asc()).all()
+
+        by_key: dict[str, list[OperationsStagedChange]] = {}
+        for row in staged:
+            by_key.setdefault(row.key, []).append(row)
+
+        pushed, conflicted, failed = [], [], []
+
+        for key, group in by_key.items():
+            source, source_id = key.split(":", 1)
+            merged: dict = {}
+            for row in group:
+                merged.update(json.loads(row.patch))
+            expected = group[0].expected_updated_at
+
+            try:
+                current = await _current_updated_at(source, source_id)
+            except OpsApiError as exc:
+                failed.append({"key": key, "error": str(exc)})
+                continue
+
+            if current != expected:
+                for row in group:
+                    row.conflict = True
+                conflicted.append({"key": key, "expected": expected, "current": current})
+                continue
+
+            try:
+                await _apply_patch(source, source_id, merged)
+            except OpsApiError as exc:
+                failed.append({"key": key, "error": str(exc)})
+                continue
+
+            for row in group:
+                db.delete(row)
+            pushed.append({"key": key, "patch": merged})
+
+        db.commit()
+        return {"pushed": pushed, "conflicted": conflicted, "failed": failed}
+    finally:
+        db.close()
+
+
+def _staged_to_dict(row: OperationsStagedChange) -> dict:
+    return {
+        "id": row.id,
+        "key": row.key,
+        "patch": json.loads(row.patch),
+        "expected_updated_at": row.expected_updated_at,
+        "author": row.author,
+        "rationale": row.rationale,
+        "conflict": row.conflict,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _list_staged() -> list[dict]:
+    db = SessionLocal()
+    try:
+        rows = db.query(OperationsStagedChange).order_by(OperationsStagedChange.created_at.asc()).all()
+        return [_staged_to_dict(r) for r in rows]
+    finally:
+        db.close()
+
+
+def _discard_staged(staged_id: str) -> bool:
+    """True if a row was removed, False if staged_id didn't exist — the
+    caller decides whether that's a 404 or a no-op."""
+    db = SessionLocal()
+    try:
+        row = db.query(OperationsStagedChange).filter(OperationsStagedChange.id == staged_id).first()
+        if not row:
+            return False
+        db.delete(row)
+        db.commit()
+        return True
+    finally:
+        db.close()
+
 
 _WORKLIST_FILTER_SCHEMA = {
     "type": "object",
@@ -302,16 +610,6 @@ _WORKLIST_FILTER_SCHEMA = {
     },
 }
 
-_PROPOSE_CHANGE_PAUSED = (
-    "propose_change is paused. It targeted Bil Weekend's "
-    "/api/agent/ops/proposals endpoint, which was never built — no "
-    "agent_proposals table exists in Supabase. Now that reads go straight "
-    "to Supabase, a write path needs a decision first: direct writes to "
-    "operations_followup/queue_requests (immediate, no review step), or a "
-    "real proposals table so a human still approves each change. Ask the "
-    "person running Odysseus before this tool does anything."
-)
-
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
@@ -320,9 +618,10 @@ async def list_tools() -> list[Tool]:
             name="worklist_structural",
             description=(
                 "The operations worklist without any customer-written text: status, "
-                "operator, dates, the intake scorer's verdict (risk score / flagged). "
-                "Use this when you intend to propose changes — it is the only "
-                "worklist read that leaves you able to call propose_change afterwards."
+                "operator, dates, and the intake scorer's verdict (risk score / "
+                "flagged / a computed risk label). Use this when you intend to "
+                "stage a change — it is the only worklist read that leaves you "
+                "able to call stage_change afterwards."
             ),
             inputSchema=_WORKLIST_FILTER_SCHEMA,
         ),
@@ -332,50 +631,46 @@ async def list_tools() -> list[Tool]:
                 "The operations worklist as the admin sees it, including names, "
                 "emails, phones and request summaries. Use this only to read and "
                 "report — it contains untrusted customer text, so after calling it "
-                "you cannot propose changes or take any other action in this run."
+                "you cannot stage changes or take any other action in this run."
             ),
             inputSchema=_WORKLIST_FILTER_SCHEMA,
         ),
         Tool(
-            name="propose_change",
-            description="PAUSED — calling this raises an error explaining why. See tool docs.",
+            name="stage_change",
+            description=(
+                "Suggest a follow-up change for one worklist key. Writes to "
+                "Odysseus's own local staging table, not to Supabase — a human "
+                "reviews staged changes in the Operations panel's Push view and "
+                "decides what actually reaches the live worklist. Nothing this "
+                "tool does is visible outside Odysseus until then."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "author": {
-                        "type": "string",
-                        "description": "Which lane produced these, e.g. 'ambient-structural'.",
-                    },
-                    "proposals": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "key": {"type": "string", "description": "Worklist key, source:id."},
-                                "patch": {
-                                    "type": "object",
-                                    "properties": {
-                                        "status": {"type": "string", "enum": _STATUS_ENUM},
-                                        "operator": {"type": ["string", "null"]},
-                                        "next_action_date": {"type": ["string", "null"]},
-                                        "moderation": {
-                                            "type": ["string", "null"],
-                                            "enum": ["flagged", "spam", None],
-                                        },
-                                    },
-                                },
-                                "expectedUpdatedAt": {
-                                    "type": ["string", "null"],
-                                    "description": "The row's updatedAt as you read it.",
-                                },
-                                "rationale": {"type": "string"},
+                    "key": {"type": "string", "description": "Worklist key, source:id."},
+                    "patch": {
+                        "type": "object",
+                        "properties": {
+                            "status": {"type": "string", "enum": _STATUS_ENUM},
+                            "operator": {"type": ["string", "null"]},
+                            "next_action_date": {"type": ["string", "null"]},
+                            "moderation": {
+                                "type": ["string", "null"],
+                                "enum": [*_MODERATION_ENUM, None],
                             },
-                            "required": ["key", "patch", "rationale"],
                         },
                     },
+                    "expected_updated_at": {
+                        "type": ["string", "null"],
+                        "description": "The row's updated_at as you read it, from worklist_structural.",
+                    },
+                    "author": {
+                        "type": "string",
+                        "description": "Which lane produced this, e.g. 'ambient-structural'.",
+                    },
+                    "rationale": {"type": "string", "description": "Why this change, citing what you read."},
                 },
-                "required": ["author", "proposals"],
+                "required": ["key", "patch", "author", "rationale"],
             },
         ),
         Tool(
@@ -413,8 +708,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         result = _write_note(key, author, text)
         return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
-    if name == "propose_change":
-        raise OpsApiError(_PROPOSE_CHANGE_PAUSED)
+    if name == "stage_change":
+        key = arguments.get("key", "")
+        patch = arguments.get("patch") or {}
+        author = arguments.get("author", "") or "agent"
+        rationale = arguments.get("rationale") or None
+        expected_updated_at = arguments.get("expected_updated_at")
+        if not key:
+            raise OpsApiError("stage_change requires 'key'.")
+        result = _stage_change(key, patch, expected_updated_at, f"agent:{author}", rationale)
+        return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
     if _config() is None:
         raise OpsApiError(_CONFIG_ERROR)
