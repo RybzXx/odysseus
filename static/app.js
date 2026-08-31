@@ -33,6 +33,7 @@ import tasksModule from './js/tasks.js?v=20260723tasksbulkfeedback1';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import operationsModule from './js/operations.js';
+import projectsModule from './js/projects.js';
 import adminModule from './js/admin.js?v=20260716openrouter3';
 import settingsModule from './js/settings.js?v=20260815approvalsave1';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -179,6 +180,7 @@ function initRailHoverLabels() {
     'rail-archive': 'Library',
     'rail-memory': 'Brain',
     'rail-notes': 'Notes',
+    'rail-projects': 'Projects',
     'rail-operations': 'Operations',
     'rail-tasks': 'Tasks',
     'rail-theme': 'Theme',
@@ -1100,6 +1102,19 @@ function initializeEventListeners() {
     });
   }
 
+  // Projects tool button
+  const toolProjectsBtn = el('tool-projects-btn');
+  if (toolProjectsBtn) {
+    toolProjectsBtn.addEventListener('click', async () => {
+      if (!projectsModule) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('projects-modal')) {
+        if (projectsModule.isProjectsOpen()) projectsModule.closeProjects();
+        else projectsModule.openProjects();
+      }
+    });
+  }
+
   // Notes tool button
   const toolNotesBtn = el('tool-notes-btn');
   if (toolNotesBtn) {
@@ -1237,6 +1252,7 @@ function initializeEventListeners() {
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
+    '/projects': () => projectsModule && projectsModule.openProjects(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
   };
   const _opener = _routeOpen[urlPath];
@@ -3760,6 +3776,7 @@ function startOdysseusApp() {
     'rail-tasks':     'tool-tasks-btn',
     'rail-calendar':  'tool-calendar-btn',
     'rail-notes':     'tool-notes-btn',
+    'rail-projects':  'tool-projects-btn',
     'rail-operations': 'tool-operations-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',

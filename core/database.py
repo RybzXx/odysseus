@@ -1933,6 +1933,57 @@ class Integration(TimestampMixin, Base):
     enabled = Column(Boolean, default=True)
 
 
+class Project(TimestampMixin, Base):
+    """A managed project workspace with to-do lists, documents, and cross-module links."""
+    __tablename__ = "projects"
+
+    id            = Column(String, primary_key=True, index=True)
+    slug          = Column(String, unique=True, nullable=False, index=True)
+    name          = Column(String, nullable=False)
+    description   = Column(Text, nullable=True)
+    status        = Column(String, default="active", index=True)  # active, paused, completed, archived
+    priority      = Column(String, default="normal")              # low, normal, high, critical
+    owner         = Column(String, nullable=True, index=True)
+    folder_path   = Column(String, nullable=False)                # relative/absolute path on disk
+    manifest_path = Column(String, nullable=False)                # path to PROJECT.md
+    task_total    = Column(Integer, default=0)
+    task_completed = Column(Integer, default=0)
+    agent_session_id = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+
+    tasks = relationship("ProjectTask", back_populates="project", cascade="all, delete-orphan", order_by="ProjectTask.sort_order")
+    links = relationship("ProjectLink", back_populates="project", cascade="all, delete-orphan")
+
+
+class ProjectTask(TimestampMixin, Base):
+    """A task / to-do item within a project."""
+    __tablename__ = "project_tasks"
+
+    id               = Column(String, primary_key=True, index=True)
+    project_id       = Column(String, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    title            = Column(String, nullable=False)
+    description      = Column(Text, nullable=True)
+    completed        = Column(Boolean, default=False, index=True)
+    sort_order       = Column(Integer, default=0)
+    due_date         = Column(String, nullable=True)
+    agent_session_id = Column(String, nullable=True)
+
+    project = relationship("Project", back_populates="tasks")
+
+
+class ProjectLink(TimestampMixin, Base):
+    """A cross-module reference linked to a project (operations key, email message, calendar event, living document)."""
+    __tablename__ = "project_links"
+
+    id          = Column(String, primary_key=True, index=True)
+    project_id  = Column(String, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_type = Column(String, nullable=False, index=True)  # "operations", "email", "calendar", "document"
+    target_id   = Column(String, nullable=False, index=True)  # "bookings:1042", "account_id:folder:uid", "cal_id:event_uid", "doc_id"
+    label       = Column(String, nullable=True)
+    metadata_json = Column(JSON, default=dict)
+
+    project = relationship("Project", back_populates="links")
+
+
 
 
 
