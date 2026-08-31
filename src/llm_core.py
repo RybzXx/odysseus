@@ -148,9 +148,15 @@ class LLMConfig:
     # CONNECT_TIMEOUT is untouched, so a dead endpoint still fails fast.
     DEFAULT_TIMEOUT = 120  # odysseus-nonstreaming-call-path
     DEFAULT_TEMPERATURE = 1.0
-    # 0 = omit num_predict, let Ollama/the model's own Modelfile decide.
-    # Reverted from an explicit 8192 at the user's request after live testing.
-    DEFAULT_MAX_TOKENS = 0
+    # Output tokens per response (num_predict on the Ollama path), NOT the
+    # context window -- that is ODYSSEUS_LOCAL_SERVED_CONTEXT / num_ctx.
+    #
+    # 0 means "omit num_predict and let the model's own Modelfile default
+    # decide", which is unstated per model and can be small: a reasoning model
+    # then spends the whole budget on <think>... and returns empty content,
+    # reproduced live against gemma4:26b. An explicit 8192 gives every model
+    # the same generous, known output budget instead of an invisible one.
+    DEFAULT_MAX_TOKENS = 8192
     MAX_RETRIES = 3
     RETRY_DELAY = 0.5
     STREAM_TIMEOUT = 300

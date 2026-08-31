@@ -106,8 +106,9 @@ PASSWORD_MIN_LENGTH = 8
 
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
-# Kept identical to src/llm_core.py's LLMConfig.DEFAULT_MAX_TOKENS.
-DEFAULT_MAX_TOKENS = 0
+# Output tokens per response, not the context window. Kept identical to
+# src/llm_core.py's LLMConfig.DEFAULT_MAX_TOKENS -- see the reasoning there.
+DEFAULT_MAX_TOKENS = 8192
 
 
 def internal_api_base() -> str:
