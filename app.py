@@ -862,6 +862,10 @@ app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handl
 from routes.operations.operations_routes import setup_operations_routes
 app.include_router(setup_operations_routes())
 
+# Projects Module (hybrid file-as-spec + SQLite project workspace management)
+from routes.projects.projects_routes import setup_projects_routes
+app.include_router(setup_projects_routes())
+
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()

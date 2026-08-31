@@ -823,6 +823,36 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "manage_projects",
+            "description": "Manage project workspaces: list projects, get full details and context, create new projects, update project summary/content, manage to-do tasks, and link cross-module items (operations worklist, emails, calendar events, documents).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "get", "get_context", "create", "update", "add_task", "toggle_task", "link_item"],
+                        "description": "Project action to execute."
+                    },
+                    "project_id": {"type": "string", "description": "Project ID or slug."},
+                    "name": {"type": "string", "description": "Project name (for create/update)."},
+                    "slug": {"type": "string", "description": "Project slug (for create)."},
+                    "description": {"type": "string", "description": "Brief description of the project."},
+                    "priority": {"type": "string", "enum": ["low", "normal", "high", "critical"], "description": "Project priority level."},
+                    "content": {"type": "string", "description": "Markdown body content or project summary."},
+                    "task_title": {"type": "string", "description": "Task description for add_task."},
+                    "task_id": {"type": "string", "description": "Task ID for toggle_task."},
+                    "completed": {"type": "boolean", "description": "Completion flag for toggle_task."},
+                    "link_type": {"type": "string", "enum": ["operations", "email", "calendar", "document"], "description": "Type of external entity to link."},
+                    "link_target": {"type": "string", "description": "Identifier of the target entity (e.g. 'bookings:1042', 'acc:INBOX:4502', 'cal:uid', 'doc_id')."},
+                    "link_label": {"type": "string", "description": "Human-readable label for the linked item."}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "manage_settings",
             "description": "Manage user preferences and settings. Use `disable_tool`/`enable_tool`/`list_tools` to turn individual tools on or off globally (e.g. shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email). Use list/get/set/delete for free-form preferences.",
             "parameters": {
@@ -1579,7 +1609,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = action
     elif tool_type in ("manage_tasks", "manage_skills", "api_call",
                         "manage_endpoints", "manage_mcp", "manage_webhooks",
-                        "manage_tokens", "manage_documents", "manage_settings"):
+                        "manage_tokens", "manage_documents", "manage_settings",
+                        "manage_projects"):
         content = json.dumps(args)
     elif tool_type == "ask_teacher":
         content = args.get("model", "auto") + "\n" + args.get("problem", "")
