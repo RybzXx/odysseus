@@ -37,6 +37,8 @@ class NoteCreate(BaseModel):
     image_url: Optional[str] = None
     repeat: Optional[str] = "none"
     sort_order: Optional[int] = None
+    project_id: Optional[str] = None
+    attachments: Optional[list] = None
 
 
 class NoteUpdate(BaseModel):
@@ -53,6 +55,8 @@ class NoteUpdate(BaseModel):
     repeat: Optional[str] = None
     sort_order: Optional[int] = None
     agent_session_id: Optional[str] = None
+    project_id: Optional[str] = None
+    attachments: Optional[list] = None
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +70,13 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
             items = json.loads(note.items)
         except (json.JSONDecodeError, TypeError):
             items = None
+    attachments = None
+    raw_att = getattr(note, "attachments", None)
+    if raw_att:
+        try:
+            attachments = json.loads(raw_att) if isinstance(raw_att, str) else raw_att
+        except (json.JSONDecodeError, TypeError):
+            attachments = None
     ai_cls = None
     raw_ai = getattr(note, "ai_classification", None)
     if raw_ai:
@@ -90,6 +101,8 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
         "sort_order": note.sort_order or 0,
         "image_url": note.image_url,
         "repeat": note.repeat or "none",
+        "project_id": getattr(note, "project_id", None),
+        "attachments": attachments or [],
         "ai_classification": ai_cls,
         "ai_content_hash": getattr(note, "ai_content_hash", None),
         "agent_session_id": getattr(note, "agent_session_id", None),
@@ -625,6 +638,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         request: Request,
         archived: Optional[bool] = None,
         label: Optional[str] = None,
+        project_id: Optional[str] = None,
     ):
         user = _owner(request)
         db = SessionLocal()
@@ -632,6 +646,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             q = db.query(Note)
             if user is not None:
                 q = q.filter(Note.owner == user)
+            if project_id is not None:
+                q = q.filter(Note.project_id == project_id)
             if archived is not None:
                 q = q.filter(Note.archived == archived)
             else:
@@ -676,6 +692,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 image_url=body.image_url,
                 repeat=body.repeat or "none",
                 sort_order=body.sort_order if body.sort_order is not None else 0,
+                project_id=body.project_id,
+                attachments=json.dumps(body.attachments) if body.attachments is not None else None,
             )
             db.add(note)
             db.commit()
@@ -749,6 +767,11 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 note.sort_order = body.sort_order
             if body.agent_session_id is not None:
                 note.agent_session_id = body.agent_session_id
+            if body.project_id is not None:
+                note.project_id = body.project_id
+            if body.attachments is not None:
+                note.attachments = json.dumps(body.attachments)
+                flag_modified(note, "attachments")
 
             db.commit()
             db.refresh(note)
