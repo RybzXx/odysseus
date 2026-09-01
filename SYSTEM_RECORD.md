@@ -2053,4 +2053,21 @@ Pushed to `dev`, `daily-driver`, and `local-agent-2`:
    - Added sidebar **`⚡ Activity Log`** button with dynamic running activity dot indicator.
    - Draggable modal viewer with real-time stats banner, module chips (`All`, `Projects`, `Tasks`, `Email`, `Operations`), status filter, text search, expandable payload inspector, latency badge, and 3s live polling.
 
+---
+
+# Rev U (2026-09-01) — Android widget: status gap found, recorded
+
+Not a build entry — this project (`OdysseusWork/odysseus-android-widget`, a Kotlin/Gradle app, sibling to `odysseus-brave-extension`) had no record anywhere: not here, not in `PROJECTS_CATALOG_RECORD.md`. This entry exists to close that gap with what's actually confirmed, not to claim it's finished.
+
+**Confirmed, by reading the source and the filesystem:**
+- Real source tree under `app/src/main/java/com/odysseus/widget/`: `OdysseusWidgetProvider.kt`, `OdysseusRemoteViewsFactory.kt`, `OdysseusWidgetService.kt`, `network/ApiClient.kt`, `network/RouteManager.kt`, `model/ToDoItem.kt`, `model/ProjectItem.kt`, `ui/QuickAddActivity.kt`, `ui/SettingsActivity.kt`, plus widget/activity layout XMLs.
+- `ApiClient.kt` calls a real, already-merged backend: `GET/POST /api/companion/todos` and `/api/companion/todos/toggle` (`companion/routes.py`, `companion/todos.py`, on `daily-driver`/`local-agent-2`) — `fetchTodos`, `toggleTodo`, `createTodo` are implemented, not stubbed.
+- No `TODO`/`FIXME`/stub/placeholder markers anywhere in the widget's source.
+- A `debug` build's compiled artifacts exist under `app/build/`, so it has built successfully at least once.
+
+**Not confirmed — genuinely unknown, not guessed:**
+- Whether it currently installs and runs correctly on the phone (not tested this pass — reading only).
+- Whether every UI path (quick-add, settings, toggle-from-launcher) is wired end-to-end versus just the pieces read here.
+- Who is doing the remaining work on it, or what "remaining work" even consists of — no task list exists for this project anywhere.
+
 
