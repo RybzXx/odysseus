@@ -28,8 +28,7 @@ def setup_activity_log_routes() -> APIRouter:
         search: Optional[str] = Query(default=None),
     ):
         """List and filter non-chat system query and activity logs."""
-        user = get_current_user(request)
-        owner = getattr(user, "username", None) if user else "default"
+        owner = get_current_user(request) or "default"
         return get_system_logs(
             limit=limit,
             offset=offset,
@@ -43,8 +42,7 @@ def setup_activity_log_routes() -> APIRouter:
     @router.get("/stats")
     async def activity_log_stats(request: Request):
         """Get real-time statistics for all system queries and module operations."""
-        user = get_current_user(request)
-        owner = getattr(user, "username", None) if user else "default"
+        owner = get_current_user(request) or "default"
         return get_system_log_stats(owner=owner)
 
     @router.delete("/clear")
@@ -53,7 +51,6 @@ def setup_activity_log_routes() -> APIRouter:
         older_than_days: Optional[int] = Query(default=None, ge=1, le=365),
     ):
         """Prune or clear older system query logs."""
-        user = get_current_user(request)
         deleted = prune_system_logs(older_than_days=older_than_days)
         return {"ok": True, "deleted_count": deleted}
 
