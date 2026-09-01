@@ -285,7 +285,21 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
         except Exception as e:
             logger.debug("Scheduled email index query deferred: %s", e)
 
-    # 5. Ensure at least a default account descriptor if none registered
+    # 5. Normalize accounts list: ensure all account_ids in raw_emails have descriptors
+    existing_acc_ids = {a["id"] for a in accounts_out}
+    discovered_acc_ids = {e.get("account_id") for e in raw_emails if e.get("account_id")}
+    
+    for acc_k in sorted(discovered_acc_ids):
+        if acc_k not in existing_acc_ids:
+            existing_acc_ids.add(acc_k)
+            name_label = "Primary Inbox" if acc_k == "default" else f"Account {acc_k[:8]}"
+            accounts_out.append({
+                "id": acc_k,
+                "name": name_label,
+                "email": name_label,
+                "is_default": (acc_k == "default" or len(accounts_out) == 0),
+            })
+
     if not accounts_out:
         accounts_out = [
             {
