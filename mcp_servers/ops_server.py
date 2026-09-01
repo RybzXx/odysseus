@@ -84,6 +84,18 @@ def _config() -> tuple[str, str] | None:
     base_url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
     if not base_url or not key:
+        from dotenv import load_dotenv
+        load_dotenv(encoding="utf-8-sig")
+        for env_path in [
+            Path("/root/odysseus/.env"),
+            Path(__file__).resolve().parent.parent / ".env",
+            Path(os.getcwd()) / ".env",
+        ]:
+            if env_path.exists():
+                load_dotenv(env_path, encoding="utf-8-sig")
+        base_url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not base_url or not key:
         return None
     return base_url, key
 
@@ -117,7 +129,10 @@ async def _sb_request(
     body are all errors, never a partial view. A caller that treated a
     truncated worklist as complete would report or act on rows it never saw.
     """
-    base_url, key = _config()  # type: ignore[misc]
+    cfg = _config()
+    if cfg is None:
+        raise OpsApiError(_CONFIG_ERROR)
+    base_url, key = cfg
     url = f"{base_url}/rest/v1/{table}"
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     if prefer:
