@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -216,11 +217,24 @@ def toggle_todo(
         task.completed = target_completed
         task.updated_at = datetime.now(timezone.utc)
 
-        if project and target_completed != cur_state:
-            if target_completed:
-                project.task_completed = (project.task_completed or 0) + 1
-            else:
-                project.task_completed = max(0, (project.task_completed or 0) - 1)
+        if project:
+            # Recompute from the row count rather than increment/decrement a
+            # cached counter: two concurrent requests setting the same task to
+            # the same value would otherwise both read the same pre-write
+            # cur_state and both apply the delta, double-counting one task.
+            # Recomputation is idempotent no matter how many times it runs.
+            # SessionLocal has autoflush=False, so the pending task.completed
+            # write above needs an explicit flush before this count sees it.
+            db.flush()
+            project.task_completed = (
+                db.query(func.count(ProjectTask.id))
+                .filter(
+                    ProjectTask.project_id == project.id,
+                    ProjectTask.completed == True,  # noqa: E712 -- SQLAlchemy column comparison, not a Python bool
+                )
+                .scalar()
+                or 0
+            )
 
         db.commit()
         db.refresh(task)

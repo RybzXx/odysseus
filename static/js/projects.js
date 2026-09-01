@@ -34,6 +34,18 @@ let _structureData = null;
 let _isEditingSpec = false;
 let _statusFilter = 'all'; // 'all' | 'active' | 'on-hold' | 'halted'
 let _searchQuery = '';
+// Monotonic guard: _renderLandingPage awaits _fetchAvailableModels before
+// replacing the DOM, so rapid keystrokes can have multiple calls in flight.
+// Whichever *resolves* last would otherwise win the DOM replace regardless
+// of which was *typed* last, visibly regressing the search box to an older,
+// shorter query. Each call captures a token before its await and checks it
+// after; a call superseded by a newer one aborts without touching the DOM.
+let _landingRenderSeq = 0;
+// A full _renderTasksTab(container) call unconditionally destroys every
+// child node, including any other task's in-progress contenteditable title
+// edit. Handlers that trigger such a re-render must first commit any
+// pending edit (blur) and await its save, or the edit is silently lost.
+let _pendingTaskEditSave = null;
 let _availableModels = [];
 let _selectedModel = null; // { mid, url, displayName, endpointName }
 let _statusModalProject = null;
@@ -1405,6 +1417,7 @@ async function _fetchAvailableModels() {
 }
 
 async function _renderLandingPage() {
+  const mySeq = ++_landingRenderSeq;
   const container = document.getElementById('proj-body');
   if (!container) return;
 
@@ -1427,6 +1440,11 @@ async function _renderLandingPage() {
 
   // Load models if not cached
   await _fetchAvailableModels();
+
+  // A newer call to this function started while we were awaiting -- its
+  // result (or eventual result) supersedes ours. Abort without touching the
+  // DOM so we can't overwrite fresher content with stale content.
+  if (mySeq !== _landingRenderSeq) return;
 
   if (_projects.length === 0) {
     container.innerHTML = `<div style="padding:40px; text-align:center; color:var(--fg-muted);">No projects found. Create one to get started!</div>`;
@@ -1617,9 +1635,12 @@ async function _renderLandingPage() {
   // Wire Search Input
   const searchInput = container.querySelector('#proj-search-input');
   if (searchInput) {
-    searchInput.addEventListener('input', (e) => {
+    searchInput.addEventListener('input', async (e) => {
       _searchQuery = e.target.value;
-      _renderLandingPage();
+      // _renderLandingPage is async (awaits _fetchAvailableModels before
+      // replacing innerHTML) -- focus must wait for that replacement, or it
+      // lands on the input node that's about to be discarded.
+      await _renderLandingPage();
       const nextInput = document.querySelector('#proj-search-input');
       if (nextInput) {
         nextInput.focus();
@@ -2258,12 +2279,19 @@ function _renderTasksTab(container) {
   const otherNotes = visibleNotes.filter((n) => !n.pinned);
 
   container.innerHTML = `
-    <!-- 1. Official Project Manifest Tasks (synced with PROJECT.md) -->
+    <!-- Tasks & Notes: one working list for the project. PROJECT.md-synced
+         tasks and workspace notes/checklists remain separate data models
+         (ProjectTask vs Note) -- this is a view-level merge only. -->
+    <div style="font-size:13px; font-weight:600; color:var(--fg-muted,#888); text-transform:uppercase; letter-spacing:0.6px; margin: 4px 0 10px;">
+      Tasks &amp; Notes
+    </div>
+
+    <!-- Official Project Manifest Tasks (synced with PROJECT.md) -->
     <div class="proj-manifest-card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <h3 style="margin:0; font-size:14px; display:flex; align-items:center; gap:6px;">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-          Project Tasks <span style="font-size:11.5px; color:var(--fg-muted,#888); font-weight:normal;">(${manifestCompletedCount}/${manifestTasks.length} done &bull; synced to PROJECT.md)</span>
+        <h3 style="margin:0; font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px; color:var(--fg-muted,#888);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Project Tasks <span style="font-size:11.5px; font-weight:normal;">(${manifestCompletedCount}/${manifestTasks.length} done &bull; synced to PROJECT.md)</span>
         </h3>
       </div>
 
@@ -2276,7 +2304,7 @@ function _renderTasksTab(container) {
           ${manifestTasks.map(t => `
             <div class="proj-manifest-task-row ${t.completed ? 'done' : ''}" data-task-id="${_esc(t.id)}">
               <input type="checkbox" class="proj-manifest-task-checkbox" ${t.completed ? 'checked' : ''} data-task-id="${_esc(t.id)}" />
-              <span class="proj-manifest-task-text">${_esc(t.title)}</span>
+              <span class="proj-manifest-task-text" contenteditable="true" spellcheck="false" data-task-id="${_esc(t.id)}" title="Click to edit">${_esc(t.title)}</span>
               <button class="proj-card-btn del-btn proj-manifest-del-btn" data-task-id="${_esc(t.id)}" title="Delete task from PROJECT.md">🗑️</button>
             </div>
           `).join('')}
@@ -2289,12 +2317,7 @@ function _renderTasksTab(container) {
       </div>
     </div>
 
-    <!-- 2. Workspace Sticky Notes & Ad-hoc Checklists -->
-    <div style="font-size:13px; font-weight:600; color:var(--fg-muted,#888); text-transform:uppercase; letter-spacing:0.6px; margin: 18px 0 10px;">
-      Workspace Notes & Scratchpad
-    </div>
-
-    <!-- Comprehensive Quick-Add Composer -->
+    <!-- Comprehensive Quick-Add Composer (adds a Note/Checklist/File to the list above) -->
     ${!_composerExpanded ? `
       <div class="proj-composer-compact" id="proj-composer-compact" title="Click to add note or checklist">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent,#e8a33d); flex-shrink:0;">
@@ -2423,6 +2446,7 @@ function _renderTasksTab(container) {
         p.task_completed = (p.tasks || []).filter(t => t.completed).length;
         p.progress = (p.task_total > 0) ? Math.round((p.task_completed / p.task_total) * 100) : 0;
         _updateHeaderState();
+        await _flushPendingTaskEdit();
         _renderTasksTab(container);
         uiModule.showToast(isChecked ? 'Task marked complete!' : 'Task reopened');
       } catch (err) {
@@ -2431,6 +2455,66 @@ function _renderTasksTab(container) {
       }
     });
   });
+
+  // Wire Manifest Task Title Edit (click text to edit, matches Notes' inline
+  // contentEditable pattern; Enter commits/blurs, Escape reverts without saving)
+  container.querySelectorAll('.proj-manifest-task-text').forEach(span => {
+    let originalText = span.textContent;
+    span.addEventListener('focus', () => {
+      originalText = span.textContent;
+    });
+    span.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        span.blur();
+      } else if (e.key === 'Escape') {
+        span.textContent = originalText;
+        span.blur();
+      }
+    });
+    span.addEventListener('blur', () => {
+      const taskId = span.getAttribute('data-task-id');
+      const newTitle = span.textContent.trim();
+      if (!newTitle || newTitle === originalText) {
+        span.textContent = originalText;
+        return;
+      }
+      // Assigned synchronously (before the first await) so a re-render
+      // triggered right after this blur can await the in-flight save via
+      // _flushPendingTaskEdit instead of destroying this span mid-save.
+      _pendingTaskEditSave = (async () => {
+        try {
+          const res = await fetch(`/api/projects/${p.id}/tasks/${taskId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: newTitle }),
+          });
+          if (!res.ok) throw new Error('Task title update failed');
+          const task = (p.tasks || []).find(t => t.id === taskId);
+          if (task) task.title = newTitle;
+          uiModule.showToast('Task updated');
+        } catch (err) {
+          uiModule.showError('Task update error: ' + err.message);
+          span.textContent = originalText;
+        } finally {
+          _pendingTaskEditSave = null;
+        }
+      })();
+    });
+  });
+
+  // Any handler about to call _renderTasksTab (a full, destructive rebuild)
+  // must call this first: it commits and awaits a title edit in progress on
+  // a *different* task, rather than silently discarding it.
+  async function _flushPendingTaskEdit() {
+    const active = document.activeElement;
+    if (active && active.classList && active.classList.contains('proj-manifest-task-text')) {
+      active.blur();
+    }
+    if (_pendingTaskEditSave) {
+      await _pendingTaskEditSave;
+    }
+  }
 
   // Wire Manifest Task Delete
   container.querySelectorAll('.proj-manifest-del-btn').forEach(btn => {
@@ -2444,6 +2528,7 @@ function _renderTasksTab(container) {
         p.task_completed = p.tasks.filter(t => t.completed).length;
         p.progress = (p.task_total > 0) ? Math.round((p.task_completed / p.task_total) * 100) : 0;
         _updateHeaderState();
+        await _flushPendingTaskEdit();
         _renderTasksTab(container);
         uiModule.showToast('Task deleted from PROJECT.md');
       } catch (err) {
@@ -2471,6 +2556,7 @@ function _renderTasksTab(container) {
       p.task_completed = p.tasks.filter(t => t.completed).length;
       p.progress = (p.task_total > 0) ? Math.round((p.task_completed / p.task_total) * 100) : 0;
       _updateHeaderState();
+      await _flushPendingTaskEdit();
       _renderTasksTab(container);
       uiModule.showToast('Task added to PROJECT.md');
     } catch (err) {
