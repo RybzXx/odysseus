@@ -2089,6 +2089,21 @@ class ProjectLink(TimestampMixin, Base):
     project = relationship("Project", back_populates="links")
 
 
+class OverviewCache(TimestampMixin, Base):
+    """Owner-scoped persistent SWR cache for the Executive Overview Hub."""
+    __tablename__ = "overview_cache"
+
+    id           = Column(String, primary_key=True, index=True)  # f"{owner or '__global__'}:overview"
+    owner        = Column(String, nullable=True, index=True)
+    payload_json = Column(Text, nullable=False)
+    cached_at    = Column(DateTime, nullable=False, default=utcnow_naive)
+    expires_at   = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index('ix_overview_cache_owner_exp', 'owner', 'expires_at'),
+    )
+
+
 
 
 

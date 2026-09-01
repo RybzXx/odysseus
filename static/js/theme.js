@@ -327,6 +327,11 @@ const _ROUTE_FAVICON_SHAPES = {
     "<rect x='5' y='5' width='5' height='22' rx='1' fill='none' stroke='__C__' stroke-width='2.5'/>" +
     "<rect x='13' y='5' width='5' height='22' rx='1' fill='none' stroke='__C__' stroke-width='2.5'/>" +
     "<rect x='21' y='8' width='6' height='19' rx='1' fill='none' stroke='__C__' stroke-width='2.5' transform='rotate(8 24 17)'/>",
+  '/overview':
+    "<rect x='4' y='4' width='10' height='12' rx='2' fill='none' stroke='__C__' stroke-width='2.5'/>" +
+    "<rect x='18' y='4' width='10' height='7' rx='2' fill='none' stroke='__C__' stroke-width='2.5'/>" +
+    "<rect x='18' y='15' width='10' height='13' rx='2' fill='none' stroke='__C__' stroke-width='2.5'/>" +
+    "<rect x='4' y='20' width='10' height='8' rx='2' fill='none' stroke='__C__' stroke-width='2.5'/>",
 };
 
 function _updateFavicon(fg) {

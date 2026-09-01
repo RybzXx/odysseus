@@ -899,6 +899,10 @@ app.include_router(setup_companion_routes())
 from routes.system.activity_log_routes import setup_activity_log_routes
 app.include_router(setup_activity_log_routes())
 
+# Executive Overview Hub & SWR Briefing
+from routes.overview.overview_routes import setup_overview_routes
+app.include_router(setup_overview_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 @app.get("/")
@@ -951,6 +955,10 @@ async def serve_projects(request: Request):
 
 @app.get("/operations")
 async def serve_operations(request: Request):
+    return await serve_index(request)
+
+@app.get("/overview")
+async def serve_overview(request: Request):
     return await serve_index(request)
 
 @app.get("/library")
