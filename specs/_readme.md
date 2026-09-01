@@ -66,6 +66,7 @@ project documentation.
 - [frontend.md](frontend.md): static SPA, module loading, UI conventions, major JS areas, no-build frontend shape.
 - [integrations.md](integrations.md): Codex/Claude scoped APIs, companion pairing, webhooks, external agent access.
 - [shell-mcp.md](shell-mcp.md): shell execution, background jobs, MCP manager, built-in MCP servers.
+- [system-activity-logger.md](system-activity-logger.md): unified non-chat system query audit log, 10-minute duplicate stacking, stats aggregation, and Activity Log UI modal.
 - [settings-admin.md](settings-admin.md): settings, preferences, presets, backup/import/export, diagnostics, admin wipe.
 - [testing-devops.md](testing-devops.md): pytest, JS tests, Docker, scripts, requirements, local dev expectations.
 
