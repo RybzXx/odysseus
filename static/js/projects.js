@@ -262,7 +262,7 @@ function _injectStyles() {
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 10000;
+      z-index: 2000;
       backdrop-filter: blur(2px);
     }
     .proj-status-modal-card {
@@ -272,6 +272,9 @@ function _injectStyles() {
       padding: 20px;
       width: min(480px, 92vw);
       box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+    }
+    #toast, .toast {
+      z-index: 100100 !important;
     }
     
     #projects-modal .proj-btn {
@@ -1023,17 +1026,17 @@ function _wireModalEvents(modalEl) {
     try {
       const res = await fetch(`/api/projects/${_currentProjectId}/sync`, { method: 'POST' });
       if (!res.ok) throw new Error('Sync failed');
-      uiModule.showToast('Project synced with disk!');
+      _notifyToast('Project synced with disk!');
       await _loadProjectDetail(_currentProjectId);
     } catch (err) {
-      uiModule.showError('Disk sync error: ' + err.message);
+      _notifyToast('Disk sync error: ' + err.message, true);
     }
   });
 
   modalEl.querySelector('#proj-agent-btn')?.addEventListener('click', async () => {
     if (!_currentProjectId) return;
     try {
-      uiModule.showToast('Spawning Project Agent Session...');
+      _notifyToast('Spawning Project Agent Session...');
       const res = await fetch(`/api/projects/${_currentProjectId}/agent_session`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to spawn agent session');
       const data = await res.json();
@@ -1042,7 +1045,7 @@ function _wireModalEvents(modalEl) {
         window.sessionModule.switchSession(data.session_id);
       }
     } catch (err) {
-      uiModule.showError('Agent spawn error: ' + err.message);
+      _notifyToast('Agent spawn error: ' + err.message, true);
     }
   });
 
@@ -3118,10 +3121,10 @@ function _renderAddLinkInlineForm() {
         body: JSON.stringify({ target_type: targetType, target_id: targetId, label }),
       });
       if (!res.ok) throw new Error('Failed to create link');
-      uiModule.showToast('Entity linked to project!');
+      _notifyToast('Entity linked to project!');
       await _loadProjectDetail(p.id);
     } catch (err) {
-      uiModule.showError('Link creation error: ' + err.message);
+      _notifyToast('Link creation error: ' + err.message, true);
     }
   });
 }
