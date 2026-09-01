@@ -27,7 +27,11 @@ from src.tool_security import (
     is_public_blocked_tool,
     owner_is_admin_or_single_user,
 )
-from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
+from src.tool_capabilities import (
+    ACTIVE_RUN_SECURITY,
+    ToolRunSecurityContext,
+    blocked_tool_result,
+)
 from src.tool_approvals import ExactToolApproval
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
@@ -709,7 +713,12 @@ async def execute_tool_block(
                 decision.reason or "Tool blocked by external-context policy.",
             )
 
-    token = _active_workspace.set(workspace or None)
+    workspace_token = _active_workspace.set(workspace or None)
+    security_token = ACTIVE_RUN_SECURITY.set(
+        security_context
+        if isinstance(security_context, ToolRunSecurityContext)
+        else None
+    )
     try:
         output = await _execute_tool_block_impl(
             block,
@@ -742,7 +751,8 @@ async def execute_tool_block(
             )
         return output
     finally:
-        _active_workspace.reset(token)
+        _active_workspace.reset(workspace_token)
+        ACTIVE_RUN_SECURITY.reset(security_token)
 
 
 async def _execute_tool_block_impl(

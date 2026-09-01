@@ -8,14 +8,18 @@ run-local integrity gates before dispatch.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Optional
 
 from src.tool_approval_scopes import CHAT_SESSION_APPROVAL_CONTEXT_MARKER
 from src.tool_security import BUILTIN_EMAIL_TOOLS
+
+logger = logging.getLogger(__name__)
 
 
 class ToolEffect(str, Enum):
@@ -38,6 +42,45 @@ class ResultIntegrity(str, Enum):
     SYSTEM = "system"
     WORKSPACE_UNTRUSTED = "workspace_untrusted"
     EXTERNAL_UNTRUSTED = "external_untrusted"
+
+
+# Ascending taint order: index is rank, not membership. Anything not listed
+# here has no defined rank and must go through coerce_result_integrity first.
+_RESULT_INTEGRITY_RANK: Mapping[ResultIntegrity, int] = MappingProxyType(
+    {
+        ResultIntegrity.SYSTEM: 0,
+        ResultIntegrity.WORKSPACE_UNTRUSTED: 1,
+        ResultIntegrity.EXTERNAL_UNTRUSTED: 2,
+    }
+)
+
+
+def coerce_result_integrity(value: Any) -> ResultIntegrity:
+    """Map a stored/raw value to ResultIntegrity, failing closed on the unknown."""
+    if isinstance(value, ResultIntegrity):
+        return value
+    if isinstance(value, str):
+        try:
+            return ResultIntegrity(value)
+        except ValueError:
+            pass
+    return ResultIntegrity.EXTERNAL_UNTRUSTED
+
+
+def combine_result_integrity(
+    levels: Iterable[ResultIntegrity],
+) -> ResultIntegrity:
+    """Return the most-tainted level in `levels`.
+
+    An empty iterable returns SYSTEM: a read that returned no rows contributed
+    no taint. Callers that need "no rows read yet" to mean something else must
+    track that separately.
+    """
+    result = ResultIntegrity.SYSTEM
+    for level in levels:
+        if _RESULT_INTEGRITY_RANK[level] > _RESULT_INTEGRITY_RANK[result]:
+            result = level
+    return result
 
 
 @dataclass(frozen=True)
@@ -696,6 +739,18 @@ def messages_contain_external_untrusted_context(messages: Iterable[dict]) -> boo
     return False
 
 
+# ws-02: the storage layer's ORM load hook (core/database.py) runs deep inside
+# SQLAlchemy with no argument path back to the calling tool execution. This
+# ContextVar is how it finds the active run's security context, matching the
+# ContextVar pattern already used for per-call workspace/owner binding
+# (src/tool_execution.py's _active_workspace, mcp_servers/email_server.py's
+# _CURRENT_OWNER). None outside of an instrumented tool execution — DB reads
+# there are not attributed to any run and are not observed.
+ACTIVE_RUN_SECURITY: ContextVar[Optional["ToolRunSecurityContext"]] = ContextVar(
+    "active_run_security", default=None
+)
+
+
 @dataclass
 class ToolRunSecurityContext:
     """Server-owned integrity state for one agent run."""
@@ -708,6 +763,11 @@ class ToolRunSecurityContext:
     # The bypass affects only this automatic gate; current tool policy, ownership,
     # workspace confinement, and execution/sandbox restrictions still apply.
     approval_gate_bypassed: bool = False
+    # Shadow mode (ws-02, I7): the max ResultIntegrity seen across all rows any
+    # storage read returned this run. Recorded only; decision_for() does not
+    # consult this yet. Wiring it into real enforcement is a separate, reversible
+    # step behind its own flag, taken only after a shadow-mode observation period.
+    shadow_data_integrity: ResultIntegrity = ResultIntegrity.SYSTEM
 
     def observe_messages(self, messages: Iterable[dict]) -> None:
         """Apply server-owned chat scope and promote untrusted prompt context."""
@@ -756,6 +816,32 @@ class ToolRunSecurityContext:
         self.external_untrusted_context_seen = True
         if isinstance(tool_name, str) and tool_name not in self.external_sources:
             self.external_sources.append(tool_name)
+
+    def observe_data_integrity(
+        self,
+        level: Any,
+        *,
+        source_ref: str,
+        row_id: str | None = None,
+    ) -> ResultIntegrity:
+        """Record a storage read's combined row integrity. Shadow mode: logs and
+        updates shadow_data_integrity only; never touches external_untrusted_context_seen
+        or any value decision_for() consults.
+        """
+        coerced = coerce_result_integrity(level)
+        self.shadow_data_integrity = combine_result_integrity(
+            [self.shadow_data_integrity, coerced]
+        )
+        logger.info(
+            "ws02_shadow_data_integrity run_id=%s source_ref=%s row_id=%s "
+            "observed=%s combined=%s",
+            self.run_id,
+            source_ref,
+            row_id,
+            coerced.value,
+            self.shadow_data_integrity.value,
+        )
+        return coerced
 
 
 def blocked_tool_result(tool_name: Any, reason: str) -> tuple[str, dict]:

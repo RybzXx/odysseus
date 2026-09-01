@@ -147,6 +147,36 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor.close()
 
 
+# ws-02 (Q1: storage-layer boundary). propagate=True on the Base class, not an
+# instance, means every model mapped now or later inherits this listener with
+# no per-model opt-in — a model added without ever hearing about ws-02 is still
+# observed. A model with no `integrity` column reads back EXTERNAL_UNTRUSTED
+# (I1: fail closed on unknown provenance); there is no exemption list, because
+# an exemption would itself be an undeclared, unaudited promotion to SYSTEM,
+# which I4 reserves for the declassification helpers only.
+# Shadow mode only (I7): this observes and logs, it does not block anything.
+# Must never raise — a bug here must not break every DB read in the app.
+@event.listens_for(Base, "load", propagate=True)
+def _observe_row_integrity_shadow(instance, _load_context):
+    try:
+        from src.tool_capabilities import ACTIVE_RUN_SECURITY, coerce_result_integrity
+
+        run_security = ACTIVE_RUN_SECURITY.get()
+        if run_security is None:
+            return
+        table_name = instance.__table__.name
+        row_id = getattr(instance, "id", None)
+        source_ref = getattr(instance, "source_ref", None) or f"{table_name}:{row_id}"
+        level = coerce_result_integrity(getattr(instance, "integrity", None))
+        run_security.observe_data_integrity(
+            level,
+            source_ref=source_ref,
+            row_id=str(row_id) if row_id is not None else None,
+        )
+    except Exception:
+        logger.exception("ws02_shadow_integrity_hook_failed")
+
+
 class EncryptedText(TypeDecorator):
     """Text column transparently encrypted at rest via src.secret_storage.
 
