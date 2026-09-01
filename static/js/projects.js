@@ -1069,6 +1069,14 @@ function _wireModalEvents(modalEl) {
 // Data Fetching & State
 // ---------------------------------------------------------------------------
 
+function _statusRank(status) {
+  const s = (status || 'active').toLowerCase().trim();
+  if (s === 'active') return 0;
+  if (['on-hold', 'on_hold', 'paused'].includes(s)) return 1;
+  if (['halted', 'archived', 'stopped'].includes(s)) return 2;
+  return 3;
+}
+
 async function _fetchProjectsList() {
   try {
     const res = await fetch('/api/projects');
@@ -1076,6 +1084,15 @@ async function _fetchProjectsList() {
     const data = await res.json();
     _projects = data.projects || [];
     
+    // Sort Active projects to the beginning
+    _projects.sort((a, b) => {
+      const rankDiff = _statusRank(a.status) - _statusRank(b.status);
+      if (rankDiff !== 0) return rankDiff;
+      const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
+      const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
+      return timeB - timeA;
+    });
+
     const selectEl = document.getElementById('proj-select');
     if (selectEl) {
       selectEl.innerHTML = _projects.map((p) => `
@@ -1318,6 +1335,15 @@ async function _renderLandingPage() {
       return matchName || matchSlug || matchSummary || matchReason;
     }
     return true;
+  });
+
+  // Sort so Active projects are displayed first
+  filteredProjects.sort((a, b) => {
+    const rankDiff = _statusRank(a.status) - _statusRank(b.status);
+    if (rankDiff !== 0) return rankDiff;
+    const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
+    const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
+    return timeB - timeA;
   });
 
   // Build model select options

@@ -102,11 +102,16 @@ def setup_projects_routes() -> APIRouter:
                 q = q.filter((Project.owner == owner) | (Project.owner == None))
             if status and status != "all":
                 q = q.filter(Project.status == status)
-            if query:
-                search_term = f"%{query.strip()}%"
-                q = q.filter((Project.name.ilike(search_term)) | (Project.description.ilike(search_term)))
-
-            projects = q.order_by(Project.updated_at.desc()).all()
+            from sqlalchemy import case
+            status_order = case(
+                (Project.status == "active", 0),
+                (Project.status == "on-hold", 1),
+                (Project.status == "paused", 1),
+                (Project.status == "halted", 2),
+                (Project.status == "archived", 2),
+                else_=3
+            )
+            projects = q.order_by(status_order.asc(), Project.updated_at.desc()).all()
             return {"projects": [project_to_dict(p, db=db, include_tasks=False, include_links=False, include_pinned_notes=True) for p in projects]}
         finally:
             db.close()
