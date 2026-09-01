@@ -2048,7 +2048,7 @@ function _openImageLightbox(url, title = 'Image Preview') {
   overlay.querySelector('#lightbox-close-btn')?.addEventListener('click', () => overlay.remove());
   overlay.querySelector('#lightbox-copy-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(window.location.origin + url);
-    uiModule.showToast('Copied image URL to clipboard!');
+    _notifyToast('Copied image URL to clipboard!');
   });
 
   document.body.appendChild(overlay);
@@ -2681,7 +2681,7 @@ function _wireNoteCards(container, project) {
           body: JSON.stringify({ items: note.items }),
         });
       } catch (err) {
-        uiModule.showError('Failed to update task: ' + err.message);
+        _notifyToast('Failed to update task: ' + err.message, true);
       }
     });
   });
@@ -2719,7 +2719,7 @@ function _wireNoteCards(container, project) {
               body: JSON.stringify({ items: note.items }),
             });
           } catch (err) {
-            if(window.uiModule) window.uiModule.showError(err.message);
+            _notifyToast(err.message, true);
           }
         }
       }
@@ -2757,7 +2757,7 @@ function _wireNoteCards(container, project) {
             body: JSON.stringify({ items: note.items }),
           });
         } catch (err) {
-          uiModule.showError(err.message);
+          _notifyToast(err.message, true);
         }
       }
     });
@@ -2782,7 +2782,7 @@ function _wireNoteCards(container, project) {
           body: JSON.stringify({ items: note.items }),
         });
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -2819,11 +2819,11 @@ function _wireNoteCards(container, project) {
       if (!Array.isArray(note.attachments)) note.attachments = [];
       for (const file of input.files) {
         try {
-          uiModule.showToast(`Uploading ${file.name}...`);
+          _notifyToast(`Uploading ${file.name}...`);
           const att = await _uploadAndAttachFile(file);
           note.attachments.push(att);
         } catch (err) {
-          uiModule.showError(err.message);
+          _notifyToast(err.message, true);
         }
       }
       _renderTasksTab(container);
@@ -2835,7 +2835,7 @@ function _wireNoteCards(container, project) {
           body: JSON.stringify({ attachments: note.attachments }),
         });
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -2858,7 +2858,7 @@ function _wireNoteCards(container, project) {
           body: JSON.stringify({ pinned: note.pinned }),
         });
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -2872,7 +2872,7 @@ function _wireNoteCards(container, project) {
       if (!note) return;
 
       try {
-        uiModule.showToast(`Spawning Agent session for: "${note.title}"...`);
+        _notifyToast(`Spawning Agent session for: "${note.title}"...`);
         const res = await fetch(`/api/projects/${project.id}/agent_session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

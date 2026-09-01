@@ -7,6 +7,7 @@ and bidirectional disk-sync to the Odysseus UI and agent services.
 
 import logging
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
