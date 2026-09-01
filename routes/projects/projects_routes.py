@@ -26,6 +26,7 @@ from src.projects_manager import (
     get_project_structure_and_spec,
     parse_project_manifest,
     serialize_project_manifest,
+    append_project_execution_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -298,6 +299,17 @@ def setup_projects_routes() -> APIRouter:
             project.agent_summary = summary_text
             db.commit()
             db.refresh(project)
+
+            # Record sequential execution entry in PROJECT.md and logs/
+            status_tag = "completed" if (model_used != "heuristic-extractor" and not llm_error) else ("fallback" if llm_error else "completed")
+            append_project_execution_log(
+                project.id,
+                "AI Summary Generation",
+                summary_text,
+                status=status_tag,
+                model=model_used,
+                db=db,
+            )
 
             return {
                 "ok": True,

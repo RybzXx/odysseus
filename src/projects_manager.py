@@ -732,3 +732,67 @@ def get_project_structure_and_spec(project_id: str, db=None) -> Dict[str, Any]:
         if close_db:
             db.close()
 
+
+def append_project_execution_log(
+    project_id: str,
+    action: str,
+    details: str,
+    status: str = "completed",
+    model: Optional[str] = None,
+    db=None,
+) -> None:
+    """Append a structured, sequential execution entry into PROJECT.md and the project logs/ directory."""
+    close_db = False
+    if db is None:
+        db = cdb.SessionLocal()
+        close_db = True
+    try:
+        project = db.query(Project).filter((Project.id == project_id) | (Project.slug == project_id)).first()
+        if not project or not project.folder_path:
+            return
+
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        model_str = f" via `{model}`" if model else ""
+        status_str = f"[{status.upper()}]"
+        clean_details = " ".join(details.splitlines()).strip()
+        if len(clean_details) > 200:
+            clean_details = clean_details[:197] + "..."
+        entry_line = f"- *{now_iso}* {status_str} **{action}**{model_str}: {clean_details}"
+
+        # 1. Append to PROJECT.md ## Execution Log section
+        if project.manifest_path and Path(project.manifest_path).exists():
+            try:
+                manifest_path = Path(project.manifest_path)
+                raw_text = manifest_path.read_text(encoding="utf-8")
+                metadata, body = parse_project_manifest(raw_text)
+
+                if re.search(r"^## Execution Log.*?(?=^## |\Z)", body, flags=re.MULTILINE | re.DOTALL):
+                    body = re.sub(
+                        r"^(## Execution Log\s*\n)",
+                        r"\1" + entry_line.replace("\\", "\\\\") + "\n",
+                        body,
+                        flags=re.MULTILINE,
+                    )
+                else:
+                    body = f"{body.strip()}\n\n## Execution Log\n{entry_line}\n"
+
+                manifest_path.write_text(serialize_project_manifest(metadata, body), encoding="utf-8")
+            except Exception as me:
+                logger.warning(f"Failed to append execution log to PROJECT.md for {project_id}: {me}")
+
+        # 2. Append to logs/execution.log
+        try:
+            logs_dir = Path(project.folder_path) / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            log_file = logs_dir / "execution.log"
+            with log_file.open("a", encoding="utf-8") as f:
+                f.write(f"[{now_iso}] status={status} action={action} model={model or 'none'} details={details}\n")
+        except Exception as le:
+            logger.warning(f"Failed to write to logs/execution.log for {project_id}: {le}")
+    except Exception as e:
+        logger.warning(f"Failed to record execution log for project {project_id}: {e}")
+    finally:
+        if close_db:
+            db.close()
+
+

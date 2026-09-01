@@ -39,6 +39,123 @@ let _selectedModel = null; // { mid, url, displayName, endpointName }
 let _statusModalProject = null;
 let _stylesInjected = false;
 
+// Sequential Task Queue Manager for Project Operations
+const _projectTaskQueue = {
+  queue: [],
+  activeTask: null,
+
+  enqueue(task) {
+    if (this.activeTask && this.activeTask.id === task.id) {
+      _notifyToast(`Summarization for "${task.projectName}" is already running. Click 'Halt' to cancel.`, true);
+      return;
+    }
+    const existingIdx = this.queue.findIndex(t => t.id === task.id);
+    if (existingIdx >= 0) {
+      _notifyToast(`"${task.projectName}" is already queued at position #${existingIdx + 1}.`, true);
+      return;
+    }
+
+    this.queue.push(task);
+    if (!this.activeTask) {
+      this._processNext();
+    } else {
+      const pos = this.queue.length;
+      _notifyToast(`Queued summary for "${task.projectName}" (Queue position: #${pos})`);
+      this._updateButtons();
+    }
+  },
+
+  async _processNext() {
+    if (this.queue.length === 0) {
+      this.activeTask = null;
+      this._updateButtons();
+      return;
+    }
+
+    this.activeTask = this.queue.shift();
+    const task = this.activeTask;
+    task.controller = new AbortController();
+    this._updateButtons();
+
+    const modelName = task.model?.displayName || task.model?.mid || 'AI';
+    _notifyToast(`[Running] Summarizing "${task.projectName}" via ${modelName}... (Click 'Halt' to stop)`);
+
+    try {
+      const payload = task.model ? { model: task.model.mid, endpoint_url: task.model.url } : {};
+      const res = await fetch(`/api/projects/${task.id}/summarize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: task.controller.signal,
+      });
+
+      if (!res.ok) throw new Error('Summarization failed');
+      const data = await res.json();
+      if (data.llm_error) {
+        _notifyToast(`AI summarize error (${data.llm_error}). Fell back to spec extractor.`, true);
+      } else {
+        _notifyToast(`[Completed] Summarized "${task.projectName}" via ${data.model_used || modelName}!`);
+      }
+      await _fetchProjectsList();
+      _renderLandingPage();
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        _notifyToast(`[Halted] Summarization for "${task.projectName}" stopped by user.`, true);
+      } else {
+        _notifyToast(`[Error] Summarization failed for "${task.projectName}": ${err.message}`, true);
+      }
+      await _fetchProjectsList();
+      _renderLandingPage();
+    } finally {
+      this.activeTask = null;
+      this._processNext();
+    }
+  },
+
+  halt(projectId) {
+    if (this.activeTask && this.activeTask.id === projectId) {
+      if (this.activeTask.controller) {
+        this.activeTask.controller.abort();
+      }
+      return;
+    }
+    const idx = this.queue.findIndex(t => t.id === projectId);
+    if (idx >= 0) {
+      const removed = this.queue.splice(idx, 1)[0];
+      _notifyToast(`Removed "${removed.projectName}" from summary queue.`);
+      this._updateButtons();
+    }
+  },
+
+  getStatus(projectId) {
+    if (this.activeTask && this.activeTask.id === projectId) {
+      return { state: 'running' };
+    }
+    const pos = this.queue.findIndex(t => t.id === projectId);
+    if (pos >= 0) {
+      return { state: 'queued', position: pos + 1 };
+    }
+    return null;
+  },
+
+  _updateButtons() {
+    document.querySelectorAll('.proj-summarize-btn').forEach(btn => {
+      const pid = btn.getAttribute('data-id');
+      const status = this.getStatus(pid);
+      if (status?.state === 'running') {
+        btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin" style="margin-right:4px;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Running... <span class="proj-halt-btn" data-id="${_esc(pid)}" style="background:#dc2626;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:6px;font-weight:bold;cursor:pointer;">Halt</span>`;
+        btn.classList.add('proj-btn-running');
+      } else if (status?.state === 'queued') {
+        btn.innerHTML = `⏳ Queued (#${status.position}) <span class="proj-cancel-btn" data-id="${_esc(pid)}" style="color:#ef4444;margin-left:6px;font-weight:bold;cursor:pointer;" title="Cancel">✕</span>`;
+        btn.classList.remove('proj-btn-running');
+      } else {
+        btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Auto-Summarize`;
+        btn.classList.remove('proj-btn-running');
+      }
+    });
+  }
+};
+
 const NOTE_COLORS = [
   { key: 'default', label: 'Default', bg: 'var(--bg-elev, #222)', border: 'var(--border, #3a3a3a)' },
   { key: 'yellow', label: 'Yellow', bg: 'rgba(242, 194, 68, 0.16)', border: '#f2c244' },
@@ -1435,6 +1552,14 @@ async function _renderLandingPage() {
         `;
       }
 
+      const taskStatus = _projectTaskQueue.getStatus(p.id);
+      let summarizeBtnContent = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Auto-Summarize`;
+      if (taskStatus?.state === 'running') {
+        summarizeBtnContent = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin" style="margin-right:4px;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Running... <span class="proj-halt-btn" data-id="${_esc(p.id)}" style="background:#dc2626;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:6px;font-weight:bold;cursor:pointer;">Halt</span>`;
+      } else if (taskStatus?.state === 'queued') {
+        summarizeBtnContent = `⏳ Queued (#${taskStatus.position}) <span class="proj-cancel-btn" data-id="${_esc(p.id)}" style="color:#ef4444;margin-left:6px;font-weight:bold;cursor:pointer;" title="Cancel">✕</span>`;
+      }
+
       return `
         <div class="proj-landing-card" style="background: var(--bg-elev, #222); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start;">
@@ -1457,9 +1582,8 @@ async function _renderLandingPage() {
           </div>
           
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px;">
-            <button class="proj-btn proj-summarize-btn" data-id="${_esc(p.id)}" style="font-size: 11.5px;">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-              Auto-Summarize
+            <button class="proj-btn proj-summarize-btn ${taskStatus?.state === 'running' ? 'proj-btn-running' : ''}" data-id="${_esc(p.id)}" style="font-size: 11.5px;">
+              ${summarizeBtnContent}
             </button>
 
             <button class="proj-btn proj-edit-status-btn" data-id="${_esc(p.id)}" style="font-size: 11.5px;">
@@ -1531,34 +1655,33 @@ async function _renderLandingPage() {
     });
   });
 
-  // Wire Auto-Summarize Buttons
+  // Wire Auto-Summarize Buttons with Sequential Queue & Halt
   container.querySelectorAll('.proj-summarize-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', (e) => {
       const id = btn.getAttribute('data-id');
-      const originalText = btn.innerHTML;
-      btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin" style="margin-right:4px;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Summarizing...`;
-      btn.disabled = true;
-      try {
-        const payload = _selectedModel ? { model: _selectedModel.mid, endpoint_url: _selectedModel.url } : {};
-        const res = await fetch(`/api/projects/${id}/summarize`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) throw new Error('Summarization failed');
-        const data = await res.json();
-        if (data.llm_error) {
-          _notifyToast(`AI summarize error (${data.llm_error}). Fell back to spec extractor.`, true);
-        } else {
-          _notifyToast(`Project summarized via ${data.model_used || 'AI'}!`);
-        }
-        await _fetchProjectsList();
-        _renderLandingPage();
-      } catch (err) {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-        _notifyToast(err.message, true);
+      const project = _projects.find(p => p.id === id);
+      const projectName = project ? project.name : 'Project';
+
+      // If clicked explicitly on halt or cancel badge
+      if (e.target.closest('.proj-halt-btn') || e.target.closest('.proj-cancel-btn')) {
+        e.stopPropagation();
+        _projectTaskQueue.halt(id);
+        return;
       }
+
+      const status = _projectTaskQueue.getStatus(id);
+      if (status) {
+        // Already active or queued, clicking button stops/cancels it
+        _projectTaskQueue.halt(id);
+        return;
+      }
+
+      // Enqueue sequential task
+      _projectTaskQueue.enqueue({
+        id: id,
+        projectName: projectName,
+        model: _selectedModel,
+      });
     });
   });
 
