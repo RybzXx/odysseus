@@ -28,6 +28,7 @@ from src.projects_manager import (
     serialize_project_manifest,
     append_project_execution_log,
 )
+from src.system_logger import log_system_query
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,16 @@ def setup_projects_routes() -> APIRouter:
                 initial_content=body.content,
                 links=body.links,
             )
+            log_system_query(
+                module="projects",
+                action="create_project",
+                target_id=result.get("id"),
+                target_name=result.get("name"),
+                query_type="system",
+                status="completed",
+                result_preview=f"Created project workspace '{result.get('name')}' ({result.get('slug')})",
+                owner=owner,
+            )
             return {"project": result}
         except Exception as e:
             logger.error(f"Failed to create project: {e}", exc_info=True)
@@ -220,6 +231,17 @@ def setup_projects_routes() -> APIRouter:
                 return {"project": result}
 
             db.refresh(project)
+            log_system_query(
+                module="projects",
+                action="update_project",
+                target_id=project.id,
+                target_name=project.name,
+                query_type="system",
+                status="completed",
+                result_preview=f"Updated status='{project.status}' priority='{project.priority}'",
+                owner=owner,
+                db_session=db,
+            )
             return {"project": project_to_dict(project, db=db, include_tasks=True, include_links=True, include_content=True)}
         finally:
             db.close()
@@ -309,6 +331,24 @@ def setup_projects_routes() -> APIRouter:
                 status=status_tag,
                 model=model_used,
                 db=db,
+            )
+
+            # Central non-chat System Query Log
+            log_system_query(
+                module="projects",
+                action="summarize_project",
+                target_id=project.id,
+                target_name=project.name,
+                query_type="llm" if model_used != "heuristic-extractor" else "fallback",
+                model=model_used,
+                endpoint_url=req_url,
+                prompt_preview=f"Summarize project workspace for {project.name}",
+                result_preview=summary_text,
+                status=status_tag,
+                error=llm_error,
+                metadata={"slug": project.slug, "folder_path": project.folder_path},
+                owner=owner,
+                db_session=db,
             )
 
             return {

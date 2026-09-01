@@ -34,6 +34,7 @@ import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import operationsModule from './js/operations.js';
 import projectsModule from './js/projects.js';
+import activityLogModule from './js/activityLog.js';
 import adminModule from './js/admin.js?v=20260716openrouter3';
 import settingsModule from './js/settings.js?v=20260815approvalsave1';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -1114,6 +1115,19 @@ function initializeEventListeners() {
       if (!Modals.toggle('projects-modal')) {
         if (projectsModule.isProjectsOpen()) projectsModule.closeProjects();
         else projectsModule.openProjects();
+      }
+    });
+  }
+
+  // Activity Log tool button
+  const toolActivityLogBtn = el('tool-activity-log-btn');
+  if (toolActivityLogBtn) {
+    toolActivityLogBtn.addEventListener('click', async () => {
+      if (!activityLogModule) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('activity-log-modal')) {
+        if (activityLogModule.isOpen()) activityLogModule.close();
+        else activityLogModule.open();
       }
     });
   }

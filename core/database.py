@@ -830,6 +830,37 @@ class TaskRun(Base):
     )
 
 
+class SystemQueryLog(Base):
+    """Unified audit and telemetry log for all non-chat system queries, tasks, and operations."""
+    __tablename__ = "system_query_logs"
+
+    id             = Column(String, primary_key=True, index=True)         # "sqlog_<uuid8>"
+    timestamp      = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
+    module         = Column(String, nullable=False, index=True)           # "projects", "tasks", "email", "operations", "notes", "rag", "tools"
+    action         = Column(String, nullable=False, index=True)           # "summarize", "task_run", "email_summary", "disk_sync", "vector_query", "tool_call"
+    target_id      = Column(String, nullable=True, index=True)            # Entity ID (e.g., "proj_685a4b19", "task_abc")
+    target_name    = Column(String, nullable=True)                        # Human-readable entity name (e.g., "Ahmed Omar Dental Clinic")
+    query_type     = Column(String, default="llm", index=True)            # "llm", "tool", "vector_search", "disk_sync", "system"
+    model          = Column(String, nullable=True)                        # Model identifier (e.g. "gemma4:31b", "all-MiniLM-L6-v2")
+    endpoint_url   = Column(String, nullable=True)                        # Endpoint URL (e.g. "https://ollama.com/api/chat")
+    prompt_preview = Column(Text, nullable=True)                          # Input/prompt text (truncated to 2,000 chars)
+    result_preview = Column(Text, nullable=True)                          # Output/summary/result text (truncated to 4,000 chars)
+    status         = Column(String, default="completed", index=True)      # "running", "completed", "error", "fallback", "halted"
+    duration_ms    = Column(Integer, nullable=True)                       # Execution latency in milliseconds
+    tokens_used    = Column(Integer, nullable=True)                       # Token count if reported
+    error          = Column(Text, nullable=True)                          # Error message or HTTP status code
+    repeat_count   = Column(Integer, default=1)                           # Stacking counter for repetitive background checks
+    metadata_json  = Column(JSON, nullable=True)                          # Additional contextual attributes
+    owner          = Column(String, nullable=True, index=True)            # User/Owner scope
+
+    __table_args__ = (
+        Index('ix_sys_query_logs_module_ts', 'module', 'timestamp'),
+        Index('ix_sys_query_logs_owner_ts', 'owner', 'timestamp'),
+        Index('ix_sys_query_logs_status_ts', 'status', 'timestamp'),
+        Index('ix_sys_query_logs_action_target', 'action', 'target_id'),
+    )
+
+
 class Memory(Base):
     """
     SQLAlchemy model for Memory table.
