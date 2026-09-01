@@ -1547,7 +1547,11 @@ async function _renderLandingPage() {
         });
         if (!res.ok) throw new Error('Summarization failed');
         const data = await res.json();
-        _notifyToast(`Project summarized via ${data.model_used || 'AI'}!`);
+        if (data.llm_error) {
+          _notifyToast(`AI summarize error (${data.llm_error}). Fell back to spec extractor.`, true);
+        } else {
+          _notifyToast(`Project summarized via ${data.model_used || 'AI'}!`);
+        }
         await _fetchProjectsList();
         _renderLandingPage();
       } catch (err) {

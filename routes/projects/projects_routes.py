@@ -6,6 +6,7 @@ and bidirectional disk-sync to the Odysseus UI and agent services.
 """
 
 import logging
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from core import database as cdb
-from core.database import Project, ProjectTask, ProjectLink, Session
+from core.database import Project, ProjectTask, ProjectLink, Session, ModelEndpoint
 from src.auth_helpers import get_current_user
 from src.projects_manager import (
     create_project,
@@ -245,6 +246,7 @@ def setup_projects_routes() -> APIRouter:
 
             model_used = "heuristic-extractor"
             summary_text = None
+            llm_error = None
 
             req_model = body.model if body else None
             req_url = body.endpoint_url if body else None
@@ -252,6 +254,20 @@ def setup_projects_routes() -> APIRouter:
             if req_model and req_url:
                 try:
                     from src.llm_core import llm_call_async
+                    from src.endpoint_resolver import build_headers, normalize_base, resolve_endpoint_runtime
+
+                    headers = None
+                    try:
+                        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+                        target_base = normalize_base(req_url)
+                        for ep in endpoints:
+                            ep_base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+                            if normalize_base(ep_base) == target_base or ep.base_url == req_url:
+                                headers = build_headers(api_key, ep_base)
+                                break
+                    except Exception as he:
+                        logger.debug(f"Could not resolve headers for endpoint {req_url}: {he}")
+
                     prompt = (
                         "You are an expert technical product manager. Provide a concise 2-sentence executive summary of this project for display on a project dashboard. "
                         "Focus on what it is, its core tech stack, and primary goal. Return ONLY the plain summary text without quotes, markdown headers, or chat filler.\n\n"
@@ -259,13 +275,14 @@ def setup_projects_routes() -> APIRouter:
                         f"Project Content:\n{manifest_content[:3000]}"
                     )
                     messages = [{"role": "user", "content": prompt}]
-                    summary_res = await llm_call_async(url=req_url, model=req_model, messages=messages, timeout=30)
+                    summary_res = await llm_call_async(url=req_url, model=req_model, messages=messages, headers=headers, timeout=30)
                     if isinstance(summary_res, tuple):
                         summary_res = summary_res[0]
                     if summary_res and summary_res.strip():
                         summary_text = summary_res.strip()
                         model_used = req_model
                 except Exception as err:
+                    llm_error = getattr(err, "detail", None) or str(err)
                     logger.warning(f"LLM summarize failed for {project.slug} with {req_model}: {err}")
 
             if not summary_text:
@@ -286,7 +303,8 @@ def setup_projects_routes() -> APIRouter:
                 "ok": True,
                 "project_id": project.id,
                 "summary": project.agent_summary,
-                "model_used": model_used
+                "model_used": model_used,
+                "llm_error": llm_error,
             }
         finally:
             db.close()
