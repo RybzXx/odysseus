@@ -27,4 +27,9 @@ def get_default_data_dir() -> str:
     """
     if getattr(sys, "frozen", False):
         return os.path.join(os.path.expanduser("~"), ".odysseus", "data")
+    
+    termux_data = "/data/data/com.termux/files/home/odysseus-data"
+    if os.path.exists(termux_data):
+        return termux_data
+
     return os.path.join(get_app_root(), "data")
