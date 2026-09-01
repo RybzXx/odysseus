@@ -2070,4 +2070,34 @@ Not a build entry — this project (`OdysseusWork/odysseus-android-widget`, a Ko
 - Whether every UI path (quick-add, settings, toggle-from-launcher) is wired end-to-end versus just the pieces read here.
 - Who is doing the remaining work on it, or what "remaining work" even consists of — no task list exists for this project anywhere.
 
+---
+
+# Rev V (2026-09-01) — Five bugs fixed and live-verified; Overview screen built; widget build toolchain fixed; one Activity left mid-build
+
+## Bugs found, root-caused, fixed, and verified on the real device/server (not just compiled)
+
+1. **`companion/todos.py`: `project.task_completed` double-counts under concurrent identical toggle requests.** Read-modify-write race on a locally-read `cur_state`. Fixed by recomputing from `COUNT(*) WHERE completed=True` instead of incrementing a cached value. Regression test (`tests/test_companion_todos_counter_race.py`) reproduces the race via two SQLAlchemy sessions holding stale identity-map references; verified to fail against the pre-fix code and pass after.
+2. **`static/js/projects.js`: the Projects-tab search box could regress to an older, shorter query mid-typing.** `_renderLandingPage` had no request-sequencing; whichever concurrent render *resolved* last won the DOM replace, not whichever was *typed* last. Fixed with a monotonic `_landingRenderSeq` token, verified against a standalone reproduction of the exact promise ordering.
+3. **`static/js/projects.js`: editing one task's title while a checkbox/delete/add fired on a different task silently lost the edit.** Those handlers called a full, destructive `_renderTasksTab` rebuild unconditionally. Fixed via `_flushPendingTaskEdit()`, which commits and awaits any in-progress title edit before that rebuild runs.
+4. **`static/js/projects.js`: `_saveComposerState` was called from 4 places but never defined anywhere.** Every call threw `ReferenceError`, aborting the handler before it reached the code that actually changed state — this is why clicking Checklist/Attach File in the note composer appeared stuck on Note, and why the note-search box did nothing on every keystroke (a bug an earlier pass in this same session missed, having checked render timing but not this first line). Fixed: the function now captures the title input's live value into `_composerTitle` before a destructive re-render; checklist rows already live-synced independently and didn't need it.
+5. **Android widget: tapping "Project Task" in Quick Add never actually attached it to a chosen project.** `QuickAddActivity` never passed a `targetId`; the server silently fell back to whichever project was most recently updated anywhere in the system. Fixed with a project-picker `Spinner` defaulting to the widget's current list filter (`RouteManager.filterProjectId`), with override.
+
+All five were deployed to the live phone (fresh ws-01 backup taken first each time) and re-verified post-deploy — including a real end-to-end widget test: recovered the widget's actual configured API token from its own SharedPreferences, triggered a real `ACTION_TOGGLE` broadcast against a real task, and confirmed via direct DB query that the counter fix holds under the real server, then reverted the test data back to its original state.
+
+## Widget build toolchain: fixed a real, separate bug in the process
+
+No `gradlew` existed in `odysseus-android-widget/`. Gradle 9.3.1 was already cached locally (`~/.gradle/wrapper/dists`), invoked directly — but the build failed with "SDK location not found" despite `local.properties` visibly containing the correct `sdk.dir`. Root cause: the file had a UTF-8 BOM, which `java.util.Properties.load()` does not strip, corrupting the `sdk.dir` key. Rewritten without the BOM; builds clean since.
+
+## New: widget "Daily Overview" screen — built, deployed, tested live
+
+- Backend: `GET /api/companion/email-summary` (new — cross-account unread/urgent counts, reads the same cached state file `action_check_email_urgency` writes, same owner-slug algorithm duplicated rather than imported since neither existing call site needed to change). `GET /api/companion/projects` now also returns each project's already-stored `agent_summary` column (no migration needed).
+- Widget: new `OverviewActivity` (read-only, dialog-themed, matching `QuickAddActivity`'s pattern) showing cross-project task progress + each project's agent summary + the email unread/urgent counts, opened via a new dedicated button (`btn_overview`) on the widget's home-screen surface.
+- Verified live on-device: screenshotted the open Overview screen showing real data (115 unread / 23 urgent; 6 real projects with real agent-summary text and correct progress counts), and confirmed the Close button dismisses cleanly with no crash.
+
+## Left mid-build, not finished — stated plainly, not glossed over
+
+A second widget feature (tap a to-do row's body to open a read-only detail view, distinct from tapping its checkbox to toggle) was in progress when this recording pass started:
+- Written: `TaskDetailActivity.kt`, `activity_task_detail.xml`, the `EXTRA_VIEW_DETAIL`-based click-routing split in `OdysseusRemoteViewsFactory.kt` and `OdysseusWidgetProvider.kt`.
+- **Not done: `TaskDetailActivity` is not yet registered in `AndroidManifest.xml`, the project has not been rebuilt since these changes, and none of it has been installed or tested on the device.** Confirmed by grepping the manifest (zero matches) immediately before writing this entry.
+
 
