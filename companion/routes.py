@@ -298,6 +298,12 @@ def setup_companion_routes() -> APIRouter:
         finally:
             db.close()
 
+    @router.get("/email-summary")
+    def get_email_summary(request: Request):
+        """Cross-account unread/urgent email counts, for the widget's overview."""
+        owner = token_owner(request)
+        return {"ok": True, **_todos.fetch_email_summary(owner)}
+
     @router.get("/todos")
     def list_todos(
         request: Request,

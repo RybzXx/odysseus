@@ -50,8 +50,38 @@ def fetch_active_projects(
             "task_total": p.task_total or 0,
             "task_completed": p.task_completed or 0,
             "priority": p.priority or "medium",
+            "agent_summary": p.agent_summary or None,
         })
     return out
+
+
+def fetch_email_summary(owner: Optional[str] = None) -> Dict[str, Any]:
+    """Cross-account unread/urgent email counts, for the widget's overview.
+
+    Reads the same cached state file as GET /api/email/urgency-state
+    (routes/email_routes.py) and the scan that writes it
+    (action_check_email_urgency, src/builtin_actions.py) -- same owner-slug
+    algorithm duplicated here rather than imported, since neither existing
+    call site needs to change for this. Per-item detail (per_uid) is
+    dropped; only the counts are relevant to a summary view.
+    """
+    from pathlib import Path
+
+    from src.constants import DATA_DIR
+
+    slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
+    path = Path(DATA_DIR) / f"email_urgency_state_{slug}.json"
+    if not path.exists():
+        return {"total_unread": 0, "total_urgent": 0, "max_score": 0}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {"total_unread": 0, "total_urgent": 0, "max_score": 0}
+    return {
+        "total_unread": data.get("total_unread", 0),
+        "total_urgent": data.get("total_urgent", 0),
+        "max_score": data.get("max_score", 0),
+    }
 
 
 def fetch_all_todos(
