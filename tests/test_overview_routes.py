@@ -158,7 +158,7 @@ def test_overview_swr_stale_revalidation(test_db, monkeypatch):
         "operations_radar": {"inquiries": []},
     }
     session.add(db.OverviewCache(
-        id="__global__:overview",
+        id="__global__:overview:7",
         owner=None,
         payload_json=json.dumps(stale_payload),
         cached_at=stale_time,
@@ -181,7 +181,7 @@ def test_overview_swr_stale_revalidation(test_db, monkeypatch):
     client = TestClient(app)
 
     # Stale read should return cached data immediately with is_stale: True
-    res = client.get("/api/overview")
+    res = client.get("/api/overview?email_days=7")
     assert res.status_code == 200
     data = res.json()
     assert data["kpis"]["active_projects"] == 99
@@ -213,7 +213,7 @@ async def test_email_digest_urgency_file_parsing(test_db, tmp_path, monkeypatch)
                         "urgency": "critical",
                         "ai_comment": "Requires CEO signature today.",
                         "read": False,
-                        "date": "2026-09-01T12:00:00Z",
+                        "date": datetime.now(timezone.utc).isoformat(),
                     }
                 ]
             }
@@ -222,8 +222,8 @@ async def test_email_digest_urgency_file_parsing(test_db, tmp_path, monkeypatch)
 
     payload = await _build_overview_payload(owner=None, email_days=7)
     digest = payload["email_digest"]
-    assert digest["total_unread"] == 8
-    assert digest["total_urgent"] == 3
+    assert digest["total_unread"] == 1
+    assert digest["total_urgent"] == 1
     assert len(digest["emails"]) >= 1
     first_email = digest["emails"][0]
     assert first_email["sender_name"] == "VIP Client"

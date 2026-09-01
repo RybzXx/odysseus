@@ -564,11 +564,13 @@ function _render() {
     filteredOps = filteredOps.filter(i => i.source === _opsFilterSource);
   }
 
+  const daysLabel = _emailDaysFilter === 1 ? 'Today' : `${_emailDaysFilter}d`;
+
   container.innerHTML = `
     <!-- Top KPI Briefing Banner -->
     <div class="overview-kpi-grid">
       <div class="overview-kpi-card ${kpis.urgent_emails > 0 ? 'urgent' : ''}">
-        <div class="overview-kpi-label">${ICONS.mail} Urgent Emails (7d)</div>
+        <div class="overview-kpi-label">${ICONS.mail} Urgent Emails (${daysLabel})</div>
         <div class="overview-kpi-value">${kpis.urgent_emails || 0}</div>
         <div class="overview-kpi-sub">${kpis.unread_emails || 0} unread across ${emailsData.accounts.length || 1} accounts</div>
       </div>
@@ -592,7 +594,7 @@ function _render() {
         <div class="overview-panel">
           <div class="overview-panel-header">
             ${ICONS.mail}
-            <span>Email Stream (Past 7 Days)</span>
+            <span>Email Stream (${daysLabel})</span>
           </div>
           <div class="overview-panel-body">
             <div class="overview-controls-row">
@@ -610,9 +612,9 @@ function _render() {
             </div>
 
             <div style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto;">
-              ${filteredEmails.length === 0 ? '<div class="overview-empty">No emails matching filters.</div>' : ''}
+              ${filteredEmails.length === 0 ? '<div class="overview-empty">No emails in this duration.</div>' : ''}
               ${filteredEmails.map(em => `
-                <div class="overview-email-item ${!em.read ? 'unread' : ''}" data-email-id="${em.id}">
+                <div class="overview-email-item ${!em.read ? 'unread' : ''}" data-email-id="${em.id}" data-email-uid="${em.uid || ''}" data-email-account-id="${em.account_id || ''}" data-email-folder="${em.folder || 'INBOX'}">
                   <div class="overview-email-top">
                     <span class="overview-email-sender">${_escape(em.sender_name)}</span>
                     ${em.urgency === 'critical' ? `<span class="overview-urgency-badge critical">Critical</span>` : ''}
@@ -745,9 +747,37 @@ function _bindEventListeners(container) {
 
   // Email days preset buttons
   container.querySelectorAll('[data-days]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      _emailDaysFilter = parseInt(btn.dataset.days, 10) || 7;
-      _fetchOverviewData();
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const days = parseInt(btn.dataset.days, 10) || 7;
+      if (_emailDaysFilter === days) return;
+      _emailDaysFilter = days;
+      _fetchOverviewData(false);
+    });
+  });
+
+  // Email item click to open in Email reader
+  container.querySelectorAll('.overview-email-item').forEach(card => {
+    card.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const uid = card.dataset.emailUid;
+      const accountId = card.dataset.emailAccountId;
+      const folder = card.dataset.emailFolder || 'INBOX';
+
+      card.classList.remove('unread');
+
+      try {
+        if (window.openEmailLibrary) {
+          window.openEmailLibrary({ folder, uid, accountId });
+        } else {
+          const mod = await import('./emailLibrary.js?v=20260815approvalsave1');
+          if (mod && mod.openEmailLibrary) {
+            mod.openEmailLibrary({ folder, uid, accountId });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to open email:', err);
+      }
     });
   });
 
