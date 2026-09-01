@@ -28,17 +28,45 @@ def _is_owner_match(row_owner: Optional[str], owner: Optional[str]) -> bool:
     return row_owner is None or row_owner == owner
 
 
+def fetch_active_projects(
+    db: Session,
+    owner: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Fetch active projects list for companion project switcher."""
+    proj_q = db.query(Project).filter(Project.status == "active")
+    if owner is not None:
+        proj_q = proj_q.filter((Project.owner == owner) | (Project.owner == None))
+    projects = proj_q.order_by(Project.priority.desc(), Project.updated_at.desc()).all()
+
+    out: List[Dict[str, Any]] = []
+    for p in projects:
+        if not _is_owner_match(p.owner, owner):
+            continue
+        out.append({
+            "id": p.id,
+            "name": p.name or "Untitled Project",
+            "slug": p.slug or "",
+            "task_total": p.task_total or 0,
+            "task_completed": p.task_completed or 0,
+            "priority": p.priority or "medium",
+        })
+    return out
+
+
 def fetch_all_todos(
     db: Session,
     owner: Optional[str] = None,
     include_completed: bool = False,
     source: str = "all",
+    project_id: Optional[str] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
 
-    # 1. Notes Module
-    if source in ("all", "notes", "note"):
+    # 1. Notes Module (General To-Dos)
+    # Include notes when source is all, notes, note, or general, and no specific project_id is requested
+    include_notes = (source in ("all", "notes", "note", "general") and not project_id) or (project_id == "general")
+    if include_notes:
         note_q = db.query(Note).filter(Note.archived == False)
         if owner is not None:
             note_q = note_q.filter((Note.owner == owner) | (Note.owner == None))
@@ -70,7 +98,7 @@ def fetch_all_todos(
                         "id": f"note:{note.id}:{item_id_key}",
                         "source_type": "note",
                         "source_id": note.id,
-                        "source_title": (note.title or "Note").strip() or "Note",
+                        "source_title": (note.title or "General").strip() or "General",
                         "title": item_title,
                         "completed": is_done,
                         "due_date": note.due_date,
@@ -81,8 +109,11 @@ def fetch_all_todos(
                     })
 
     # 2. Projects Module
-    if source in ("all", "projects", "project"):
+    include_projects = (source in ("all", "projects", "project") or bool(project_id)) and (project_id != "general")
+    if include_projects:
         proj_q = db.query(Project)
+        if project_id:
+            proj_q = proj_q.filter(Project.id == project_id)
         if owner is not None:
             proj_q = proj_q.filter((Project.owner == owner) | (Project.owner == None))
         projects = proj_q.all()

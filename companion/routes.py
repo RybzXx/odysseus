@@ -281,11 +281,29 @@ def setup_companion_routes() -> APIRouter:
 
     # --- UNIFIED TO-DOS GATEWAY FOR COMPANION / WIDGET ---
 
+    @router.get("/projects")
+    def list_active_projects(request: Request):
+        """Fetch active projects list for companion project switcher."""
+        from core.database import SessionLocal
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            projects = _todos.fetch_active_projects(db=db, owner=owner)
+            return {
+                "ok": True,
+                "count": len(projects),
+                "projects": projects,
+            }
+        finally:
+            db.close()
+
     @router.get("/todos")
     def list_todos(
         request: Request,
         include_completed: bool = False,
         source: str = "all",
+        project_id: Optional[str] = None,
         limit: int = 50,
     ):
         """Fetch aggregated active to-dos from Notes checklists and Project tasks."""
@@ -300,6 +318,7 @@ def setup_companion_routes() -> APIRouter:
                 owner=owner,
                 include_completed=include_completed,
                 source=source,
+                project_id=project_id,
                 limit=limit,
             )
             return {
