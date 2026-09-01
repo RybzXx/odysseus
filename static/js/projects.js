@@ -2249,6 +2249,22 @@ function _openDocumentViewer(url, title = 'Document Viewer', mime = '') {
   }
 }
 
+// Called before any _renderTasksTab re-render triggered by a composer-adjacent
+// interaction (type-pill switch, color-dot, note search, filter buttons) that
+// would otherwise wipe the composer's title input via the destructive rebuild.
+// Pre: container is the tasks-tab root (may or may not have the composer open).
+// Post: _composerTitle reflects the title input's current DOM value, if the
+// composer is open; otherwise a no-op. Checklist rows are NOT read here --
+// they already live-sync into _composerChecklistRows on every keystroke
+// (see the .proj-comp-row-input 'input' listener), so re-reading them here
+// would be redundant. Untrimmed: trimming happens once, at Save.
+function _saveComposerState(container) {
+  const titleInput = container.querySelector('#proj-comp-title-input');
+  if (titleInput) {
+    _composerTitle = titleInput.value;
+  }
+}
+
 function _renderTasksTab(container) {
   const p = _currentProject;
   if (!p) return;
