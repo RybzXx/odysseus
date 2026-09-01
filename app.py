@@ -903,6 +903,10 @@ app.include_router(setup_activity_log_routes())
 from routes.overview.overview_routes import setup_overview_routes
 app.include_router(setup_overview_routes())
 
+# AI Work Organisers
+from routes.organisers.organisers_routes import setup_organisers_routes
+app.include_router(setup_organisers_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 @app.get("/")

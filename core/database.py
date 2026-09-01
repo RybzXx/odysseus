@@ -2104,6 +2104,39 @@ class OverviewCache(TimestampMixin, Base):
     )
 
 
+class WorkOrganiser(TimestampMixin, Base):
+    """Semantic workstream organiser binding emails, tasks, memories, and AI directives."""
+    __tablename__ = "work_organisers"
+
+    id                 = Column(String(64), primary_key=True, index=True)
+    owner              = Column(String(64), nullable=True, index=True)
+    name               = Column(String(128), nullable=False)
+    slug               = Column(String(128), nullable=False, index=True)
+    description        = Column(Text, nullable=True)
+    category_group     = Column(String(64), nullable=False, default="operations")  # operations, strategy, partnerships, finance, tech, personal
+    icon               = Column(String(64), nullable=False, default="briefcase")
+    color              = Column(String(32), nullable=False, default="#61afef")
+    priority           = Column(String(32), nullable=False, default="normal")  # critical, high, normal, low
+    
+    # Matching Engine Criteria
+    target_accounts    = Column(Text, nullable=True)  # JSON list of account IDs
+    rules_json         = Column(Text, nullable=True)  # JSON object with senders, keywords, domains
+    
+    # AI Assistant Directives
+    ai_instructions    = Column(Text, nullable=True)  # Natural language directives for AI triage
+    
+    # Module Bindings
+    linked_project_ids = Column(Text, nullable=True)  # JSON list of Project IDs
+    memory_lane        = Column(String(64), nullable=True)  # Associated memory lane identifier
+    
+    is_active          = Column(Boolean, nullable=False, default=True)
+    sort_order         = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        Index("ix_work_organisers_owner_slug", "owner", "slug"),
+    )
+
+
 
 
 

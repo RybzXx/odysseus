@@ -1423,6 +1423,7 @@ const _AUTO_WIRE = {
   'projects-modal':       { rail: 'rail-projects',  sidebar: 'tool-projects-btn' },
   'operations-modal':     { rail: 'rail-operations',sidebar: 'tool-operations-btn' },
   'overview-modal':       { rail: 'rail-overview',  sidebar: 'tool-overview-btn' },
+  'organisers-modal':     { rail: 'rail-organisers',sidebar: 'tool-organisers-btn' },
   'activity-log-modal':   { rail: null,             sidebar: 'tool-activity-log-btn' },
   'custom-preset-modal':  { rail: null,             sidebar: null },
 };
