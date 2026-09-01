@@ -1983,7 +1983,8 @@ class Project(TimestampMixin, Base):
     slug          = Column(String, unique=True, nullable=False, index=True)
     name          = Column(String, nullable=False)
     description   = Column(Text, nullable=True)
-    status        = Column(String, default="active", index=True)  # active, paused, completed, archived
+    status        = Column(String, default="active", index=True)  # active, on-hold, halted
+    status_reason = Column(Text, nullable=True)                   # reason when on-hold or halted
     priority      = Column(String, default="normal")              # low, normal, high, critical
     owner         = Column(String, nullable=True, index=True)
     folder_path   = Column(String, nullable=False)                # relative/absolute path on disk
@@ -2185,6 +2186,19 @@ def _migrate_project_agent_summary():
                 except Exception as e:
                     logger.warning(f"Failed to migrate projects table for agent_summary: {e}")
 
+def _migrate_project_status_reason():
+    with engine.connect() as conn:
+        if engine.dialect.name == "sqlite":
+            try:
+                conn.execute(text("SELECT status_reason FROM projects LIMIT 1"))
+            except Exception:
+                try:
+                    conn.execute(text("ALTER TABLE projects ADD COLUMN status_reason TEXT"))
+                    conn.commit()
+                    logger.info("Migrated: added 'status_reason' column to projects")
+                except Exception as e:
+                    logger.warning(f"Failed to migrate projects table for status_reason: {e}")
+
 def init_db():
     """
     Initialize the database by creating all tables.
@@ -2192,6 +2206,7 @@ def init_db():
     """
     _migrate_model_endpoints()
     _migrate_project_agent_summary()
+    _migrate_project_status_reason()
     Base.metadata.create_all(bind=engine)
     # Lock the DB file (and any SQLite sidecars) to 0o600 — it holds bearer-token
     # + bcrypt hashes and encrypted provider keys. POSIX only; safe_chmod no-ops

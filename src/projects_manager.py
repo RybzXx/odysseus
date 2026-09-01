@@ -258,6 +258,8 @@ def sync_project_disk_and_db(project_id_or_slug: str, owner: Optional[str] = Non
             project.name = metadata["name"]
         if "status" in metadata:
             project.status = metadata["status"]
+        if "status_reason" in metadata:
+            project.status_reason = metadata["status_reason"]
         if "priority" in metadata:
             project.priority = metadata["priority"]
 
@@ -539,6 +541,7 @@ def project_to_dict(
         "description": project.description,
         "agent_summary": getattr(project, "agent_summary", None),
         "status": project.status,
+        "status_reason": getattr(project, "status_reason", None),
         "priority": project.priority,
         "owner": project.owner,
         "folder_path": project.folder_path,

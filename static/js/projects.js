@@ -32,6 +32,11 @@ let _isEditingSummary = false;
 let _overviewSubTab = 'overview'; // 'overview' | 'extended' | 'structure' | 'spec'
 let _structureData = null;
 let _isEditingSpec = false;
+let _statusFilter = 'all'; // 'all' | 'active' | 'on-hold' | 'halted'
+let _searchQuery = '';
+let _availableModels = [];
+let _selectedModel = null; // { mid, url, displayName, endpointName }
+let _statusModalProject = null;
 let _stylesInjected = false;
 
 const NOTE_COLORS = [
@@ -116,8 +121,146 @@ function _injectStyles() {
       letter-spacing: 0.5px;
     }
     .proj-pill.active { background: rgba(46, 204, 113, 0.18); color: #2ecc71; border: 1px solid #2ecc71; }
-    .proj-pill.paused { background: rgba(241, 196, 15, 0.18); color: #f1c40f; border: 1px solid #f1c40f; }
-    .proj-pill.completed { background: rgba(52, 152, 219, 0.18); color: #3498db; border: 1px solid #3498db; }
+    .proj-pill.on-hold, .proj-pill.paused { background: rgba(241, 196, 15, 0.18); color: #f1c40f; border: 1px solid #f1c40f; }
+    .proj-pill.halted, .proj-pill.archived, .proj-pill.completed { background: rgba(235, 87, 87, 0.18); color: #eb5757; border: 1px solid #eb5757; }
+
+    /* Landing Page Filter Bar & Model Selector */
+    .proj-landing-toolbar {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 22px;
+      background: var(--bg-elev, #222);
+      border: 1px solid var(--border, #333);
+      border-radius: 8px;
+      padding: 12px 16px;
+    }
+    .proj-landing-controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: space-between;
+    }
+    .proj-filter-pills {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .proj-filter-pill {
+      background: transparent;
+      color: var(--fg-muted, #999);
+      border: 1px solid var(--border, #444);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .proj-filter-pill:hover {
+      background: rgba(255,255,255,0.06);
+      color: var(--fg, #eee);
+    }
+    .proj-filter-pill.active {
+      background: var(--accent, #e8a33d);
+      color: #111;
+      border-color: var(--accent, #e8a33d);
+      font-weight: 600;
+    }
+    .proj-pill-count {
+      font-size: 10.5px;
+      background: rgba(0,0,0,0.25);
+      padding: 1px 6px;
+      border-radius: 10px;
+    }
+    .proj-filter-pill.active .proj-pill-count {
+      background: rgba(0,0,0,0.2);
+      color: #111;
+    }
+
+    .proj-search-input {
+      flex: 1;
+      min-width: 200px;
+      background: var(--input-bg, #181818);
+      border: 1px solid var(--border, #444);
+      border-radius: 6px;
+      padding: 6px 12px;
+      color: var(--fg, #eee);
+      font-size: 12.5px;
+    }
+    .proj-search-input:focus {
+      outline: none;
+      border-color: var(--accent, #e8a33d);
+    }
+
+    .proj-model-picker-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--fg-muted, #888);
+    }
+    .proj-model-select {
+      background: var(--input-bg, #181818);
+      border: 1px solid var(--border, #444);
+      border-radius: 6px;
+      padding: 5px 10px;
+      color: var(--fg, #eee);
+      font-size: 12px;
+      font-weight: 500;
+      max-width: 260px;
+      cursor: pointer;
+    }
+    .proj-model-select:focus {
+      outline: none;
+      border-color: var(--accent, #e8a33d);
+    }
+
+    /* Status Reason Banner on Cards */
+    .proj-status-reason-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-size: 12.5px;
+      line-height: 1.4;
+    }
+    .proj-status-reason-banner.on-hold {
+      background: rgba(241, 196, 15, 0.12);
+      border: 1px solid rgba(241, 196, 15, 0.35);
+      color: #f1c40f;
+    }
+    .proj-status-reason-banner.halted {
+      background: rgba(235, 87, 87, 0.12);
+      border: 1px solid rgba(235, 87, 87, 0.35);
+      color: #eb5757;
+    }
+
+    /* Status Transition Modal */
+    .proj-status-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      backdrop-filter: blur(2px);
+    }
+    .proj-status-modal-card {
+      background: var(--bg-elev, #222);
+      border: 1px solid var(--border, #444);
+      border-radius: 10px;
+      padding: 20px;
+      width: min(480px, 92vw);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+    }
     
     #projects-modal .proj-btn {
       background: var(--bg-elev, #2a2a2a);
@@ -1079,7 +1222,40 @@ function _renderActiveTabContent() {
 // ---------------------------------------------------------------------------
 
 
-function _renderLandingPage() {
+async function _fetchAvailableModels() {
+  if (_availableModels.length > 0) return _availableModels;
+  try {
+    const res = await fetch('/api/models', { credentials: 'same-origin' });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = data.items || [];
+    const models = [];
+    for (const ep of items) {
+      if (ep.offline) continue;
+      const displayNames = ep.models_display || ep.models || [];
+      (ep.models || []).forEach((m, idx) => {
+        models.push({
+          mid: m,
+          url: ep.url,
+          endpointName: ep.endpoint_name || 'LLM',
+          displayName: displayNames[idx] || m,
+          category: ep.category || 'local',
+        });
+      });
+    }
+    _availableModels = models;
+    if (!_selectedModel && models.length > 0) {
+      const saved = localStorage.getItem('odysseus-project-summary-model');
+      _selectedModel = models.find(m => m.mid === saved) || models[0];
+    }
+    return models;
+  } catch (e) {
+    console.warn('Failed to fetch models for projects:', e);
+    return [];
+  }
+}
+
+async function _renderLandingPage() {
   const container = document.getElementById('proj-body');
   if (!container) return;
 
@@ -1100,57 +1276,213 @@ function _renderLandingPage() {
   let backBtn = document.getElementById('proj-back-btn');
   if (backBtn) backBtn.style.display = 'none';
 
+  // Load models if not cached
+  await _fetchAvailableModels();
+
   if (_projects.length === 0) {
     container.innerHTML = `<div style="padding:40px; text-align:center; color:var(--fg-muted);">No projects found. Create one to get started!</div>`;
     return;
   }
 
-  const cardsHtml = _projects.map(p => {
-    let pinnedHtml = '';
-    if (p.pinned_notes && p.pinned_notes.length > 0) {
-      pinnedHtml = `
-        <div class="proj-landing-pinned" style="margin-top: 12px; background: rgba(0,0,0,0.15); padding: 8px; border-radius: 6px;">
-          <div style="font-size: 11px; font-weight: 600; color: var(--accent, #e8a33d); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Urgent / Pinned</div>
-          ${p.pinned_notes.map(n => `
-            <div style="font-size: 13px; color: var(--fg); margin-bottom: 4px; padding-left: 12px; position: relative;">
-              <span style="position: absolute; left: 0; top: 0; color: var(--accent, #e8a33d);">•</span>
-              <b>${_esc(n.title || 'Pinned Note')}</b>: ${_esc((n.content || '').substring(0, 80))}...
-            </div>
-          `).join('')}
-        </div>
-      `;
+  // Calculate status counts
+  const totalCount = _projects.length;
+  const activeCount = _projects.filter(p => (p.status || 'active').toLowerCase() === 'active').length;
+  const onHoldCount = _projects.filter(p => ['on-hold', 'on_hold', 'paused'].includes((p.status || '').toLowerCase())).length;
+  const haltedCount = _projects.filter(p => ['halted', 'archived', 'stopped'].includes((p.status || '').toLowerCase())).length;
+
+  // Filter projects
+  const filteredProjects = _projects.filter(p => {
+    const status = (p.status || 'active').toLowerCase();
+    if (_statusFilter === 'active' && status !== 'active') return false;
+    if (_statusFilter === 'on-hold' && !['on-hold', 'on_hold', 'paused'].includes(status)) return false;
+    if (_statusFilter === 'halted' && !['halted', 'archived', 'stopped'].includes(status)) return false;
+
+    if (_searchQuery.trim()) {
+      const q = _searchQuery.toLowerCase();
+      const matchName = (p.name || '').toLowerCase().includes(q);
+      const matchSlug = (p.slug || '').toLowerCase().includes(q);
+      const matchSummary = (p.agent_summary || p.description || '').toLowerCase().includes(q);
+      const matchReason = (p.status_reason || '').toLowerCase().includes(q);
+      return matchName || matchSlug || matchSummary || matchReason;
     }
+    return true;
+  });
 
-    return `
-      <div class="proj-landing-card" style="background: var(--bg-elev, #222); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <h2 style="margin: 0 0 4px 0; font-size: 18px;">${_esc(p.name)}</h2>
-          <button class="proj-btn primary proj-open-btn" data-id="${_esc(p.id)}">Open Workspace</button>
-        </div>
-        <div style="font-size: 12px; color: var(--fg-muted); margin-bottom: 12px;">Status: ${_esc(p.status)}</div>
-        
-        <div style="font-size: 13px; line-height: 1.5; color: var(--fg); margin-bottom: 12px;">
-          ${_renderMarkdownSafe(p.agent_summary || p.description || 'No summary available.')}
-        </div>
-        
-        <button class="proj-btn proj-summarize-btn" data-id="${_esc(p.id)}" style="font-size: 11px; margin-bottom: 8px;">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-          Auto-Summarize
-        </button>
-
-        ${pinnedHtml}
+  // Build model select options
+  let modelSelectHtml = '';
+  if (_availableModels.length > 0) {
+    modelSelectHtml = `
+      <div class="proj-model-picker-wrap">
+        <span>Model:</span>
+        <select id="proj-model-select" class="proj-model-select">
+          ${_availableModels.map(m => `
+            <option value="${_esc(m.mid)}" ${_selectedModel && _selectedModel.mid === m.mid ? 'selected' : ''}>
+              ${_esc(m.displayName)} (${_esc(m.endpointName)})
+            </option>
+          `).join('')}
+        </select>
       </div>
     `;
-  }).join('');
+  }
+
+  const toolbarHtml = `
+    <div class="proj-landing-toolbar">
+      <div class="proj-landing-controls">
+        <div class="proj-filter-pills">
+          <button class="proj-filter-pill ${_statusFilter === 'all' ? 'active' : ''}" data-filter="all">
+            All <span class="proj-pill-count">${totalCount}</span>
+          </button>
+          <button class="proj-filter-pill ${_statusFilter === 'active' ? 'active' : ''}" data-filter="active">
+            Active <span class="proj-pill-count">${activeCount}</span>
+          </button>
+          <button class="proj-filter-pill ${_statusFilter === 'on-hold' ? 'active' : ''}" data-filter="on-hold">
+            On-Hold <span class="proj-pill-count">${onHoldCount}</span>
+          </button>
+          <button class="proj-filter-pill ${_statusFilter === 'halted' ? 'active' : ''}" data-filter="halted">
+            Halted <span class="proj-pill-count">${haltedCount}</span>
+          </button>
+        </div>
+
+        ${modelSelectHtml}
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center;">
+        <input id="proj-search-input" type="text" class="proj-search-input" placeholder="🔍 Search projects by title, slug, or summary..." value="${_esc(_searchQuery)}" />
+        ${_searchQuery ? `<button id="proj-clear-search-btn" class="proj-btn" style="font-size:11px;">Clear</button>` : ''}
+      </div>
+    </div>
+  `;
+
+  let cardsHtml = '';
+  if (filteredProjects.length === 0) {
+    cardsHtml = `<div style="padding:40px; text-align:center; color:var(--fg-muted);">No projects match the selected filter.</div>`;
+  } else {
+    cardsHtml = filteredProjects.map(p => {
+      let pinnedHtml = '';
+      if (p.pinned_notes && p.pinned_notes.length > 0) {
+        pinnedHtml = `
+          <div class="proj-landing-pinned" style="margin-top: 12px; background: rgba(0,0,0,0.15); padding: 8px; border-radius: 6px;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--accent, #e8a33d); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Urgent / Pinned</div>
+            ${p.pinned_notes.map(n => `
+              <div style="font-size: 13px; color: var(--fg); margin-bottom: 4px; padding-left: 12px; position: relative;">
+                <span style="position: absolute; left: 0; top: 0; color: var(--accent, #e8a33d);">•</span>
+                <b>${_esc(n.title || 'Pinned Note')}</b>: ${_esc((n.content || '').substring(0, 80))}...
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      const statusNormalized = (p.status || 'active').toLowerCase();
+      let statusClass = 'active';
+      let statusLabel = 'ACTIVE';
+      if (['on-hold', 'on_hold', 'paused'].includes(statusNormalized)) {
+        statusClass = 'on-hold';
+        statusLabel = 'ON-HOLD';
+      } else if (['halted', 'archived', 'stopped'].includes(statusNormalized)) {
+        statusClass = 'halted';
+        statusLabel = 'HALTED';
+      }
+
+      let reasonBannerHtml = '';
+      if (p.status_reason && (statusClass === 'on-hold' || statusClass === 'halted')) {
+        reasonBannerHtml = `
+          <div class="proj-status-reason-banner ${statusClass}">
+            <span>${statusClass === 'on-hold' ? '⚠️' : '⏹️'}</span>
+            <div><b>${statusLabel} Reason:</b> ${_esc(p.status_reason)}</div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="proj-landing-card" style="background: var(--bg-elev, #222); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+              <h2 style="margin: 0 0 4px 0; font-size: 18px;">${_esc(p.name)}</h2>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-bottom: 8px;">
+                Slug: <code>${_esc(p.slug)}</code> &bull; Tasks: <strong>${p.task_completed || 0}/${p.task_total || 0}</strong>
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="proj-pill ${statusClass}">${statusLabel}</span>
+              <button class="proj-btn primary proj-open-btn" data-id="${_esc(p.id)}">Open Workspace</button>
+            </div>
+          </div>
+          
+          ${reasonBannerHtml}
+
+          <div style="font-size: 13px; line-height: 1.5; color: var(--fg); margin: 10px 0;">
+            ${_renderMarkdownSafe(p.agent_summary || p.description || 'No summary available.')}
+          </div>
+          
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px;">
+            <button class="proj-btn proj-summarize-btn" data-id="${_esc(p.id)}" style="font-size: 11.5px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+              Auto-Summarize
+            </button>
+
+            <button class="proj-btn proj-edit-status-btn" data-id="${_esc(p.id)}" style="font-size: 11.5px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              Edit Status
+            </button>
+          </div>
+
+          ${pinnedHtml}
+        </div>
+      `;
+    }).join('');
+  }
 
   container.innerHTML = `
-    <div style="padding: 24px; max-width: 800px; margin: 0 auto;">
-      <h1 style="margin-top:0; font-size: 24px; margin-bottom: 24px;">Project Workspaces</h1>
+    <div style="padding: 24px; max-width: 860px; margin: 0 auto;">
+      <h1 style="margin-top:0; font-size: 24px; margin-bottom: 16px;">Project Workspaces</h1>
+      ${toolbarHtml}
       ${cardsHtml}
     </div>
   `;
 
-  // Wire events
+  // Wire Filter Pills
+  container.querySelectorAll('.proj-filter-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      _statusFilter = pill.getAttribute('data-filter');
+      _renderLandingPage();
+    });
+  });
+
+  // Wire Search Input
+  const searchInput = container.querySelector('#proj-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      _searchQuery = e.target.value;
+      _renderLandingPage();
+      const nextInput = document.querySelector('#proj-search-input');
+      if (nextInput) {
+        nextInput.focus();
+        nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
+      }
+    });
+  }
+
+  container.querySelector('#proj-clear-search-btn')?.addEventListener('click', () => {
+    _searchQuery = '';
+    _renderLandingPage();
+  });
+
+  // Wire Model Select
+  const modelSelect = container.querySelector('#proj-model-select');
+  if (modelSelect) {
+    modelSelect.addEventListener('change', (e) => {
+      const mid = e.target.value;
+      const found = _availableModels.find(m => m.mid === mid);
+      if (found) {
+        _selectedModel = found;
+        localStorage.setItem('odysseus-project-summary-model', found.mid);
+        uiModule.showToast(`Selected model: ${found.displayName}`);
+      }
+    });
+  }
+
+  // Wire Open Workspace Buttons
   container.querySelectorAll('.proj-open-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       _currentProjectId = btn.getAttribute('data-id');
@@ -1158,14 +1490,23 @@ function _renderLandingPage() {
     });
   });
 
+  // Wire Auto-Summarize Buttons
   container.querySelectorAll('.proj-summarize-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-id');
       const originalText = btn.innerHTML;
-      btn.innerHTML = 'Summarizing...';
+      btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin" style="margin-right:4px;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Summarizing...`;
       btn.disabled = true;
       try {
-        await fetch(`/api/projects/${id}/summarize`, { method: 'POST' });
+        const payload = _selectedModel ? { model: _selectedModel.mid, endpoint_url: _selectedModel.url } : {};
+        const res = await fetch(`/api/projects/${id}/summarize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error('Summarization failed');
+        const data = await res.json();
+        uiModule.showToast(`Project summarized via ${data.model_used || 'AI'}!`);
         await _fetchProjectsList();
         _renderLandingPage();
       } catch (err) {
@@ -1174,6 +1515,110 @@ function _renderLandingPage() {
         btn.disabled = false;
       }
     });
+  });
+
+  // Wire Edit Status Buttons
+  container.querySelectorAll('.proj-edit-status-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-id');
+      const project = _projects.find(p => p.id === id);
+      if (project) {
+        _openStatusEditModal(project);
+      }
+    });
+  });
+}
+
+function _openStatusEditModal(project) {
+  const old = document.getElementById('proj-status-modal-overlay');
+  if (old) old.remove();
+
+  const currentStatus = (project.status || 'active').toLowerCase();
+  const currentReason = project.status_reason || '';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'proj-status-modal-overlay';
+  overlay.className = 'proj-status-modal-overlay';
+  overlay.innerHTML = `
+    <div class="proj-status-modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="margin:0; font-size:16px;">Edit Status &bull; ${_esc(project.name)}</h3>
+        <button id="proj-status-modal-close" class="proj-btn" style="border:none; padding:4px 8px;">✕</button>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; color:var(--fg-muted,#888); display:block; margin-bottom:8px; text-transform:uppercase;">Select Lifecycle Status</label>
+        <div style="display:flex; gap:8px;">
+          <label style="flex:1; cursor:pointer; background:var(--input-bg,#181818); border:1px solid var(--border,#444); border-radius:6px; padding:10px; display:flex; align-items:center; gap:8px; font-size:13px;">
+            <input type="radio" name="proj_status_radio" value="active" ${currentStatus === 'active' ? 'checked' : ''} />
+            <span style="color:#2ecc71; font-weight:600;">Active</span>
+          </label>
+          <label style="flex:1; cursor:pointer; background:var(--input-bg,#181818); border:1px solid var(--border,#444); border-radius:6px; padding:10px; display:flex; align-items:center; gap:8px; font-size:13px;">
+            <input type="radio" name="proj_status_radio" value="on-hold" ${['on-hold', 'on_hold', 'paused'].includes(currentStatus) ? 'checked' : ''} />
+            <span style="color:#f1c40f; font-weight:600;">On-Hold</span>
+          </label>
+          <label style="flex:1; cursor:pointer; background:var(--input-bg,#181818); border:1px solid var(--border,#444); border-radius:6px; padding:10px; display:flex; align-items:center; gap:8px; font-size:13px;">
+            <input type="radio" name="proj_status_radio" value="halted" ${['halted', 'archived', 'stopped'].includes(currentStatus) ? 'checked' : ''} />
+            <span style="color:#eb5757; font-weight:600;">Halted</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="proj-reason-wrap" style="margin-bottom:16px; display:${currentStatus === 'active' ? 'none' : 'block'};">
+        <label style="font-size:12px; font-weight:600; color:var(--fg-muted,#888); display:block; margin-bottom:6px; text-transform:uppercase;">Reason for Hold / Halt</label>
+        <textarea id="proj-status-reason-input" class="proj-summary-editor" style="height:90px;" placeholder="Explain why this project is on hold or halted (blockers, dependencies, priorities)...">${_esc(currentReason)}</textarea>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button id="proj-status-cancel-btn" class="proj-btn">Cancel</button>
+        <button id="proj-status-save-btn" class="proj-btn primary">Save Status</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const radios = overlay.querySelectorAll('input[name="proj_status_radio"]');
+  const reasonWrap = overlay.querySelector('#proj-reason-wrap');
+  const reasonInput = overlay.querySelector('#proj-status-reason-input');
+
+  radios.forEach(r => {
+    r.addEventListener('change', () => {
+      if (r.value === 'active') {
+        reasonWrap.style.display = 'none';
+      } else {
+        reasonWrap.style.display = 'block';
+        reasonInput.focus();
+      }
+    });
+  });
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#proj-status-modal-close')?.addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#proj-status-cancel-btn')?.addEventListener('click', () => overlay.remove());
+
+  overlay.querySelector('#proj-status-save-btn')?.addEventListener('click', async () => {
+    const selectedRadio = overlay.querySelector('input[name="proj_status_radio"]:checked');
+    const newStatus = selectedRadio ? selectedRadio.value : 'active';
+    const newReason = reasonInput ? reasonInput.value.trim() : null;
+
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: newStatus,
+          status_reason: newStatus === 'active' ? null : (newReason || 'No reason specified'),
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to update project status');
+      overlay.remove();
+      uiModule.showToast(`Status updated to ${newStatus.toUpperCase()}!`);
+      await _fetchProjectsList();
+      _renderLandingPage();
+    } catch (err) {
+      uiModule.showError(err.message);
+    }
   });
 }
 
@@ -1195,6 +1640,18 @@ function _renderOverviewTab(container) {
   const progress = p.progress || 0;
   const struct = _structureData || {};
   const sections = struct.sections || {};
+
+  const statusNormalized = (p.status || 'active').toLowerCase();
+  let reasonBannerHtml = '';
+  if (p.status_reason && ['on-hold', 'on_hold', 'paused', 'halted', 'archived'].includes(statusNormalized)) {
+    const isHold = ['on-hold', 'on_hold', 'paused'].includes(statusNormalized);
+    reasonBannerHtml = `
+      <div class="proj-status-reason-banner ${isHold ? 'on-hold' : 'halted'}" style="margin-bottom:14px;">
+        <span>${isHold ? '⚠️' : '⏹️'}</span>
+        <div><b>${isHold ? 'ON-HOLD' : 'HALTED'} Reason:</b> ${_esc(p.status_reason)}</div>
+      </div>
+    `;
+  }
 
   // 1. Header & Progress Bar
   let html = `
@@ -1221,6 +1678,7 @@ function _renderOverviewTab(container) {
         <div class="proj-progress-fill" style="width: ${progress}%;"></div>
       </div>
     </div>
+    ${reasonBannerHtml}
   `;
 
   // If user clicked Edit Manifest, show full editor

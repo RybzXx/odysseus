@@ -22,6 +22,8 @@ from src.projects_manager import (
     sync_tasks_to_manifest_file,
     project_to_dict,
     get_project_structure_and_spec,
+    parse_project_manifest,
+    serialize_project_manifest,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,8 +46,14 @@ class ProjectUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    status_reason: Optional[str] = None
     priority: Optional[str] = None
     content: Optional[str] = None
+
+
+class ProjectSummarizeRequest(BaseModel):
+    model: Optional[str] = None
+    endpoint_url: Optional[str] = None
 
 
 class TaskCreateRequest(BaseModel):
@@ -253,10 +261,30 @@ Description: {project.description}
                 project.description = body.description
             if body.status is not None:
                 project.status = body.status
+                if body.status == "active" and body.status_reason is None:
+                    project.status_reason = None
+            if body.status_reason is not None:
+                project.status_reason = body.status_reason
             if body.priority is not None:
                 project.priority = body.priority
 
             db.commit()
+
+            # Sync frontmatter to PROJECT.md if manifest exists
+            if project.manifest_path and Path(project.manifest_path).exists():
+                try:
+                    raw_text = Path(project.manifest_path).read_text(encoding="utf-8")
+                    meta, md_body = parse_project_manifest(raw_text)
+                    meta["name"] = project.name
+                    meta["status"] = project.status
+                    if project.status_reason:
+                        meta["status_reason"] = project.status_reason
+                    elif "status_reason" in meta:
+                        del meta["status_reason"]
+                    meta["priority"] = project.priority
+                    Path(project.manifest_path).write_text(serialize_project_manifest(meta, md_body), encoding="utf-8")
+                except Exception as e:
+                    logger.warning(f"Failed to sync metadata to PROJECT.md: {e}")
 
             if body.content is not None:
                 result = save_project_content_to_disk(project.id, body.content, owner=owner)
@@ -264,6 +292,75 @@ Description: {project.description}
 
             db.refresh(project)
             return {"project": project_to_dict(project, db=db, include_tasks=True, include_links=True, include_content=True)}
+        finally:
+            db.close()
+
+    @router.post("/{project_id}/summarize")
+    async def summarize_project(request: Request, project_id: str, body: Optional[ProjectSummarizeRequest] = None):
+        """Generate an AI summary using the selected model, with robust fallback."""
+        owner = get_current_user(request)
+        db = cdb.SessionLocal()
+        try:
+            project = (
+                db.query(Project)
+                .filter((Project.id == project_id) | (Project.slug == project_id))
+                .first()
+            )
+            if not project:
+                raise HTTPException(404, f"Project {project_id} not found")
+
+            manifest_content = ""
+            if project.manifest_path and Path(project.manifest_path).exists():
+                try:
+                    manifest_content = Path(project.manifest_path).read_text(encoding="utf-8")
+                except Exception:
+                    manifest_content = ""
+
+            model_used = "heuristic-extractor"
+            summary_text = None
+
+            req_model = body.model if body else None
+            req_url = body.endpoint_url if body else None
+
+            if req_model and req_url:
+                try:
+                    from src.llm_core import llm_call_async
+                    prompt = (
+                        "You are an expert technical product manager. Provide a concise 2-sentence executive summary of this project for display on a project dashboard. "
+                        "Focus on what it is, its core tech stack, and primary goal. Return ONLY the plain summary text without quotes, markdown headers, or chat filler.\n\n"
+                        f"Project Name: {project.name}\n"
+                        f"Project Content:\n{manifest_content[:3000]}"
+                    )
+                    messages = [{"role": "user", "content": prompt}]
+                    summary_res = await llm_call_async(url=req_url, model=req_model, messages=messages, timeout=30)
+                    if isinstance(summary_res, tuple):
+                        summary_res = summary_res[0]
+                    if summary_res and summary_res.strip():
+                        summary_text = summary_res.strip()
+                        model_used = req_model
+                except Exception as err:
+                    logger.warning(f"LLM summarize failed for {project.slug} with {req_model}: {err}")
+
+            if not summary_text:
+                struct = get_project_structure_and_spec(project.id, db=db)
+                overview = struct.get("sections", {}).get("overview") or project.description or ""
+                clean = re.sub(r"#+\s+.*", "", overview).strip()
+                lines = [l.strip() for l in clean.splitlines() if l.strip()]
+                summary_text = " ".join(lines[:3]) if lines else project.description
+
+            if not summary_text:
+                summary_text = f"{project.name} workspace."
+
+            project.agent_summary = summary_text
+            db.commit()
+            db.refresh(project)
+
+            return {
+                "ok": True,
+                "project_id": project.id,
+                "summary": project.agent_summary,
+                "model_used": model_used
+            }
         finally:
             db.close()
 
