@@ -1422,6 +1422,7 @@ const _AUTO_WIRE = {
   // the legacy .modal-dock-item.
   'projects-modal':       { rail: 'rail-projects',  sidebar: 'tool-projects-btn' },
   'operations-modal':     { rail: 'rail-operations',sidebar: 'tool-operations-btn' },
+  'activity-log-modal':   { rail: null,             sidebar: 'tool-activity-log-btn' },
   'custom-preset-modal':  { rail: null,             sidebar: null },
 };
 

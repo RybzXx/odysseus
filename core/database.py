@@ -830,6 +830,37 @@ class TaskRun(Base):
     )
 
 
+class SystemQueryLog(Base):
+    """Unified audit and telemetry log for all non-chat system queries, tasks, and operations."""
+    __tablename__ = "system_query_logs"
+
+    id             = Column(String, primary_key=True, index=True)         # "sqlog_<uuid8>"
+    timestamp      = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
+    module         = Column(String, nullable=False, index=True)           # "projects", "tasks", "email", "operations", "notes", "rag", "tools"
+    action         = Column(String, nullable=False, index=True)           # "summarize", "task_run", "email_summary", "disk_sync", "vector_query", "tool_call"
+    target_id      = Column(String, nullable=True, index=True)            # Entity ID (e.g., "proj_685a4b19", "task_abc")
+    target_name    = Column(String, nullable=True)                        # Human-readable entity name (e.g., "Ahmed Omar Dental Clinic")
+    query_type     = Column(String, default="llm", index=True)            # "llm", "tool", "vector_search", "disk_sync", "system"
+    model          = Column(String, nullable=True)                        # Model identifier (e.g. "gemma4:31b", "all-MiniLM-L6-v2")
+    endpoint_url   = Column(String, nullable=True)                        # Endpoint URL (e.g. "https://ollama.com/api/chat")
+    prompt_preview = Column(Text, nullable=True)                          # Input/prompt text (truncated to 2,000 chars)
+    result_preview = Column(Text, nullable=True)                          # Output/summary/result text (truncated to 4,000 chars)
+    status         = Column(String, default="completed", index=True)      # "running", "completed", "error", "fallback", "halted"
+    duration_ms    = Column(Integer, nullable=True)                       # Execution latency in milliseconds
+    tokens_used    = Column(Integer, nullable=True)                       # Token count if reported
+    error          = Column(Text, nullable=True)                          # Error message or HTTP status code
+    repeat_count   = Column(Integer, default=1)                           # Stacking counter for repetitive background checks
+    metadata_json  = Column(JSON, nullable=True)                          # Additional contextual attributes
+    owner          = Column(String, nullable=True, index=True)            # User/Owner scope
+
+    __table_args__ = (
+        Index('ix_sys_query_logs_module_ts', 'module', 'timestamp'),
+        Index('ix_sys_query_logs_owner_ts', 'owner', 'timestamp'),
+        Index('ix_sys_query_logs_status_ts', 'status', 'timestamp'),
+        Index('ix_sys_query_logs_action_target', 'action', 'target_id'),
+    )
+
+
 class Memory(Base):
     """
     SQLAlchemy model for Memory table.
@@ -1983,7 +2014,8 @@ class Project(TimestampMixin, Base):
     slug          = Column(String, unique=True, nullable=False, index=True)
     name          = Column(String, nullable=False)
     description   = Column(Text, nullable=True)
-    status        = Column(String, default="active", index=True)  # active, paused, completed, archived
+    status        = Column(String, default="active", index=True)  # active, on-hold, halted
+    status_reason = Column(Text, nullable=True)                   # reason when on-hold or halted
     priority      = Column(String, default="normal")              # low, normal, high, critical
     owner         = Column(String, nullable=True, index=True)
     folder_path   = Column(String, nullable=False)                # relative/absolute path on disk
@@ -2185,6 +2217,19 @@ def _migrate_project_agent_summary():
                 except Exception as e:
                     logger.warning(f"Failed to migrate projects table for agent_summary: {e}")
 
+def _migrate_project_status_reason():
+    with engine.connect() as conn:
+        if engine.dialect.name == "sqlite":
+            try:
+                conn.execute(text("SELECT status_reason FROM projects LIMIT 1"))
+            except Exception:
+                try:
+                    conn.execute(text("ALTER TABLE projects ADD COLUMN status_reason TEXT"))
+                    conn.commit()
+                    logger.info("Migrated: added 'status_reason' column to projects")
+                except Exception as e:
+                    logger.warning(f"Failed to migrate projects table for status_reason: {e}")
+
 def init_db():
     """
     Initialize the database by creating all tables.
@@ -2192,6 +2237,7 @@ def init_db():
     """
     _migrate_model_endpoints()
     _migrate_project_agent_summary()
+    _migrate_project_status_reason()
     Base.metadata.create_all(bind=engine)
     # Lock the DB file (and any SQLite sidecars) to 0o600 — it holds bearer-token
     # + bcrypt hashes and encrypted provider keys. POSIX only; safe_chmod no-ops

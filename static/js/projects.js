@@ -29,7 +29,132 @@ let _composerChecklistRows = [''];
 let _composerTitle = '';
 let _composerBody = '';
 let _isEditingSummary = false;
+let _overviewSubTab = 'overview'; // 'overview' | 'extended' | 'structure' | 'spec'
+let _structureData = null;
+let _isEditingSpec = false;
+let _statusFilter = 'all'; // 'all' | 'active' | 'on-hold' | 'halted'
+let _searchQuery = '';
+let _availableModels = [];
+let _selectedModel = null; // { mid, url, displayName, endpointName }
+let _statusModalProject = null;
 let _stylesInjected = false;
+
+// Sequential Task Queue Manager for Project Operations
+const _projectTaskQueue = {
+  queue: [],
+  activeTask: null,
+
+  enqueue(task) {
+    if (this.activeTask && this.activeTask.id === task.id) {
+      _notifyToast(`Summarization for "${task.projectName}" is already running. Click 'Halt' to cancel.`, true);
+      return;
+    }
+    const existingIdx = this.queue.findIndex(t => t.id === task.id);
+    if (existingIdx >= 0) {
+      _notifyToast(`"${task.projectName}" is already queued at position #${existingIdx + 1}.`, true);
+      return;
+    }
+
+    this.queue.push(task);
+    if (!this.activeTask) {
+      this._processNext();
+    } else {
+      const pos = this.queue.length;
+      _notifyToast(`Queued summary for "${task.projectName}" (Queue position: #${pos})`);
+      this._updateButtons();
+    }
+  },
+
+  async _processNext() {
+    if (this.queue.length === 0) {
+      this.activeTask = null;
+      this._updateButtons();
+      return;
+    }
+
+    this.activeTask = this.queue.shift();
+    const task = this.activeTask;
+    task.controller = new AbortController();
+    this._updateButtons();
+
+    const modelName = task.model?.displayName || task.model?.mid || 'AI';
+    _notifyToast(`[Running] Summarizing "${task.projectName}" via ${modelName}... (Click 'Halt' to stop)`);
+
+    try {
+      const payload = task.model ? { model: task.model.mid, endpoint_url: task.model.url } : {};
+      const res = await fetch(`/api/projects/${task.id}/summarize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: task.controller.signal,
+      });
+
+      if (!res.ok) throw new Error('Summarization failed');
+      const data = await res.json();
+      if (data.llm_error) {
+        _notifyToast(`AI summarize error (${data.llm_error}). Fell back to spec extractor.`, true);
+      } else {
+        _notifyToast(`[Completed] Summarized "${task.projectName}" via ${data.model_used || modelName}!`);
+      }
+      await _fetchProjectsList();
+      _renderLandingPage();
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        _notifyToast(`[Halted] Summarization for "${task.projectName}" stopped by user.`, true);
+      } else {
+        _notifyToast(`[Error] Summarization failed for "${task.projectName}": ${err.message}`, true);
+      }
+      await _fetchProjectsList();
+      _renderLandingPage();
+    } finally {
+      this.activeTask = null;
+      this._processNext();
+    }
+  },
+
+  halt(projectId) {
+    if (this.activeTask && this.activeTask.id === projectId) {
+      if (this.activeTask.controller) {
+        this.activeTask.controller.abort();
+      }
+      return;
+    }
+    const idx = this.queue.findIndex(t => t.id === projectId);
+    if (idx >= 0) {
+      const removed = this.queue.splice(idx, 1)[0];
+      _notifyToast(`Removed "${removed.projectName}" from summary queue.`);
+      this._updateButtons();
+    }
+  },
+
+  getStatus(projectId) {
+    if (this.activeTask && this.activeTask.id === projectId) {
+      return { state: 'running' };
+    }
+    const pos = this.queue.findIndex(t => t.id === projectId);
+    if (pos >= 0) {
+      return { state: 'queued', position: pos + 1 };
+    }
+    return null;
+  },
+
+  _updateButtons() {
+    document.querySelectorAll('.proj-summarize-btn').forEach(btn => {
+      const pid = btn.getAttribute('data-id');
+      const status = this.getStatus(pid);
+      if (status?.state === 'running') {
+        btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin" style="margin-right:4px;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Running... <span class="proj-halt-btn" data-id="${_esc(pid)}" style="background:#dc2626;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:6px;font-weight:bold;cursor:pointer;">Halt</span>`;
+        btn.classList.add('proj-btn-running');
+      } else if (status?.state === 'queued') {
+        btn.innerHTML = `⏳ Queued (#${status.position}) <span class="proj-cancel-btn" data-id="${_esc(pid)}" style="color:#ef4444;margin-left:6px;font-weight:bold;cursor:pointer;" title="Cancel">✕</span>`;
+        btn.classList.remove('proj-btn-running');
+      } else {
+        btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Auto-Summarize`;
+        btn.classList.remove('proj-btn-running');
+      }
+    });
+  }
+};
 
 const NOTE_COLORS = [
   { key: 'default', label: 'Default', bg: 'var(--bg-elev, #222)', border: 'var(--border, #3a3a3a)' },
@@ -46,6 +171,18 @@ function _esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+function _notifyToast(msg, isError = false) {
+  if (typeof window !== 'undefined' && window.uiModule) {
+    if (isError && window.uiModule.showError) window.uiModule.showError(msg);
+    else if (window.uiModule.showToast) window.uiModule.showToast(msg);
+  } else if (typeof uiModule !== 'undefined' && uiModule) {
+    if (isError && uiModule.showError) uiModule.showError(msg);
+    else if (uiModule.showToast) uiModule.showToast(msg);
+  } else {
+    console.log('[Projects]', msg);
+  }
 }
 
 function _formatBytes(bytes) {
@@ -113,8 +250,149 @@ function _injectStyles() {
       letter-spacing: 0.5px;
     }
     .proj-pill.active { background: rgba(46, 204, 113, 0.18); color: #2ecc71; border: 1px solid #2ecc71; }
-    .proj-pill.paused { background: rgba(241, 196, 15, 0.18); color: #f1c40f; border: 1px solid #f1c40f; }
-    .proj-pill.completed { background: rgba(52, 152, 219, 0.18); color: #3498db; border: 1px solid #3498db; }
+    .proj-pill.on-hold, .proj-pill.paused { background: rgba(241, 196, 15, 0.18); color: #f1c40f; border: 1px solid #f1c40f; }
+    .proj-pill.halted, .proj-pill.archived, .proj-pill.completed { background: rgba(235, 87, 87, 0.18); color: #eb5757; border: 1px solid #eb5757; }
+
+    /* Landing Page Filter Bar & Model Selector */
+    .proj-landing-toolbar {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 22px;
+      background: var(--bg-elev, #222);
+      border: 1px solid var(--border, #333);
+      border-radius: 8px;
+      padding: 12px 16px;
+    }
+    .proj-landing-controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: space-between;
+    }
+    .proj-filter-pills {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .proj-filter-pill {
+      background: transparent;
+      color: var(--fg-muted, #999);
+      border: 1px solid var(--border, #444);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .proj-filter-pill:hover {
+      background: rgba(255,255,255,0.06);
+      color: var(--fg, #eee);
+    }
+    .proj-filter-pill.active {
+      background: var(--accent, #e8a33d);
+      color: #111;
+      border-color: var(--accent, #e8a33d);
+      font-weight: 600;
+    }
+    .proj-pill-count {
+      font-size: 10.5px;
+      background: rgba(0,0,0,0.25);
+      padding: 1px 6px;
+      border-radius: 10px;
+    }
+    .proj-filter-pill.active .proj-pill-count {
+      background: rgba(0,0,0,0.2);
+      color: #111;
+    }
+
+    .proj-search-input {
+      flex: 1;
+      min-width: 200px;
+      background: var(--input-bg, #181818);
+      border: 1px solid var(--border, #444);
+      border-radius: 6px;
+      padding: 6px 12px;
+      color: var(--fg, #eee);
+      font-size: 12.5px;
+    }
+    .proj-search-input:focus {
+      outline: none;
+      border-color: var(--accent, #e8a33d);
+    }
+
+    .proj-model-picker-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--fg-muted, #888);
+    }
+    .proj-model-select {
+      background: var(--input-bg, #181818);
+      border: 1px solid var(--border, #444);
+      border-radius: 6px;
+      padding: 5px 10px;
+      color: var(--fg, #eee);
+      font-size: 12px;
+      font-weight: 500;
+      max-width: 260px;
+      cursor: pointer;
+    }
+    .proj-model-select:focus {
+      outline: none;
+      border-color: var(--accent, #e8a33d);
+    }
+
+    /* Status Reason Banner on Cards */
+    .proj-status-reason-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-size: 12.5px;
+      line-height: 1.4;
+    }
+    .proj-status-reason-banner.on-hold {
+      background: rgba(241, 196, 15, 0.12);
+      border: 1px solid rgba(241, 196, 15, 0.35);
+      color: #f1c40f;
+    }
+    .proj-status-reason-banner.halted {
+      background: rgba(235, 87, 87, 0.12);
+      border: 1px solid rgba(235, 87, 87, 0.35);
+      color: #eb5757;
+    }
+
+    /* Status Transition Modal */
+    .proj-status-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      backdrop-filter: blur(2px);
+    }
+    .proj-status-modal-card {
+      background: var(--bg-elev, #222);
+      border: 1px solid var(--border, #444);
+      border-radius: 10px;
+      padding: 20px;
+      width: min(480px, 92vw);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+    }
+    #toast, .toast {
+      z-index: 100100 !important;
+    }
     
     #projects-modal .proj-btn {
       background: var(--bg-elev, #2a2a2a);
@@ -179,8 +457,180 @@ function _injectStyles() {
     .proj-overview-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
     .proj-progress-bar { background: var(--bg-elev, #242424); border-radius: 6px; height: 8px; width: 100%; overflow: hidden; margin-bottom: 16px; border: 1px solid var(--border, #333); }
     .proj-progress-fill { background: var(--accent, #e8a33d); height: 100%; transition: width 0.3s ease; }
-    .proj-markdown-content { background: var(--bg-elev, #202020); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; line-height: 1.6; }
-    .proj-summary-editor { width: 100%; height: 340px; background: var(--input-bg, #181818); color: var(--fg, #eee); border: 1px solid var(--border, #444); border-radius: 8px; padding: 12px; font-family: monospace; font-size: 12px; resize: vertical; }
+    
+    /* Overview 4-Tier Subtabs */
+    .proj-subtabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 16px;
+      background: var(--bg-elev, #222);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border, #333);
+      flex-wrap: wrap;
+    }
+    .proj-subtab {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: var(--fg-muted, #999);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .proj-subtab:hover {
+      color: var(--fg, #eee);
+      background: rgba(255,255,255,0.06);
+    }
+    .proj-subtab.active {
+      background: var(--accent, #e8a33d);
+      color: #111;
+      font-weight: 600;
+    }
+
+    .proj-markdown-content {
+      background: var(--bg-elev, #202020);
+      border: 1px solid var(--border, #333);
+      border-radius: 8px;
+      padding: 18px;
+      line-height: 1.6;
+      font-size: 13.5px;
+    }
+    .proj-markdown-content h1, .proj-markdown-content h2, .proj-markdown-content h3 {
+      margin-top: 1.2em;
+      margin-bottom: 0.6em;
+      color: var(--fg, #eee);
+    }
+    .proj-markdown-content h1:first-child, .proj-markdown-content h2:first-child { margin-top: 0; }
+    .proj-markdown-content pre {
+      background: var(--input-bg, #141414);
+      border: 1px solid var(--border, #333);
+      border-radius: 6px;
+      padding: 12px;
+      overflow-x: auto;
+    }
+    .proj-markdown-content code {
+      background: rgba(255,255,255,0.08);
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .proj-markdown-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+    }
+    .proj-markdown-content th, .proj-markdown-content td {
+      border: 1px solid var(--border, #3a3a3a);
+      padding: 8px 12px;
+      font-size: 12.5px;
+    }
+    .proj-markdown-content th {
+      background: var(--bg-elev, #262626);
+      font-weight: 600;
+    }
+
+    .proj-summary-editor {
+      width: 100%;
+      height: 380px;
+      background: var(--input-bg, #181818);
+      color: var(--fg, #eee);
+      border: 1px solid var(--border, #444);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 12px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    /* File Topology Tree & Tech Cards */
+    .proj-tree-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .proj-tree-item {
+      background: var(--bg-elev, #222);
+      border: 1px solid var(--border, #333);
+      border-radius: 6px;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+    .proj-tree-item.is-dir { border-left: 3px solid var(--accent, #e8a33d); }
+    .proj-tree-item-name { display: flex; align-items: center; gap: 6px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .proj-tree-item-meta { font-size: 10.5px; color: var(--fg-muted, #888); }
+
+    .proj-badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(232, 163, 61, 0.15);
+      color: var(--accent, #e8a33d);
+      border: 1px solid rgba(232, 163, 61, 0.3);
+      border-radius: 12px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    /* Project Manifest Tasks */
+    .proj-manifest-card {
+      background: var(--bg-elev, #202020);
+      border: 1px solid var(--border, #333);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .proj-manifest-task-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 12px 0;
+    }
+    .proj-manifest-task-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg, #1a1a1a);
+      border: 1px solid var(--border, #333);
+      border-radius: 6px;
+      padding: 8px 12px;
+      transition: background 0.15s;
+    }
+    .proj-manifest-task-row:hover { background: rgba(255,255,255,0.03); border-color: #444; }
+    .proj-manifest-task-row.done .proj-manifest-task-text { text-decoration: line-through; color: var(--fg-muted, #777); opacity: 0.7; }
+    .proj-manifest-task-checkbox {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: var(--accent, #e8a33d);
+    }
+    .proj-manifest-task-text { flex: 1; font-size: 13px; color: var(--fg, #eee); }
+    .proj-manifest-add-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .proj-manifest-add-input {
+      flex: 1;
+      background: var(--input-bg, #181818);
+      border: 1px solid var(--border, #444);
+      border-radius: 6px;
+      padding: 7px 12px;
+      color: var(--fg, #eee);
+      font-size: 12.5px;
+    }
+    .proj-manifest-add-input:focus { border-color: var(--accent, #e8a33d); outline: none; }
 
     /* Notes & To-Dos Composer */
     .proj-composer-compact {
@@ -693,17 +1143,17 @@ function _wireModalEvents(modalEl) {
     try {
       const res = await fetch(`/api/projects/${_currentProjectId}/sync`, { method: 'POST' });
       if (!res.ok) throw new Error('Sync failed');
-      uiModule.showToast('Project synced with disk!');
+      _notifyToast('Project synced with disk!');
       await _loadProjectDetail(_currentProjectId);
     } catch (err) {
-      uiModule.showError('Disk sync error: ' + err.message);
+      _notifyToast('Disk sync error: ' + err.message, true);
     }
   });
 
   modalEl.querySelector('#proj-agent-btn')?.addEventListener('click', async () => {
     if (!_currentProjectId) return;
     try {
-      uiModule.showToast('Spawning Project Agent Session...');
+      _notifyToast('Spawning Project Agent Session...');
       const res = await fetch(`/api/projects/${_currentProjectId}/agent_session`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to spawn agent session');
       const data = await res.json();
@@ -712,7 +1162,7 @@ function _wireModalEvents(modalEl) {
         window.sessionModule.switchSession(data.session_id);
       }
     } catch (err) {
-      uiModule.showError('Agent spawn error: ' + err.message);
+      _notifyToast('Agent spawn error: ' + err.message, true);
     }
   });
 
@@ -739,6 +1189,14 @@ function _wireModalEvents(modalEl) {
 // Data Fetching & State
 // ---------------------------------------------------------------------------
 
+function _statusRank(status) {
+  const s = (status || 'active').toLowerCase().trim();
+  if (s === 'active') return 0;
+  if (['on-hold', 'on_hold', 'paused'].includes(s)) return 1;
+  if (['halted', 'archived', 'stopped'].includes(s)) return 2;
+  return 3;
+}
+
 async function _fetchProjectsList() {
   try {
     const res = await fetch('/api/projects');
@@ -746,6 +1204,15 @@ async function _fetchProjectsList() {
     const data = await res.json();
     _projects = data.projects || [];
     
+    // Sort Active projects to the beginning
+    _projects.sort((a, b) => {
+      const rankDiff = _statusRank(a.status) - _statusRank(b.status);
+      if (rankDiff !== 0) return rankDiff;
+      const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
+      const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
+      return timeB - timeA;
+    });
+
     const selectEl = document.getElementById('proj-select');
     if (selectEl) {
       selectEl.innerHTML = _projects.map((p) => `
@@ -811,9 +1278,10 @@ async function _loadProjectDetail(projectId, silent = false) {
   }
 
   try {
-    const [resProj, resNotes] = await Promise.all([
+    const [resProj, resNotes, resStructure] = await Promise.all([
       fetch(`/api/projects/${projectId}`),
       fetch(`/api/notes?project_id=${projectId}`).catch(() => ({ ok: false })),
+      fetch(`/api/projects/${projectId}/structure`).catch(() => ({ ok: false })),
     ]);
 
     if (!resProj.ok) throw new Error('Failed to load project details');
@@ -825,6 +1293,12 @@ async function _loadProjectDetail(projectId, silent = false) {
       _projectNotes = notesData.notes || [];
     } else {
       _projectNotes = [];
+    }
+
+    if (resStructure.ok) {
+      _structureData = await resStructure.json();
+    } else {
+      _structureData = null;
     }
 
     // Sync header
@@ -897,7 +1371,40 @@ function _renderActiveTabContent() {
 // ---------------------------------------------------------------------------
 
 
-function _renderLandingPage() {
+async function _fetchAvailableModels() {
+  if (_availableModels.length > 0) return _availableModels;
+  try {
+    const res = await fetch('/api/models', { credentials: 'same-origin' });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = data.items || [];
+    const models = [];
+    for (const ep of items) {
+      if (ep.offline) continue;
+      const displayNames = ep.models_display || ep.models || [];
+      (ep.models || []).forEach((m, idx) => {
+        models.push({
+          mid: m,
+          url: ep.url,
+          endpointName: ep.endpoint_name || 'LLM',
+          displayName: displayNames[idx] || m,
+          category: ep.category || 'local',
+        });
+      });
+    }
+    _availableModels = models;
+    if (!_selectedModel && models.length > 0) {
+      const saved = localStorage.getItem('odysseus-project-summary-model');
+      _selectedModel = models.find(m => m.mid === saved) || models[0];
+    }
+    return models;
+  } catch (e) {
+    console.warn('Failed to fetch models for projects:', e);
+    return [];
+  }
+}
+
+async function _renderLandingPage() {
   const container = document.getElementById('proj-body');
   if (!container) return;
 
@@ -918,57 +1425,229 @@ function _renderLandingPage() {
   let backBtn = document.getElementById('proj-back-btn');
   if (backBtn) backBtn.style.display = 'none';
 
+  // Load models if not cached
+  await _fetchAvailableModels();
+
   if (_projects.length === 0) {
     container.innerHTML = `<div style="padding:40px; text-align:center; color:var(--fg-muted);">No projects found. Create one to get started!</div>`;
     return;
   }
 
-  const cardsHtml = _projects.map(p => {
-    let pinnedHtml = '';
-    if (p.pinned_notes && p.pinned_notes.length > 0) {
-      pinnedHtml = `
-        <div class="proj-landing-pinned" style="margin-top: 12px; background: rgba(0,0,0,0.15); padding: 8px; border-radius: 6px;">
-          <div style="font-size: 11px; font-weight: 600; color: var(--accent, #e8a33d); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Urgent / Pinned</div>
-          ${p.pinned_notes.map(n => `
-            <div style="font-size: 13px; color: var(--fg); margin-bottom: 4px; padding-left: 12px; position: relative;">
-              <span style="position: absolute; left: 0; top: 0; color: var(--accent, #e8a33d);">•</span>
-              <b>${_esc(n.title || 'Pinned Note')}</b>: ${_esc((n.content || '').substring(0, 80))}...
-            </div>
-          `).join('')}
-        </div>
-      `;
+  // Calculate status counts
+  const totalCount = _projects.length;
+  const activeCount = _projects.filter(p => (p.status || 'active').toLowerCase() === 'active').length;
+  const onHoldCount = _projects.filter(p => ['on-hold', 'on_hold', 'paused'].includes((p.status || '').toLowerCase())).length;
+  const haltedCount = _projects.filter(p => ['halted', 'archived', 'stopped'].includes((p.status || '').toLowerCase())).length;
+
+  // Filter projects
+  const filteredProjects = _projects.filter(p => {
+    const status = (p.status || 'active').toLowerCase();
+    if (_statusFilter === 'active' && status !== 'active') return false;
+    if (_statusFilter === 'on-hold' && !['on-hold', 'on_hold', 'paused'].includes(status)) return false;
+    if (_statusFilter === 'halted' && !['halted', 'archived', 'stopped'].includes(status)) return false;
+
+    if (_searchQuery.trim()) {
+      const q = _searchQuery.toLowerCase();
+      const matchName = (p.name || '').toLowerCase().includes(q);
+      const matchSlug = (p.slug || '').toLowerCase().includes(q);
+      const matchSummary = (p.agent_summary || p.description || '').toLowerCase().includes(q);
+      const matchReason = (p.status_reason || '').toLowerCase().includes(q);
+      return matchName || matchSlug || matchSummary || matchReason;
     }
+    return true;
+  });
 
-    return `
-      <div class="proj-landing-card" style="background: var(--bg-elev, #222); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <h2 style="margin: 0 0 4px 0; font-size: 18px;">${_esc(p.name)}</h2>
-          <button class="proj-btn primary proj-open-btn" data-id="${_esc(p.id)}">Open Workspace</button>
-        </div>
-        <div style="font-size: 12px; color: var(--fg-muted); margin-bottom: 12px;">Status: ${_esc(p.status)}</div>
-        
-        <div style="font-size: 13px; line-height: 1.5; color: var(--fg); margin-bottom: 12px;">
-          ${_esc(p.agent_summary || p.description || 'No summary available.')}
-        </div>
-        
-        <button class="proj-btn proj-summarize-btn" data-id="${_esc(p.id)}" style="font-size: 11px; margin-bottom: 8px;">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-          Auto-Summarize
-        </button>
+  // Sort so Active projects are displayed first
+  filteredProjects.sort((a, b) => {
+    const rankDiff = _statusRank(a.status) - _statusRank(b.status);
+    if (rankDiff !== 0) return rankDiff;
+    const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
+    const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
+    return timeB - timeA;
+  });
 
-        ${pinnedHtml}
+  // Build model select options
+  let modelSelectHtml = '';
+  if (_availableModels.length > 0) {
+    modelSelectHtml = `
+      <div class="proj-model-picker-wrap">
+        <span>Model:</span>
+        <select id="proj-model-select" class="proj-model-select">
+          ${_availableModels.map(m => `
+            <option value="${_esc(m.mid)}" ${_selectedModel && _selectedModel.mid === m.mid ? 'selected' : ''}>
+              ${_esc(m.displayName)} (${_esc(m.endpointName)})
+            </option>
+          `).join('')}
+        </select>
       </div>
     `;
-  }).join('');
+  }
+
+  const toolbarHtml = `
+    <div class="proj-landing-toolbar">
+      <div class="proj-landing-controls">
+        <div class="proj-filter-pills">
+          <button class="proj-filter-pill ${_statusFilter === 'all' ? 'active' : ''}" data-filter="all">
+            All <span class="proj-pill-count">${totalCount}</span>
+          </button>
+          <button class="proj-filter-pill ${_statusFilter === 'active' ? 'active' : ''}" data-filter="active">
+            Active <span class="proj-pill-count">${activeCount}</span>
+          </button>
+          <button class="proj-filter-pill ${_statusFilter === 'on-hold' ? 'active' : ''}" data-filter="on-hold">
+            On-Hold <span class="proj-pill-count">${onHoldCount}</span>
+          </button>
+          <button class="proj-filter-pill ${_statusFilter === 'halted' ? 'active' : ''}" data-filter="halted">
+            Halted <span class="proj-pill-count">${haltedCount}</span>
+          </button>
+        </div>
+
+        ${modelSelectHtml}
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center;">
+        <input id="proj-search-input" type="text" class="proj-search-input" placeholder="🔍 Search projects by title, slug, or summary..." value="${_esc(_searchQuery)}" />
+        ${_searchQuery ? `<button id="proj-clear-search-btn" class="proj-btn" style="font-size:11px;">Clear</button>` : ''}
+      </div>
+    </div>
+  `;
+
+  let cardsHtml = '';
+  if (filteredProjects.length === 0) {
+    cardsHtml = `<div style="padding:40px; text-align:center; color:var(--fg-muted);">No projects match the selected filter.</div>`;
+  } else {
+    cardsHtml = filteredProjects.map(p => {
+      let pinnedHtml = '';
+      if (p.pinned_notes && p.pinned_notes.length > 0) {
+        pinnedHtml = `
+          <div class="proj-landing-pinned" style="margin-top: 12px; background: rgba(0,0,0,0.15); padding: 8px; border-radius: 6px;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--accent, #e8a33d); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Urgent / Pinned</div>
+            ${p.pinned_notes.map(n => `
+              <div style="font-size: 13px; color: var(--fg); margin-bottom: 4px; padding-left: 12px; position: relative;">
+                <span style="position: absolute; left: 0; top: 0; color: var(--accent, #e8a33d);">•</span>
+                <b>${_esc(n.title || 'Pinned Note')}</b>: ${_esc((n.content || '').substring(0, 80))}...
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      const statusNormalized = (p.status || 'active').toLowerCase();
+      let statusClass = 'active';
+      let statusLabel = 'ACTIVE';
+      if (['on-hold', 'on_hold', 'paused'].includes(statusNormalized)) {
+        statusClass = 'on-hold';
+        statusLabel = 'ON-HOLD';
+      } else if (['halted', 'archived', 'stopped'].includes(statusNormalized)) {
+        statusClass = 'halted';
+        statusLabel = 'HALTED';
+      }
+
+      let reasonBannerHtml = '';
+      if (p.status_reason && (statusClass === 'on-hold' || statusClass === 'halted')) {
+        reasonBannerHtml = `
+          <div class="proj-status-reason-banner ${statusClass}">
+            <span>${statusClass === 'on-hold' ? '⚠️' : '⏹️'}</span>
+            <div><b>${statusLabel} Reason:</b> ${_esc(p.status_reason)}</div>
+          </div>
+        `;
+      }
+
+      const taskStatus = _projectTaskQueue.getStatus(p.id);
+      let summarizeBtnContent = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Auto-Summarize`;
+      if (taskStatus?.state === 'running') {
+        summarizeBtnContent = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin" style="margin-right:4px;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Running... <span class="proj-halt-btn" data-id="${_esc(p.id)}" style="background:#dc2626;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:6px;font-weight:bold;cursor:pointer;">Halt</span>`;
+      } else if (taskStatus?.state === 'queued') {
+        summarizeBtnContent = `⏳ Queued (#${taskStatus.position}) <span class="proj-cancel-btn" data-id="${_esc(p.id)}" style="color:#ef4444;margin-left:6px;font-weight:bold;cursor:pointer;" title="Cancel">✕</span>`;
+      }
+
+      return `
+        <div class="proj-landing-card" style="background: var(--bg-elev, #222); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+              <h2 style="margin: 0 0 4px 0; font-size: 18px;">${_esc(p.name)}</h2>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-bottom: 8px;">
+                Slug: <code>${_esc(p.slug)}</code> &bull; Tasks: <strong>${p.task_completed || 0}/${p.task_total || 0}</strong>
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="proj-pill ${statusClass}">${statusLabel}</span>
+              <button class="proj-btn primary proj-open-btn" data-id="${_esc(p.id)}">Open Workspace</button>
+            </div>
+          </div>
+          
+          ${reasonBannerHtml}
+
+          <div style="font-size: 13px; line-height: 1.5; color: var(--fg); margin: 10px 0;">
+            ${_renderMarkdownSafe(p.agent_summary || p.description || 'No summary available.')}
+          </div>
+          
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px;">
+            <button class="proj-btn proj-summarize-btn ${taskStatus?.state === 'running' ? 'proj-btn-running' : ''}" data-id="${_esc(p.id)}" style="font-size: 11.5px;">
+              ${summarizeBtnContent}
+            </button>
+
+            <button class="proj-btn proj-edit-status-btn" data-id="${_esc(p.id)}" style="font-size: 11.5px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              Edit Status
+            </button>
+          </div>
+
+          ${pinnedHtml}
+        </div>
+      `;
+    }).join('');
+  }
 
   container.innerHTML = `
-    <div style="padding: 24px; max-width: 800px; margin: 0 auto;">
-      <h1 style="margin-top:0; font-size: 24px; margin-bottom: 24px;">Project Workspaces</h1>
+    <div style="padding: 24px; max-width: 860px; margin: 0 auto;">
+      <h1 style="margin-top:0; font-size: 24px; margin-bottom: 16px;">Project Workspaces</h1>
+      ${toolbarHtml}
       ${cardsHtml}
     </div>
   `;
 
-  // Wire events
+  // Wire Filter Pills
+  container.querySelectorAll('.proj-filter-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      _statusFilter = pill.getAttribute('data-filter');
+      _renderLandingPage();
+    });
+  });
+
+  // Wire Search Input
+  const searchInput = container.querySelector('#proj-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      _searchQuery = e.target.value;
+      _renderLandingPage();
+      const nextInput = document.querySelector('#proj-search-input');
+      if (nextInput) {
+        nextInput.focus();
+        nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
+      }
+    });
+  }
+
+  container.querySelector('#proj-clear-search-btn')?.addEventListener('click', () => {
+    _searchQuery = '';
+    _renderLandingPage();
+  });
+
+  // Wire Model Select
+  const modelSelect = container.querySelector('#proj-model-select');
+  if (modelSelect) {
+    modelSelect.addEventListener('change', (e) => {
+      const mid = e.target.value;
+      const found = _availableModels.find(m => m.mid === mid);
+      if (found) {
+        _selectedModel = found;
+        localStorage.setItem('odysseus-project-summary-model', found.mid);
+        _notifyToast(`Selected model: ${found.displayName}`);
+      }
+    });
+  }
+
+  // Wire Open Workspace Buttons
   container.querySelectorAll('.proj-open-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       _currentProjectId = btn.getAttribute('data-id');
@@ -976,42 +1655,268 @@ function _renderLandingPage() {
     });
   });
 
+  // Wire Auto-Summarize Buttons with Sequential Queue & Halt
   container.querySelectorAll('.proj-summarize-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', (e) => {
       const id = btn.getAttribute('data-id');
-      const originalText = btn.innerHTML;
-      btn.innerHTML = 'Summarizing...';
-      btn.disabled = true;
-      try {
-        await fetch(`/api/projects/${id}/summarize`, { method: 'POST' });
-        await _fetchProjectsList();
-        _renderLandingPage();
-      } catch (err) {
-        if(window.uiModule) window.uiModule.showError(err.message);
-        btn.innerHTML = originalText;
-        btn.disabled = false;
+      const project = _projects.find(p => p.id === id);
+      const projectName = project ? project.name : 'Project';
+
+      // If clicked explicitly on halt or cancel badge
+      if (e.target.closest('.proj-halt-btn') || e.target.closest('.proj-cancel-btn')) {
+        e.stopPropagation();
+        _projectTaskQueue.halt(id);
+        return;
+      }
+
+      const status = _projectTaskQueue.getStatus(id);
+      if (status) {
+        // Already active or queued, clicking button stops/cancels it
+        _projectTaskQueue.halt(id);
+        return;
+      }
+
+      // Enqueue sequential task
+      _projectTaskQueue.enqueue({
+        id: id,
+        projectName: projectName,
+        model: _selectedModel,
+      });
+    });
+  });
+
+  // Wire Edit Status Buttons
+  container.querySelectorAll('.proj-edit-status-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-id');
+      const project = _projects.find(p => p.id === id);
+      if (project) {
+        _openStatusEditModal(project);
       }
     });
   });
 }
 
-function _renderOverviewTab(container) {
-  const p = _currentProject;
-  const progress = p.progress || 0;
+function _openStatusEditModal(project) {
+  if (!project) return;
+  const old = document.getElementById('proj-status-modal-overlay');
+  if (old) old.remove();
 
-  if (_isEditingSummary) {
-    container.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <h3 style="margin:0;">Edit PROJECT.md Manifest</h3>
+  const currentStatus = (project.status || 'active').toLowerCase();
+  const currentReason = project.status_reason || '';
+  const projId = project.id || project.slug;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'proj-status-modal-overlay';
+  overlay.className = 'proj-status-modal-overlay';
+  overlay.innerHTML = `
+    <div class="proj-status-modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="margin:0; font-size:16px;">Edit Status &bull; ${_esc(project.name)}</h3>
+        <button id="proj-status-modal-close" class="proj-btn" style="border:none; padding:4px 8px;">✕</button>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; color:var(--fg-muted,#888); display:block; margin-bottom:8px; text-transform:uppercase;">Select Lifecycle Status</label>
         <div style="display:flex; gap:8px;">
-          <button id="proj-cancel-summary-btn" class="proj-btn">Cancel</button>
-          <button id="proj-save-summary-btn" class="proj-btn primary">Save & Sync</button>
+          <label style="flex:1; cursor:pointer; background:var(--input-bg,#181818); border:1px solid var(--border,#444); border-radius:6px; padding:10px; display:flex; align-items:center; gap:8px; font-size:13px;">
+            <input type="radio" name="proj_status_radio" value="active" ${currentStatus === 'active' ? 'checked' : ''} />
+            <span style="color:#2ecc71; font-weight:600;">Active</span>
+          </label>
+          <label style="flex:1; cursor:pointer; background:var(--input-bg,#181818); border:1px solid var(--border,#444); border-radius:6px; padding:10px; display:flex; align-items:center; gap:8px; font-size:13px;">
+            <input type="radio" name="proj_status_radio" value="on-hold" ${['on-hold', 'on_hold', 'paused'].includes(currentStatus) ? 'checked' : ''} />
+            <span style="color:#f1c40f; font-weight:600;">On-Hold</span>
+          </label>
+          <label style="flex:1; cursor:pointer; background:var(--input-bg,#181818); border:1px solid var(--border,#444); border-radius:6px; padding:10px; display:flex; align-items:center; gap:8px; font-size:13px;">
+            <input type="radio" name="proj_status_radio" value="halted" ${['halted', 'archived', 'stopped'].includes(currentStatus) ? 'checked' : ''} />
+            <span style="color:#eb5757; font-weight:600;">Halted</span>
+          </label>
         </div>
       </div>
-      <textarea id="proj-summary-textarea" class="proj-summary-editor">${_esc(p.content || '')}</textarea>
+
+      <div id="proj-reason-wrap" style="margin-bottom:16px; display:${currentStatus === 'active' ? 'none' : 'block'};">
+        <label style="font-size:12px; font-weight:600; color:var(--fg-muted,#888); display:block; margin-bottom:6px; text-transform:uppercase;">Reason for Hold / Halt</label>
+        <textarea id="proj-status-reason-input" class="proj-summary-editor" style="height:90px;" placeholder="Explain why this project is on hold or halted (blockers, dependencies, priorities)...">${_esc(currentReason)}</textarea>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button id="proj-status-cancel-btn" class="proj-btn">Cancel</button>
+        <button id="proj-status-save-btn" class="proj-btn primary">Save Status</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const radios = overlay.querySelectorAll('input[name="proj_status_radio"]');
+  const reasonWrap = overlay.querySelector('#proj-reason-wrap');
+  const reasonInput = overlay.querySelector('#proj-status-reason-input');
+
+  radios.forEach(r => {
+    r.addEventListener('change', () => {
+      if (r.value === 'active') {
+        reasonWrap.style.display = 'none';
+      } else {
+        reasonWrap.style.display = 'block';
+        if (reasonInput) reasonInput.focus();
+      }
+    });
+  });
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#proj-status-modal-close')?.addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#proj-status-cancel-btn')?.addEventListener('click', () => overlay.remove());
+
+  overlay.querySelector('#proj-status-save-btn')?.addEventListener('click', async () => {
+    const selectedRadio = overlay.querySelector('input[name="proj_status_radio"]:checked');
+    const newStatus = selectedRadio ? selectedRadio.value : 'active';
+    const newReason = reasonInput ? reasonInput.value.trim() : null;
+    const saveBtn = overlay.querySelector('#proj-status-save-btn');
+
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving...';
+    }
+
+    try {
+      const payload = {
+        status: newStatus,
+        status_reason: newStatus === 'active' ? null : (newReason || 'No reason specified'),
+      };
+
+      const res = await fetch(`/api/projects/${projId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Failed to update status (HTTP ${res.status})`);
+      }
+
+      const resData = await res.json();
+      const updatedProject = resData.project || {};
+
+      // Instantly mutate in-memory state
+      project.status = updatedProject.status || newStatus;
+      project.status_reason = updatedProject.status_reason !== undefined ? updatedProject.status_reason : payload.status_reason;
+
+      const pIdx = _projects.findIndex(p => p.id === project.id || p.slug === project.slug);
+      if (pIdx !== -1) {
+        _projects[pIdx].status = project.status;
+        _projects[pIdx].status_reason = project.status_reason;
+      }
+      if (_currentProject && (_currentProject.id === project.id || _currentProject.slug === project.slug)) {
+        _currentProject.status = project.status;
+        _currentProject.status_reason = project.status_reason;
+      }
+
+      overlay.remove();
+      _notifyToast(`Status updated to ${newStatus.toUpperCase()}!`);
+      
+      await _fetchProjectsList();
+
+      if (_currentProjectId) {
+        const body = document.getElementById('proj-body');
+        if (body) _renderOverviewTab(body);
+      } else {
+        _renderLandingPage();
+      }
+    } catch (err) {
+      console.error('Failed to update project status:', err);
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Status';
+      }
+      _notifyToast(err.message, true);
+    }
+  });
+}
+
+function _renderMarkdownSafe(text) {
+  if (!text || !text.trim()) return '<div style="color:var(--fg-muted,#888); font-style:italic;">No content recorded.</div>';
+  if (markdownModule && markdownModule.mdToHtml) {
+    try {
+      return markdownModule.mdToHtml(text, { shortcodes: false });
+    } catch (e) {
+      console.warn('Markdown parse error:', e);
+    }
+  }
+  return `<pre style="white-space:pre-wrap; font-family:inherit;">${_esc(text)}</pre>`;
+}
+
+function _renderOverviewTab(container) {
+  const p = _currentProject;
+  if (!p) return;
+  const progress = p.progress || 0;
+  const struct = _structureData || {};
+  const sections = struct.sections || {};
+
+  const statusNormalized = (p.status || 'active').toLowerCase();
+  let reasonBannerHtml = '';
+  if (p.status_reason && ['on-hold', 'on_hold', 'paused', 'halted', 'archived'].includes(statusNormalized)) {
+    const isHold = ['on-hold', 'on_hold', 'paused'].includes(statusNormalized);
+    reasonBannerHtml = `
+      <div class="proj-status-reason-banner ${isHold ? 'on-hold' : 'halted'}" style="margin-bottom:14px;">
+        <span>${isHold ? '⚠️' : '⏹️'}</span>
+        <div><b>${isHold ? 'ON-HOLD' : 'HALTED'} Reason:</b> ${_esc(p.status_reason)}</div>
+      </div>
     `;
+  }
+
+  // 1. Header & Progress Bar
+  let html = `
+    <div class="proj-overview-header">
+      <div>
+        <h2 style="margin:0 0 4px;">${_esc(p.name)}</h2>
+        <div style="color:var(--fg-muted,#888); font-size:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span>Status: <strong style="text-transform:uppercase;">${_esc(p.status || 'active')}</strong></span> &bull;
+          <span>Slug: <code>${_esc(p.slug)}</code></span> &bull; 
+          <span>Priority: <strong>${_esc(p.priority || 'normal')}</strong></span> &bull;
+          <span>Folder: <code>${_esc(struct.folder_path || p.folder_path || 'data/projects/' + p.slug)}</code></span>
+        </div>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button id="proj-edit-status-header-btn" class="proj-btn" title="Edit Status"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Status</button>
+        <button id="proj-edit-manifest-btn" class="proj-btn" title="Edit Raw Manifest"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> ${_isEditingSummary ? 'Close Editor' : 'Edit Manifest'}</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+        <span>Progress: ${p.task_completed || 0}/${p.task_total || 0} tasks completed</span>
+        <strong>${progress}%</strong>
+      </div>
+      <div class="proj-progress-bar">
+        <div class="proj-progress-fill" style="width: ${progress}%;"></div>
+      </div>
+    </div>
+    ${reasonBannerHtml}
+  `;
+
+  // If user clicked Edit Manifest, show full editor
+  if (_isEditingSummary) {
+    html += `
+      <div style="background:var(--bg-elev,#222); border:1px solid var(--border,#333); border-radius:8px; padding:16px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0; font-size:14px;">Edit PROJECT.md Manifest (YAML + Markdown)</h3>
+          <div style="display:flex; gap:8px;">
+            <button id="proj-cancel-summary-btn" class="proj-btn">Cancel</button>
+            <button id="proj-save-summary-btn" class="proj-btn primary">Save & Sync to Disk</button>
+          </div>
+        </div>
+        <textarea id="proj-summary-textarea" class="proj-summary-editor">${_esc(p.content || '')}</textarea>
+      </div>
+    `;
+    container.innerHTML = html;
 
     container.querySelector('#proj-cancel-summary-btn')?.addEventListener('click', () => {
+      _isEditingSummary = false;
+      _renderOverviewTab(container);
+    });
+
+    container.querySelector('#proj-edit-manifest-btn')?.addEventListener('click', () => {
       _isEditingSummary = false;
       _renderOverviewTab(container);
     });
@@ -1026,7 +1931,7 @@ function _renderOverviewTab(container) {
         });
         if (!res.ok) throw new Error('Save failed');
         _isEditingSummary = false;
-        uiModule.showToast('PROJECT.md updated!');
+        uiModule.showToast('PROJECT.md updated and synced!');
         await _loadProjectDetail(p.id);
       } catch (err) {
         uiModule.showError('Save error: ' + err.message);
@@ -1035,39 +1940,198 @@ function _renderOverviewTab(container) {
     return;
   }
 
-  const renderedMarkdown = (markdownModule && markdownModule.render)
-    ? markdownModule.render(p.content || p.description || '*No summary content.*')
-    : `<pre style="white-space:pre-wrap;">${_esc(p.content || p.description || '')}</pre>`;
-
-  container.innerHTML = `
-    <div class="proj-overview-header">
-      <div>
-        <h2 style="margin:0 0 4px;">${_esc(p.name)}</h2>
-        <div style="color:var(--fg-muted,#888); font-size:12px;">
-          Slug: <code>${_esc(p.slug)}</code> &bull; Priority: <strong>${_esc(p.priority || 'normal')}</strong>
-        </div>
-      </div>
-      <button id="proj-edit-summary-btn" class="proj-btn" title="Edit Markdown Body"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Manifest</button>
-    </div>
-
-    <div style="margin-bottom:14px;">
-      <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
-        <span>Progress: ${p.task_completed || 0}/${p.task_total || 0} tasks completed</span>
-        <strong>${progress}%</strong>
-      </div>
-      <div class="proj-progress-bar">
-        <div class="proj-progress-fill" style="width: ${progress}%;"></div>
-      </div>
-    </div>
-
-    <div class="proj-markdown-content">
-      ${renderedMarkdown}
+  // 2. 4-Tier Sub-Tabs Navigation
+  html += `
+    <div class="proj-subtabs">
+      <button class="proj-subtab ${_overviewSubTab === 'overview' ? 'active' : ''}" data-subtab="overview">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 1. Overview & Goals
+      </button>
+      <button class="proj-subtab ${_overviewSubTab === 'extended' ? 'active' : ''}" data-subtab="extended">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg> 2. Extended Look & Architecture
+      </button>
+      <button class="proj-subtab ${_overviewSubTab === 'structure' ? 'active' : ''}" data-subtab="structure">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> 3. Detailed Structure & Files
+      </button>
+      <button class="proj-subtab ${_overviewSubTab === 'spec' ? 'active' : ''}" data-subtab="spec">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> 4. Spec File (${_esc(struct.spec_source || 'SPEC.md')})
+      </button>
     </div>
   `;
 
-  container.querySelector('#proj-edit-summary-btn')?.addEventListener('click', () => {
-    _isEditingSummary = true;
+  // 3. Sub-Tab Content Rendering
+  if (_overviewSubTab === 'overview') {
+    const overviewMd = sections.overview || p.description || '*No executive summary provided.*';
+    html += `
+      <div class="proj-markdown-content">
+        ${_renderMarkdownSafe(overviewMd)}
+      </div>
+    `;
+  } else if (_overviewSubTab === 'extended') {
+    const tech = struct.tech || {};
+    let techBadgesHtml = '';
+    if (tech.npm_package || (tech.dependencies && tech.dependencies.length > 0)) {
+      techBadgesHtml += `
+        <div style="margin-bottom:14px; background:var(--bg,#181818); border:1px solid var(--border,#333); border-radius:6px; padding:12px;">
+          <div style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--accent,#e8a33d); margin-bottom:8px;">Detected Node.js / Web Stack</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            ${tech.npm_package ? `<span class="proj-badge-pill">📦 ${tech.npm_package}</span>` : ''}
+            ${(tech.dependencies || []).map(d => `<span class="proj-badge-pill">${_esc(d)}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+    if (tech.python_requirements && tech.python_requirements.length > 0) {
+      techBadgesHtml += `
+        <div style="margin-bottom:14px; background:var(--bg,#181818); border:1px solid var(--border,#333); border-radius:6px; padding:12px;">
+          <div style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--accent,#e8a33d); margin-bottom:8px;">Python Environment Packages</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            ${tech.python_requirements.map(r => `<span class="proj-badge-pill">🐍 ${_esc(r)}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    const extendedMd = sections.extended || '## System Architecture\n\nComponent workflows, services, and integration parameters are managed in this workspace.';
+    html += `
+      <div class="proj-markdown-content">
+        ${techBadgesHtml}
+        ${_renderMarkdownSafe(extendedMd)}
+      </div>
+    `;
+  } else if (_overviewSubTab === 'structure') {
+    const tree = struct.tree || [];
+    const keyFiles = struct.key_files || [];
+    const tech = struct.tech || {};
+
+    let scriptsHtml = '';
+    if (tech.scripts && Object.keys(tech.scripts).length > 0) {
+      scriptsHtml = `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px; font-weight:600; color:var(--accent,#e8a33d); margin-bottom:6px; text-transform:uppercase;">NPM Execution Scripts</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            ${Object.entries(tech.scripts).map(([k, v]) => `
+              <div style="background:var(--bg,#181818); border:1px solid var(--border,#333); border-radius:6px; padding:6px 10px; font-size:11.5px;">
+                <code>npm run ${k}</code> &rarr; <span style="color:var(--fg-muted,#888);">${_esc(v)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    let keyFilesHtml = '';
+    if (keyFiles.length > 0) {
+      keyFilesHtml = `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px; font-weight:600; color:var(--accent,#e8a33d); margin-bottom:6px; text-transform:uppercase;">Key Documentation & Configuration</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            ${keyFiles.map(kf => `<span class="proj-badge-pill">📄 ${_esc(kf)}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    let treeHtml = '';
+    if (tree.length > 0) {
+      treeHtml = `
+        <div>
+          <div style="font-size:12px; font-weight:600; color:var(--accent,#e8a33d); margin-bottom:6px; text-transform:uppercase;">Workspace File Tree (${tree.length} top-level entries)</div>
+          <div class="proj-tree-grid">
+            ${tree.map(t => `
+              <div class="proj-tree-item ${t.is_dir ? 'is-dir' : ''}">
+                <div class="proj-tree-item-name">
+                  <span>${t.is_dir ? '📁' : '📄'}</span>
+                  <span>${_esc(t.name)}</span>
+                </div>
+                <div class="proj-tree-item-meta">
+                  ${t.is_dir ? (t.children + ' items') : _formatBytes(t.size)}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    const structureMd = sections.structure ? `<div style="margin-top:16px;">${_renderMarkdownSafe(sections.structure)}</div>` : '';
+
+    html += `
+      <div class="proj-markdown-content">
+        ${keyFilesHtml}
+        ${scriptsHtml}
+        ${treeHtml}
+        ${structureMd}
+      </div>
+    `;
+  } else if (_overviewSubTab === 'spec') {
+    const specMd = struct.spec_content || p.content || '# Specification\n\n*No formal spec file detected.*';
+    html += `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <span style="font-size:12px; color:var(--fg-muted,#888);">Source: <code>${_esc(struct.spec_source || 'SPEC.md')}</code></span>
+        <button id="proj-toggle-spec-edit-btn" class="proj-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> ${_isEditingSpec ? 'Preview Spec' : 'Edit Spec'}</button>
+      </div>
+
+      ${_isEditingSpec ? `
+        <textarea id="proj-spec-textarea" class="proj-summary-editor">${_esc(specMd)}</textarea>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+          <button id="proj-cancel-spec-btn" class="proj-btn">Cancel</button>
+          <button id="proj-save-spec-btn" class="proj-btn primary">Save Spec</button>
+        </div>
+      ` : `
+        <div class="proj-markdown-content">
+          ${_renderMarkdownSafe(specMd)}
+        </div>
+      `}
+    `;
+  }
+
+  container.innerHTML = html;
+
+  // Wire Subtabs switching
+  container.querySelectorAll('.proj-subtab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _overviewSubTab = btn.getAttribute('data-subtab');
+      _renderOverviewTab(container);
+    });
+  });
+
+  // Wire Edit Status Header Button
+  container.querySelector('#proj-edit-status-header-btn')?.addEventListener('click', () => {
+    _openStatusEditModal(p);
+  });
+
+  // Wire Edit Manifest Button
+  container.querySelector('#proj-edit-manifest-btn')?.addEventListener('click', () => {
+    _isEditingSummary = !_isEditingSummary;
     _renderOverviewTab(container);
+  });
+
+  // Wire Spec Edit Toggle & Save
+  container.querySelector('#proj-toggle-spec-edit-btn')?.addEventListener('click', () => {
+    _isEditingSpec = !_isEditingSpec;
+    _renderOverviewTab(container);
+  });
+
+  container.querySelector('#proj-cancel-spec-btn')?.addEventListener('click', () => {
+    _isEditingSpec = false;
+    _renderOverviewTab(container);
+  });
+
+  container.querySelector('#proj-save-spec-btn')?.addEventListener('click', async () => {
+    const text = container.querySelector('#proj-spec-textarea')?.value;
+    try {
+      const res = await fetch(`/api/projects/${p.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text }),
+      });
+      if (!res.ok) throw new Error('Spec save failed');
+      _isEditingSpec = false;
+      _notifyToast('Spec saved and synced!');
+      await _loadProjectDetail(p.id);
+    } catch (err) {
+      _notifyToast('Spec save error: ' + err.message, true);
+    }
   });
 }
 
@@ -1111,7 +2175,7 @@ function _openImageLightbox(url, title = 'Image Preview') {
   overlay.querySelector('#lightbox-close-btn')?.addEventListener('click', () => overlay.remove());
   overlay.querySelector('#lightbox-copy-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(window.location.origin + url);
-    uiModule.showToast('Copied image URL to clipboard!');
+    _notifyToast('Copied image URL to clipboard!');
   });
 
   document.body.appendChild(overlay);
@@ -1168,6 +2232,9 @@ function _renderTasksTab(container) {
   const p = _currentProject;
   if (!p) return;
 
+  const manifestTasks = p.tasks || [];
+  const manifestCompletedCount = manifestTasks.filter(t => t.completed).length;
+
   // Filter notes
   let visibleNotes = _projectNotes.filter((n) => {
     if (_noteFilter === 'pinned') return n.pinned;
@@ -1191,6 +2258,42 @@ function _renderTasksTab(container) {
   const otherNotes = visibleNotes.filter((n) => !n.pinned);
 
   container.innerHTML = `
+    <!-- 1. Official Project Manifest Tasks (synced with PROJECT.md) -->
+    <div class="proj-manifest-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h3 style="margin:0; font-size:14px; display:flex; align-items:center; gap:6px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Project Tasks <span style="font-size:11.5px; color:var(--fg-muted,#888); font-weight:normal;">(${manifestCompletedCount}/${manifestTasks.length} done &bull; synced to PROJECT.md)</span>
+        </h3>
+      </div>
+
+      ${manifestTasks.length === 0 ? `
+        <div style="color:var(--fg-muted,#888); font-size:12px; padding:6px 0; font-style:italic;">
+          No checklist tasks defined in PROJECT.md yet. Add one below to sync it to disk!
+        </div>
+      ` : `
+        <div class="proj-manifest-task-list">
+          ${manifestTasks.map(t => `
+            <div class="proj-manifest-task-row ${t.completed ? 'done' : ''}" data-task-id="${_esc(t.id)}">
+              <input type="checkbox" class="proj-manifest-task-checkbox" ${t.completed ? 'checked' : ''} data-task-id="${_esc(t.id)}" />
+              <span class="proj-manifest-task-text">${_esc(t.title)}</span>
+              <button class="proj-card-btn del-btn proj-manifest-del-btn" data-task-id="${_esc(t.id)}" title="Delete task from PROJECT.md">🗑️</button>
+            </div>
+          `).join('')}
+        </div>
+      `}
+
+      <div class="proj-manifest-add-row">
+        <input type="text" id="proj-manifest-new-input" class="proj-manifest-add-input" placeholder="+ Add a new task to PROJECT.md (Press Enter to save)..." />
+        <button id="proj-manifest-new-btn" class="proj-btn primary">+ Add Task</button>
+      </div>
+    </div>
+
+    <!-- 2. Workspace Sticky Notes & Ad-hoc Checklists -->
+    <div style="font-size:13px; font-weight:600; color:var(--fg-muted,#888); text-transform:uppercase; letter-spacing:0.6px; margin: 18px 0 10px;">
+      Workspace Notes & Scratchpad
+    </div>
+
     <!-- Comprehensive Quick-Add Composer -->
     ${!_composerExpanded ? `
       <div class="proj-composer-compact" id="proj-composer-compact" title="Click to add note or checklist">
@@ -1303,6 +2406,86 @@ function _renderTasksTab(container) {
     ` : ''}
   `;
 
+  // Wire Manifest Task Checkboxes (synced with PROJECT.md)
+  container.querySelectorAll('.proj-manifest-task-checkbox').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const taskId = cb.getAttribute('data-task-id');
+      const isChecked = cb.checked;
+      try {
+        const res = await fetch(`/api/projects/${p.id}/tasks/${taskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ completed: isChecked }),
+        });
+        if (!res.ok) throw new Error('Task update failed');
+        const task = (p.tasks || []).find(t => t.id === taskId);
+        if (task) task.completed = isChecked;
+        p.task_completed = (p.tasks || []).filter(t => t.completed).length;
+        p.progress = (p.task_total > 0) ? Math.round((p.task_completed / p.task_total) * 100) : 0;
+        _updateHeaderState();
+        _renderTasksTab(container);
+        uiModule.showToast(isChecked ? 'Task marked complete!' : 'Task reopened');
+      } catch (err) {
+        uiModule.showError('Task update error: ' + err.message);
+        cb.checked = !isChecked;
+      }
+    });
+  });
+
+  // Wire Manifest Task Delete
+  container.querySelectorAll('.proj-manifest-del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const taskId = btn.getAttribute('data-task-id');
+      try {
+        const res = await fetch(`/api/projects/${p.id}/tasks/${taskId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Task delete failed');
+        p.tasks = (p.tasks || []).filter(t => t.id !== taskId);
+        p.task_total = p.tasks.length;
+        p.task_completed = p.tasks.filter(t => t.completed).length;
+        p.progress = (p.task_total > 0) ? Math.round((p.task_completed / p.task_total) * 100) : 0;
+        _updateHeaderState();
+        _renderTasksTab(container);
+        uiModule.showToast('Task deleted from PROJECT.md');
+      } catch (err) {
+        uiModule.showError('Delete error: ' + err.message);
+      }
+    });
+  });
+
+  // Wire Manifest Task Add
+  const handleAddManifestTask = async () => {
+    const input = container.querySelector('#proj-manifest-new-input');
+    const title = input?.value.trim();
+    if (!title) return;
+    try {
+      const res = await fetch(`/api/projects/${p.id}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      if (!res.ok) throw new Error('Task creation failed');
+      const data = await res.json();
+      if (!p.tasks) p.tasks = [];
+      p.tasks.push(data.task);
+      p.task_total = p.tasks.length;
+      p.task_completed = p.tasks.filter(t => t.completed).length;
+      p.progress = (p.task_total > 0) ? Math.round((p.task_completed / p.task_total) * 100) : 0;
+      _updateHeaderState();
+      _renderTasksTab(container);
+      uiModule.showToast('Task added to PROJECT.md');
+    } catch (err) {
+      uiModule.showError('Add task error: ' + err.message);
+    }
+  };
+
+  container.querySelector('#proj-manifest-new-btn')?.addEventListener('click', handleAddManifestTask);
+  container.querySelector('#proj-manifest-new-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddManifestTask();
+    }
+  });
+
   // Wire compact composer click
   const compactEl = container.querySelector('#proj-composer-compact');
   if (compactEl) {
@@ -1384,11 +2567,11 @@ function _renderTasksTab(container) {
       if (e.dataTransfer.files?.length) {
         for (const file of e.dataTransfer.files) {
           try {
-            uiModule.showToast(`Uploading ${file.name}...`);
+            _notifyToast(`Uploading ${file.name}...`);
             const att = await _uploadAndAttachFile(file);
             _composerAttachments.push(att);
           } catch (err) {
-            uiModule.showError(err.message);
+            _notifyToast(err.message, true);
           }
         }
         _renderTasksTab(container);
@@ -1398,11 +2581,11 @@ function _renderTasksTab(container) {
       if (fileInput.files?.length) {
         for (const file of fileInput.files) {
           try {
-            uiModule.showToast(`Uploading ${file.name}...`);
+            _notifyToast(`Uploading ${file.name}...`);
             const att = await _uploadAndAttachFile(file);
             _composerAttachments.push(att);
           } catch (err) {
-            uiModule.showError(err.message);
+            _notifyToast(err.message, true);
           }
         }
         _renderTasksTab(container);
@@ -1416,11 +2599,11 @@ function _renderTasksTab(container) {
     if (extraFileInput.files?.length) {
       for (const file of extraFileInput.files) {
         try {
-          uiModule.showToast(`Uploading ${file.name}...`);
+          _notifyToast(`Uploading ${file.name}...`);
           const att = await _uploadAndAttachFile(file);
           _composerAttachments.push(att);
         } catch (err) {
-          uiModule.showError(err.message);
+          _notifyToast(err.message, true);
         }
       }
       _renderTasksTab(container);
@@ -1450,7 +2633,7 @@ function _renderTasksTab(container) {
     }
 
     if (!title && !content && (!items || items.length === 0) && _composerAttachments.length === 0) {
-      uiModule.showError('Please provide a title, content, or checklist items.');
+      _notifyToast('Please provide a title, content, or checklist items.', true);
       return;
     }
 
@@ -1466,7 +2649,7 @@ function _renderTasksTab(container) {
     };
 
     try {
-      uiModule.showToast('Saving note...');
+      _notifyToast('Saving note...');
       const res = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1482,7 +2665,7 @@ function _renderTasksTab(container) {
 
       await _loadProjectDetail(p.id, true);
     } catch (err) {
-      uiModule.showError('Save note error: ' + err.message);
+      _notifyToast('Save note error: ' + err.message, true);
     }
   });
 
@@ -1625,7 +2808,7 @@ function _wireNoteCards(container, project) {
           body: JSON.stringify({ items: note.items }),
         });
       } catch (err) {
-        uiModule.showError('Failed to update task: ' + err.message);
+        _notifyToast('Failed to update task: ' + err.message, true);
       }
     });
   });
@@ -1663,7 +2846,7 @@ function _wireNoteCards(container, project) {
               body: JSON.stringify({ items: note.items }),
             });
           } catch (err) {
-            if(window.uiModule) window.uiModule.showError(err.message);
+            _notifyToast(err.message, true);
           }
         }
       }
@@ -1701,7 +2884,7 @@ function _wireNoteCards(container, project) {
             body: JSON.stringify({ items: note.items }),
           });
         } catch (err) {
-          uiModule.showError(err.message);
+          _notifyToast(err.message, true);
         }
       }
     });
@@ -1726,7 +2909,7 @@ function _wireNoteCards(container, project) {
           body: JSON.stringify({ items: note.items }),
         });
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -1763,11 +2946,11 @@ function _wireNoteCards(container, project) {
       if (!Array.isArray(note.attachments)) note.attachments = [];
       for (const file of input.files) {
         try {
-          uiModule.showToast(`Uploading ${file.name}...`);
+          _notifyToast(`Uploading ${file.name}...`);
           const att = await _uploadAndAttachFile(file);
           note.attachments.push(att);
         } catch (err) {
-          uiModule.showError(err.message);
+          _notifyToast(err.message, true);
         }
       }
       _renderTasksTab(container);
@@ -1779,7 +2962,7 @@ function _wireNoteCards(container, project) {
           body: JSON.stringify({ attachments: note.attachments }),
         });
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -1802,7 +2985,7 @@ function _wireNoteCards(container, project) {
           body: JSON.stringify({ pinned: note.pinned }),
         });
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -1816,7 +2999,7 @@ function _wireNoteCards(container, project) {
       if (!note) return;
 
       try {
-        uiModule.showToast(`Spawning Agent session for: "${note.title}"...`);
+        _notifyToast(`Spawning Agent session for: "${note.title}"...`);
         const res = await fetch(`/api/projects/${project.id}/agent_session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1829,7 +3012,7 @@ function _wireNoteCards(container, project) {
           window.sessionModule.switchSession(data.session_id);
         }
       } catch (err) {
-        uiModule.showError('Agent launch error: ' + err.message);
+        _notifyToast('Agent launch error: ' + err.message, true);
       }
     });
   });
@@ -1850,7 +3033,7 @@ function _wireNoteCards(container, project) {
         await fetch(`/api/notes/${noteId}`, { method: 'DELETE' });
         await _loadProjectDetail(project.id, true);
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -1939,7 +3122,7 @@ function _renderLinksTab(container) {
         await fetch(`/api/projects/${p.id}/links/${linkId}`, { method: 'DELETE' });
         await _loadProjectDetail(p.id);
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -2065,10 +3248,10 @@ function _renderAddLinkInlineForm() {
         body: JSON.stringify({ target_type: targetType, target_id: targetId, label }),
       });
       if (!res.ok) throw new Error('Failed to create link');
-      uiModule.showToast('Entity linked to project!');
+      _notifyToast('Entity linked to project!');
       await _loadProjectDetail(p.id);
     } catch (err) {
-      uiModule.showError('Link creation error: ' + err.message);
+      _notifyToast('Link creation error: ' + err.message, true);
     }
   });
 }

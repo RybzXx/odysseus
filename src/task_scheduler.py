@@ -1027,6 +1027,33 @@ class TaskScheduler:
 
             db.commit()
             logger.info(f"Task '{task.name}' completed (run {run_id})")
+
+            # Mirror to unified system query log
+            try:
+                from src.system_logger import log_system_query
+                dur_ms = None
+                if run.started_at and run.finished_at:
+                    dur_ms = int((run.finished_at - run.started_at).total_seconds() * 1000)
+                log_system_query(
+                    module="tasks",
+                    action=task.action or "task_run",
+                    target_id=task.id,
+                    target_name=task.name,
+                    query_type="llm" if (task.task_type or "llm") == "llm" else "system",
+                    model=run.model or task.model,
+                    prompt_preview=task.prompt,
+                    result_preview=run.result,
+                    status=run.status or "completed",
+                    duration_ms=dur_ms,
+                    tokens_used=run.tokens_used,
+                    error=run.error,
+                    metadata={"task_type": task.task_type, "run_id": run.id},
+                    owner=task.owner,
+                    db_session=db,
+                )
+            except Exception:
+                pass
+
             output = task.output_target or "session"
             # Per-task notification gate. Default True (notifications_enabled
             # defaults to True at column level), but skip when the user has

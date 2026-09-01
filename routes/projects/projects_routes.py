@@ -6,14 +6,16 @@ and bidirectional disk-sync to the Odysseus UI and agent services.
 """
 
 import logging
+import re
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from core import database as cdb
-from core.database import Project, ProjectTask, ProjectLink, Session
+from core.database import Project, ProjectTask, ProjectLink, Session, ModelEndpoint
 from src.auth_helpers import get_current_user
 from src.projects_manager import (
     create_project,
@@ -21,7 +23,12 @@ from src.projects_manager import (
     sync_project_disk_and_db,
     sync_tasks_to_manifest_file,
     project_to_dict,
+    get_project_structure_and_spec,
+    parse_project_manifest,
+    serialize_project_manifest,
+    append_project_execution_log,
 )
+from src.system_logger import log_system_query
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +50,14 @@ class ProjectUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    status_reason: Optional[str] = None
     priority: Optional[str] = None
     content: Optional[str] = None
+
+
+class ProjectSummarizeRequest(BaseModel):
+    model: Optional[str] = None
+    endpoint_url: Optional[str] = None
 
 
 class TaskCreateRequest(BaseModel):
@@ -93,91 +106,17 @@ def setup_projects_routes() -> APIRouter:
                 q = q.filter((Project.owner == owner) | (Project.owner == None))
             if status and status != "all":
                 q = q.filter(Project.status == status)
-            if query:
-                search_term = f"%{query.strip()}%"
-                q = q.filter((Project.name.ilike(search_term)) | (Project.description.ilike(search_term)))
-
-            projects = q.order_by(Project.updated_at.desc()).all()
+            from sqlalchemy import case
+            status_order = case(
+                (Project.status == "active", 0),
+                (Project.status == "on-hold", 1),
+                (Project.status == "paused", 1),
+                (Project.status == "halted", 2),
+                (Project.status == "archived", 2),
+                else_=3
+            )
+            projects = q.order_by(status_order.asc(), Project.updated_at.desc()).all()
             return {"projects": [project_to_dict(p, db=db, include_tasks=False, include_links=False, include_pinned_notes=True) for p in projects]}
-        finally:
-            db.close()
-
-
-    @router.post("/{project_id}/summarize")
-    async def summarize_project(request: Request, project_id: str):
-        """Generate an AI summary of the project and save it to agent_summary."""
-        owner = get_current_user(request)
-        db = cdb.SessionLocal()
-        try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
-            if not project:
-                raise HTTPException(404, f"Project {project_id} not found")
-
-            # Fetch notes
-            from core.database import Note
-            import json
-            notes = db.query(Note).filter(Note.project_id == project.id).all()
-            
-            # Read manifest
-            import pathlib
-            manifest_content = ""
-            if project.manifest_path and pathlib.Path(project.manifest_path).exists():
-                manifest_content = pathlib.Path(project.manifest_path).read_text(encoding='utf-8')
-
-            # Build prompt
-            prompt = f"""Summarize the following project workspace in 2-3 concise sentences. Focus on the core objective and the current state.
-
-Project Name: {project.name}
-Description: {project.description}
-
-"""
-            if manifest_content:
-                # Truncate manifest if huge
-                prompt += f"""Manifest Snippet:
-{manifest_content[:1500]}
-
-"""
-            if notes:
-                prompt += """Notes/Checklists:
-"""
-                for n in notes[:10]:
-                    prompt += f"""- {n.title} (Type: {n.note_type})
-"""
-
-            # Use LLM
-            from src.endpoint_resolver import resolve_endpoint, build_chat_url, build_headers
-            from src.llm_core import llm_call_async
-            
-            ep, ep_model, api_key = resolve_endpoint("utility", owner=owner)
-            if not ep:
-                ep, ep_model, api_key = resolve_endpoint("default", owner=owner)
-            
-            if not ep:
-                raise HTTPException(400, "No utility or default LLM configured to generate summary.")
-
-            url = build_chat_url(ep.base_url)
-            headers = build_headers(ep.base_url, api_key)
-
-            summary = await llm_call_async(
-                url=url,
-                model=ep_model or "gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                headers=headers,
-                temperature=0.3,
-                max_tokens=200
-            )
-
-            project.agent_summary = summary.strip()
-            db.commit()
-
-            return {"summary": project.agent_summary}
-        except Exception as e:
-            logger.error(f"Summarize failed: {e}", exc_info=True)
-            raise HTTPException(500, str(e))
         finally:
             db.close()
 
@@ -194,6 +133,16 @@ Description: {project.description}
                 owner=owner,
                 initial_content=body.content,
                 links=body.links,
+            )
+            log_system_query(
+                module="projects",
+                action="create_project",
+                target_id=result.get("id"),
+                target_name=result.get("name"),
+                query_type="system",
+                status="completed",
+                result_preview=f"Created project workspace '{result.get('name')}' ({result.get('slug')})",
+                owner=owner,
             )
             return {"project": result}
         except Exception as e:
@@ -216,6 +165,22 @@ Description: {project.description}
         finally:
             db.close()
 
+    @router.get("/{project_id}/structure")
+    def get_project_structure(request: Request, project_id: str):
+        """Get file tree topology, tech stack analysis, and spec file content."""
+        db = cdb.SessionLocal()
+        try:
+            project = (
+                db.query(Project)
+                .filter((Project.id == project_id) | (Project.slug == project_id))
+                .first()
+            )
+            if not project:
+                raise HTTPException(404, f"Project {project_id} not found")
+            return get_project_structure_and_spec(project.id, db=db)
+        finally:
+            db.close()
+
     @router.put("/{project_id}")
     def update_project(request: Request, project_id: str, body: ProjectUpdateRequest):
         """Update project metadata or raw content and write back to disk."""
@@ -231,22 +196,168 @@ Description: {project.description}
                 raise HTTPException(404, f"Project {project_id} not found")
 
             if body.name is not None:
-                project.name = body.name
+                project.name = body.name.strip()
             if body.description is not None:
                 project.description = body.description
             if body.status is not None:
-                project.status = body.status
+                project.status = body.status.lower().strip()
+                if project.status == "active":
+                    project.status_reason = None
+            if body.status_reason is not None and project.status != "active":
+                project.status_reason = body.status_reason.strip() or None
             if body.priority is not None:
-                project.priority = body.priority
+                project.priority = body.priority.lower().strip()
 
             db.commit()
+
+            # Sync frontmatter to PROJECT.md if manifest exists
+            if project.manifest_path and Path(project.manifest_path).exists():
+                try:
+                    raw_text = Path(project.manifest_path).read_text(encoding="utf-8")
+                    meta, md_body = parse_project_manifest(raw_text)
+                    meta["name"] = project.name
+                    meta["status"] = project.status
+                    if project.status_reason:
+                        meta["status_reason"] = project.status_reason
+                    elif "status_reason" in meta:
+                        del meta["status_reason"]
+                    meta["priority"] = project.priority
+                    Path(project.manifest_path).write_text(serialize_project_manifest(meta, md_body), encoding="utf-8")
+                except Exception as e:
+                    logger.warning(f"Failed to sync metadata to PROJECT.md: {e}")
 
             if body.content is not None:
                 result = save_project_content_to_disk(project.id, body.content, owner=owner)
                 return {"project": result}
 
             db.refresh(project)
+            log_system_query(
+                module="projects",
+                action="update_project",
+                target_id=project.id,
+                target_name=project.name,
+                query_type="system",
+                status="completed",
+                result_preview=f"Updated status='{project.status}' priority='{project.priority}'",
+                owner=owner,
+                db_session=db,
+            )
             return {"project": project_to_dict(project, db=db, include_tasks=True, include_links=True, include_content=True)}
+        finally:
+            db.close()
+
+    @router.post("/{project_id}/summarize")
+    async def summarize_project(request: Request, project_id: str, body: Optional[ProjectSummarizeRequest] = None):
+        """Generate an AI summary using the selected model, with robust fallback."""
+        owner = get_current_user(request)
+        db = cdb.SessionLocal()
+        try:
+            project = (
+                db.query(Project)
+                .filter((Project.id == project_id) | (Project.slug == project_id))
+                .first()
+            )
+            if not project:
+                raise HTTPException(404, f"Project {project_id} not found")
+
+            manifest_content = ""
+            if project.manifest_path and Path(project.manifest_path).exists():
+                try:
+                    manifest_content = Path(project.manifest_path).read_text(encoding="utf-8")
+                except Exception:
+                    manifest_content = ""
+
+            model_used = "heuristic-extractor"
+            summary_text = None
+            llm_error = None
+
+            req_model = body.model if body else None
+            req_url = body.endpoint_url if body else None
+
+            if req_model and req_url:
+                try:
+                    from src.llm_core import llm_call_async
+                    from src.endpoint_resolver import build_headers, normalize_base, resolve_endpoint_runtime
+
+                    headers = None
+                    try:
+                        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+                        target_base = normalize_base(req_url)
+                        for ep in endpoints:
+                            ep_base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+                            if normalize_base(ep_base) == target_base or ep.base_url == req_url:
+                                headers = build_headers(api_key, ep_base)
+                                break
+                    except Exception as he:
+                        logger.debug(f"Could not resolve headers for endpoint {req_url}: {he}")
+
+                    prompt = (
+                        "You are an expert technical product manager. Provide a concise 2-sentence executive summary of this project for display on a project dashboard. "
+                        "Focus on what it is, its core tech stack, and primary goal. Return ONLY the plain summary text without quotes, markdown headers, or chat filler.\n\n"
+                        f"Project Name: {project.name}\n"
+                        f"Project Content:\n{manifest_content[:3000]}"
+                    )
+                    messages = [{"role": "user", "content": prompt}]
+                    summary_res = await llm_call_async(url=req_url, model=req_model, messages=messages, headers=headers, timeout=30)
+                    if isinstance(summary_res, tuple):
+                        summary_res = summary_res[0]
+                    if summary_res and summary_res.strip():
+                        summary_text = summary_res.strip()
+                        model_used = req_model
+                except Exception as err:
+                    llm_error = getattr(err, "detail", None) or str(err)
+                    logger.warning(f"LLM summarize failed for {project.slug} with {req_model}: {err}")
+
+            if not summary_text:
+                struct = get_project_structure_and_spec(project.id, db=db)
+                overview = struct.get("sections", {}).get("overview") or project.description or ""
+                clean = re.sub(r"#+\s+.*", "", overview).strip()
+                lines = [l.strip() for l in clean.splitlines() if l.strip()]
+                summary_text = " ".join(lines[:3]) if lines else project.description
+
+            if not summary_text:
+                summary_text = f"{project.name} workspace."
+
+            project.agent_summary = summary_text
+            db.commit()
+            db.refresh(project)
+
+            # Record sequential execution entry in PROJECT.md and logs/
+            status_tag = "completed" if (model_used != "heuristic-extractor" and not llm_error) else ("fallback" if llm_error else "completed")
+            append_project_execution_log(
+                project.id,
+                "AI Summary Generation",
+                summary_text,
+                status=status_tag,
+                model=model_used,
+                db=db,
+            )
+
+            # Central non-chat System Query Log
+            log_system_query(
+                module="projects",
+                action="summarize_project",
+                target_id=project.id,
+                target_name=project.name,
+                query_type="llm" if model_used != "heuristic-extractor" else "fallback",
+                model=model_used,
+                endpoint_url=req_url,
+                prompt_preview=f"Summarize project workspace for {project.name}",
+                result_preview=summary_text,
+                status=status_tag,
+                error=llm_error,
+                metadata={"slug": project.slug, "folder_path": project.folder_path},
+                owner=owner,
+                db_session=db,
+            )
+
+            return {
+                "ok": True,
+                "project_id": project.id,
+                "summary": project.agent_summary,
+                "model_used": model_used,
+                "llm_error": llm_error,
+            }
         finally:
             db.close()
 

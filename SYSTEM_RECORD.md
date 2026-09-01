@@ -2027,3 +2027,30 @@ Pushed to `dev`, `daily-driver`, and `local-agent-2`:
 - `8dbeb7d` — feat(projects): implement Notes-style checklist parity with animated check-dots, inline editing, and agent sessions
 - `31bf977` / `850f4b4` / `ce0d10d` — feat(projects): extensive notes parity with viewable image lightbox and document viewer
 
+## Sequential AI Execution Queue & In-Flight Halting
+
+1. **Client-Side Queue (`static/js/projects.js`):**
+   - Implemented `_projectTaskQueue` orchestrating sequential AI summary calls to prevent concurrent worker contention.
+   - Added visual `⏳ Queued (#N)` badge and toast notifications.
+   - Added `AbortController` cancellation with a pressable **Halt** button on processing cards.
+2. **Audit Logging (`src/projects_manager.py`):**
+   - Built `append_project_execution_log()` recording timestamped status (`completed`, `fallback`, `halted`), model used, and output snippet into `PROJECT.md` `## Execution Log` and `<project>/logs/execution.log`.
+
+## Unified Non-Chat System Activity & Query Logging Subsystem
+
+1. **Database Schema (`core/database.py`):**
+   - Created `SystemQueryLog` ORM model recording all non-chat queries, background jobs, tool runs, model latency, token counts, errors, and metadata with indexed fields.
+2. **Telemetry Engine (`src/system_logger.py`):**
+   - Implemented `log_system_query()`, `get_system_logs()`, `get_system_log_stats()`, and `prune_system_logs()`.
+   - Built 10-minute duplicate stacking / incrementing for periodic background checks.
+   - Bounded retention: capped at 10,000 records with automated 30-day pruning.
+   - Strict isolation: interactive user chats remain exclusively in `session_messages`.
+3. **API Endpoints (`routes/system/activity_log_routes.py`):**
+   - Mounted `GET /api/system/activity-logs` (filtering, pagination, search), `GET /api/system/activity-logs/stats`, and `DELETE /api/system/activity-logs/clear`.
+4. **Module Telemetry Hooks:**
+   - Projects (`routes/projects/projects_routes.py`), Tasks (`src/task_scheduler.py`), and Email (`src/builtin_actions.py`).
+5. **Observability UI Hub (`static/js/activityLog.js`, `static/index.html`):**
+   - Added sidebar **`⚡ Activity Log`** button with dynamic running activity dot indicator.
+   - Draggable modal viewer with real-time stats banner, module chips (`All`, `Projects`, `Tasks`, `Email`, `Operations`), status filter, text search, expandable payload inspector, latency badge, and 3s live polling.
+
+

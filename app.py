@@ -895,6 +895,10 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# System Activity & Query Audit Logs
+from routes.system.activity_log_routes import setup_activity_log_routes
+app.include_router(setup_activity_log_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 @app.get("/")

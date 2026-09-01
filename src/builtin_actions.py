@@ -1007,18 +1007,61 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of email summary background processing."""
     try:
         from routes.email_pollers import _run_auto_summarize_once
+        from src.system_logger import log_system_query
         result = await _run_auto_summarize_once(
             do_summary=True,
             do_reply=False,
             account_id=_email_task_account_id(kwargs),
         )
         if _result_is_config_error(result):
+            log_system_query(
+                module="email",
+                action="summarize_emails",
+                target_name="Inbox Email Pass",
+                query_type="llm",
+                status="error",
+                error=str(result),
+                owner=owner,
+            )
             return result, False
         if not _result_has_work(result):
+            log_system_query(
+                module="email",
+                action="summarize_emails",
+                target_name="Inbox Email Pass",
+                query_type="llm",
+                status="completed",
+                result_preview=str(result or "no new emails"),
+                owner=owner,
+            )
             raise TaskNoop(f"summarize: {result or 'no new emails'}")
+        log_system_query(
+            module="email",
+            action="summarize_emails",
+            target_name="Inbox Email Pass",
+            query_type="llm",
+            status="completed",
+            result_preview=str(result),
+            owner=owner,
+        )
         return result, True
+    except TaskNoop:
+        raise
     except Exception as e:
         logger.error(f"summarize_emails action failed: {e}")
+        try:
+            from src.system_logger import log_system_query
+            log_system_query(
+                module="email",
+                action="summarize_emails",
+                target_name="Inbox Email Pass",
+                query_type="llm",
+                status="error",
+                error=str(e),
+                owner=owner,
+            )
+        except Exception:
+            pass
         return str(e), False
 
 
@@ -1026,6 +1069,7 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of AI reply drafting."""
     try:
         from routes.email_pollers import _run_auto_summarize_once
+        from src.system_logger import log_system_query
         result = await _run_auto_summarize_once(
             do_summary=False,
             do_reply=True,
@@ -1034,12 +1078,54 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
             progress_cb=kwargs.get("progress_cb"),
         )
         if _result_is_config_error(result):
+            log_system_query(
+                module="email",
+                action="draft_email_replies",
+                target_name="AI Reply Drafter",
+                query_type="llm",
+                status="error",
+                error=str(result),
+                owner=owner,
+            )
             return result, False
         if not _result_has_work(result):
+            log_system_query(
+                module="email",
+                action="draft_email_replies",
+                target_name="AI Reply Drafter",
+                query_type="llm",
+                status="completed",
+                result_preview=str(result or "no new emails"),
+                owner=owner,
+            )
             raise TaskNoop(f"draft replies: {result or 'no new emails'}")
+        log_system_query(
+            module="email",
+            action="draft_email_replies",
+            target_name="AI Reply Drafter",
+            query_type="llm",
+            status="completed",
+            result_preview=str(result),
+            owner=owner,
+        )
         return result, True
+    except TaskNoop:
+        raise
     except Exception as e:
         logger.error(f"draft_email_replies action failed: {e}")
+        try:
+            from src.system_logger import log_system_query
+            log_system_query(
+                module="email",
+                action="draft_email_replies",
+                target_name="AI Reply Drafter",
+                query_type="llm",
+                status="error",
+                error=str(e),
+                owner=owner,
+            )
+        except Exception:
+            pass
         return str(e), False
 
 
