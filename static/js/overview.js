@@ -505,7 +505,7 @@ async function _fetchOverviewData(forceRefresh = false) {
   _loading = true;
   _updateCacheStatusBanner();
   try {
-    const res = await fetch(`/api/overview?email_days=${_emailDaysFilter}&force_refresh=${forceRefresh}`);
+    const res = await fetch(`/api/overview?email_days=${_emailDaysFilter}&force_refresh=${forceRefresh}&_=${Date.now()}`, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     _overviewData = await res.json();
     _render();
