@@ -91,102 +91,98 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
     ai_summaries: Dict[str, str] = {}
     urgency_scores: Dict[str, tuple[float, str]] = {}
 
-    try:
-        import core.database as _cdb
-        from sqlalchemy import text as _text
-        with _cdb.engine.connect() as conn:
-            # Fetch summaries
-            sum_rows = conn.execute(
-                _text("SELECT message_id, summary FROM email_summaries WHERE summary IS NOT NULL")
-            ).fetchall()
-            for mid, summ in sum_rows:
-                if mid and summ:
-                    ai_summaries[str(mid).strip()] = str(summ).strip()
+    sched_db_path = Path(_constants.SCHEDULED_EMAILS_DB if hasattr(_constants, "SCHEDULED_EMAILS_DB") else (Path(_constants.DATA_DIR) / "scheduled_emails.db"))
 
-            # Fetch urgency alerts
-            alert_rows = conn.execute(
-                _text("""
-                    SELECT message_id, urgency_score, reason 
-                    FROM email_urgency_alerts 
-                    WHERE (owner = :owner OR owner IS NULL OR owner = '')
-                """),
-                {"owner": owner or ""}
-            ).fetchall()
-            for mid, score, reason in alert_rows:
-                if mid:
-                    urgency_scores[str(mid).strip()] = (float(score or 0), str(reason or ""))
-    except Exception as e:
-        logger.debug("Database email alerts query deferred: %s", e)
-
-    # 3. Read indexed emails from scheduled_tasks.db email_message_index
-    sched_db_file = Path(_constants.DATA_DIR) / "scheduled_tasks.db"
-    if sched_db_file.exists():
+    if sched_db_path.exists():
         try:
-            s_conn = _sql3.connect(str(sched_db_file), timeout=2.0)
+            s_conn = _sql3.connect(str(sched_db_path), timeout=2.0)
             try:
                 cur = s_conn.cursor()
-                rows = cur.execute(
-                    """
-                    SELECT uid, account_key, message_id, subject, from_name, from_address,
-                           date_iso, date_epoch, flags
-                    FROM email_message_index
-                    WHERE (owner = ? OR owner IS NULL OR owner = '')
-                      AND date_epoch >= ?
-                    ORDER BY date_epoch DESC
-                    LIMIT 80
-                    """,
-                    (owner or "", cutoff_epoch),
-                ).fetchall()
+                # Summaries
+                try:
+                    for mid, summ in cur.execute("SELECT message_id, summary FROM email_summaries WHERE summary IS NOT NULL").fetchall():
+                        if mid and summ:
+                            ai_summaries[str(mid).strip()] = str(summ).strip()
+                except Exception:
+                    pass
 
-                for r in rows:
-                    uid, acc_key, mid, subj, from_n, from_a, d_iso, d_epoch, flags = r
-                    msg_uid = str(uid)
-                    item_id = f"{acc_key or 'default'}:{msg_uid}"
-                    if item_id in seen_ids:
-                        continue
-                    seen_ids.add(item_id)
-
-                    flags_str = str(flags or "")
-                    is_read = "\\Seen" in flags_str
-
-                    mid_clean = str(mid or "").strip()
-                    score_info = urgency_scores.get(mid_clean) or (0.0, "")
-                    score_val = score_info[0]
-                    urgency_lvl = "critical" if score_val >= 80 else ("urgent" if score_val >= 50 else "normal")
-                    ai_comm = ai_summaries.get(mid_clean) or score_info[1] or None
-
-                    matched_acc = next((a for a in accounts_out if a["id"] == acc_key), None)
-                    acc_display = matched_acc["name"] if matched_acc else (acc_key or "Primary Account")
-
-                    raw_emails.append({
-                        "id": item_id,
-                        "uid": msg_uid,
-                        "account_id": acc_key or "default",
-                        "account_name": acc_display,
-                        "sender_name": from_n or from_a or "Unknown",
-                        "sender_email": from_a or "",
-                        "subject": subj or "(No Subject)",
-                        "snippet": ai_comm or "",
-                        "timestamp": d_iso or now_utc.isoformat(),
-                        "date_epoch": float(d_epoch or 0),
-                        "read": is_read,
-                        "urgency": urgency_lvl,
-                        "ai_comment": ai_comm,
-                        "folder": "INBOX",
-                    })
+                # Alerts
+                try:
+                    for mid, score, reason in cur.execute("SELECT message_id, urgency_score, reason FROM email_urgency_alerts WHERE (owner = ? OR owner IS NULL OR owner = '')", (owner or "",)).fetchall():
+                        if mid:
+                            urgency_scores[str(mid).strip()] = (float(score or 0), str(reason or ""))
+                except Exception:
+                    pass
             finally:
                 s_conn.close()
         except Exception as e:
-            logger.debug("Scheduled email index query deferred: %s", e)
+            logger.debug("Database email alerts query deferred: %s", e)
 
-    # 4. Check urgency state snapshot file
+    # 3. Read urgency state snapshot file (per_uid map and accounts map)
     slug = _owner_slug(owner)
     urgency_file = Path(_constants.DATA_DIR) / f"email_urgency_state_{slug}.json"
     if urgency_file.exists():
         try:
             urgency_data = json.loads(urgency_file.read_text(encoding="utf-8"))
-            per_account = urgency_data.get("accounts") or {}
-            for acc_id, acc_info in per_account.items():
+            per_uid = urgency_data.get("per_uid") or {}
+
+            for key, msg in per_uid.items():
+                msg_uid = str(msg.get("uid") or "")
+                acc_id = "default"
+                if ":" in str(key):
+                    parts = str(key).split(":", 1)
+                    acc_id, msg_uid = parts[0], parts[1]
+                elif not msg_uid:
+                    msg_uid = str(key)
+
+                item_id = f"{acc_id}:{msg_uid}"
+                if item_id in seen_ids:
+                    continue
+
+                msg_epoch = float(msg.get("ts") or 0.0)
+                if msg_epoch and msg_epoch < cutoff_epoch:
+                    continue
+
+                seen_ids.add(item_id)
+                score_val = float(msg.get("score") or 0)
+                is_urgent = score_val >= 2 or bool(msg.get("is_urgent"))
+                urgency_lvl = "critical" if score_val >= 3 else ("urgent" if is_urgent else "normal")
+                ai_comm = msg.get("reason") or msg.get("summary") or None
+                mid_clean = str(msg.get("message_id") or "").strip()
+                if not ai_comm and mid_clean in ai_summaries:
+                    ai_comm = ai_summaries[mid_clean]
+
+                msg_date_str = ""
+                if msg_epoch:
+                    try:
+                        msg_date_str = datetime.fromtimestamp(msg_epoch, tz=timezone.utc).isoformat()
+                    except Exception:
+                        msg_date_str = now_utc.isoformat()
+                else:
+                    msg_date_str = msg.get("date") or msg.get("timestamp") or now_utc.isoformat()
+
+                matched_acc = next((a for a in accounts_out if a["id"] == acc_id), None)
+                acc_name = matched_acc["name"] if matched_acc else (acc_id if acc_id != "default" else "Primary Inbox")
+
+                raw_emails.append({
+                    "id": item_id,
+                    "uid": msg_uid,
+                    "account_id": acc_id,
+                    "account_name": acc_name,
+                    "sender_name": msg.get("from") or msg.get("sender_name") or msg.get("sender") or "Unknown",
+                    "sender_email": msg.get("from_address") or msg.get("from_email") or "",
+                    "subject": msg.get("subject") or "(No Subject)",
+                    "snippet": msg.get("snippet") or msg.get("preview") or ai_comm or "",
+                    "timestamp": msg_date_str,
+                    "date_epoch": msg_epoch or now_utc.timestamp(),
+                    "read": not bool(msg.get("unread", True)),
+                    "urgency": urgency_lvl,
+                    "ai_comment": ai_comm,
+                    "folder": "INBOX",
+                })
+
+            # Also parse accounts format if present
+            for acc_id, acc_info in (urgency_data.get("accounts") or {}).items():
                 matched_acc = next((a for a in accounts_out if a["id"] == acc_id), None)
                 acc_name = matched_acc["name"] if matched_acc else acc_id
 
@@ -225,52 +221,80 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
                         "ai_comment": msg.get("ai_comment") or msg.get("summary") or None,
                         "folder": "INBOX",
                     })
-        except (ValueError, OSError):
-            pass
+        except Exception as e:
+            logger.debug("Urgency file reading deferred: %s", e)
 
-    # 5. Direct SQLite fallback if index and state file are empty
-    if not raw_emails:
+    # 4. Read indexed emails from scheduled_emails.db email_message_index
+    if sched_db_path.exists():
         try:
-            import core.database as _cdb
-            from sqlalchemy import text as _text
-            with _cdb.engine.connect() as conn:
-                rows = conn.execute(
-                    _text("""
-                        SELECT a.account_key, a.message_id, a.sender, a.subject, a.urgency_score,
-                               a.reason, a.created_at, s.summary, p.preview_text
-                        FROM email_urgency_alerts a
-                        LEFT JOIN email_summaries s ON s.message_id = a.message_id
-                        LEFT JOIN email_body_preview_cache p ON p.message_id = a.message_id
-                        WHERE (a.owner = :owner OR a.owner IS NULL OR a.owner = '')
-                        ORDER BY a.created_at DESC
-                        LIMIT 30
-                    """),
-                    {"owner": owner or ""}
+            s_conn = _sql3.connect(str(sched_db_path), timeout=2.0)
+            try:
+                cur = s_conn.cursor()
+                rows = cur.execute(
+                    """
+                    SELECT uid, account_key, message_id, subject, from_name, from_address,
+                           date_iso, date_epoch, flags
+                    FROM email_message_index
+                    WHERE (owner = ? OR owner IS NULL OR owner = '')
+                      AND date_epoch >= ?
+                    ORDER BY date_epoch DESC
+                    LIMIT 80
+                    """,
+                    (owner or "", cutoff_epoch),
                 ).fetchall()
 
                 for r in rows:
-                    acc_key, mid, sender, subj, score, reason, created_at, summary, preview = r
-                    acc_name = "Primary Account"
-                    score_val = float(score or 0)
+                    uid, acc_key, mid, subj, from_n, from_a, d_iso, d_epoch, flags = r
+                    msg_uid = str(uid)
+                    acc_key_str = str(acc_key or "default")
+                    item_id = f"{acc_key_str}:{msg_uid}"
+                    if item_id in seen_ids:
+                        continue
+                    seen_ids.add(item_id)
+
+                    flags_str = str(flags or "")
+                    is_read = "\\Seen" in flags_str
+
+                    mid_clean = str(mid or "").strip()
+                    score_info = urgency_scores.get(mid_clean) or (0.0, "")
+                    score_val = score_info[0]
                     urgency_lvl = "critical" if score_val >= 80 else ("urgent" if score_val >= 50 else "normal")
+                    ai_comm = ai_summaries.get(mid_clean) or score_info[1] or None
+
+                    matched_acc = next((a for a in accounts_out if a["id"] == acc_key_str), None)
+                    acc_display = matched_acc["name"] if matched_acc else (acc_key_str if acc_key_str != "default" else "Primary Inbox")
+
                     raw_emails.append({
-                        "id": mid or f"{acc_key}:alert",
-                        "uid": str(mid or ""),
-                        "account_id": acc_key or "default",
-                        "account_name": acc_name,
-                        "sender_name": sender or "Unknown",
-                        "sender_email": sender or "",
+                        "id": item_id,
+                        "uid": msg_uid,
+                        "account_id": acc_key_str,
+                        "account_name": acc_display,
+                        "sender_name": from_n or from_a or "Unknown",
+                        "sender_email": from_a or "",
                         "subject": subj or "(No Subject)",
-                        "snippet": preview or reason or "",
-                        "timestamp": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at or ""),
-                        "date_epoch": created_at.timestamp() if hasattr(created_at, "timestamp") else now_utc.timestamp(),
-                        "read": False,
+                        "snippet": ai_comm or "",
+                        "timestamp": d_iso or now_utc.isoformat(),
+                        "date_epoch": float(d_epoch or 0),
+                        "read": is_read,
                         "urgency": urgency_lvl,
-                        "ai_comment": summary or reason or None,
+                        "ai_comment": ai_comm,
                         "folder": "INBOX",
                     })
+            finally:
+                s_conn.close()
         except Exception as e:
-            logger.debug("Direct SQLite email urgency query deferred: %s", e)
+            logger.debug("Scheduled email index query deferred: %s", e)
+
+    # 5. Ensure at least a default account descriptor if none registered
+    if not accounts_out:
+        accounts_out = [
+            {
+                "id": "default",
+                "name": "Primary Inbox",
+                "email": "Inbox",
+                "is_default": True,
+            }
+        ]
 
     # Sort emails by date_epoch descending
     raw_emails.sort(key=lambda m: m.get("date_epoch") or 0.0, reverse=True)
