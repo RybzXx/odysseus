@@ -111,85 +111,6 @@ def setup_projects_routes() -> APIRouter:
         finally:
             db.close()
 
-
-    @router.post("/{project_id}/summarize")
-    async def summarize_project(request: Request, project_id: str):
-        """Generate an AI summary of the project and save it to agent_summary."""
-        owner = get_current_user(request)
-        db = cdb.SessionLocal()
-        try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
-            if not project:
-                raise HTTPException(404, f"Project {project_id} not found")
-
-            # Fetch notes
-            from core.database import Note
-            import json
-            notes = db.query(Note).filter(Note.project_id == project.id).all()
-            
-            # Read manifest
-            import pathlib
-            manifest_content = ""
-            if project.manifest_path and pathlib.Path(project.manifest_path).exists():
-                manifest_content = pathlib.Path(project.manifest_path).read_text(encoding='utf-8')
-
-            # Build prompt
-            prompt = f"""Summarize the following project workspace in 2-3 concise sentences. Focus on the core objective and the current state.
-
-Project Name: {project.name}
-Description: {project.description}
-
-"""
-            if manifest_content:
-                # Truncate manifest if huge
-                prompt += f"""Manifest Snippet:
-{manifest_content[:1500]}
-
-"""
-            if notes:
-                prompt += """Notes/Checklists:
-"""
-                for n in notes[:10]:
-                    prompt += f"""- {n.title} (Type: {n.note_type})
-"""
-
-            # Use LLM
-            from src.endpoint_resolver import resolve_endpoint, build_chat_url, build_headers
-            from src.llm_core import llm_call_async
-            
-            ep, ep_model, api_key = resolve_endpoint("utility", owner=owner)
-            if not ep:
-                ep, ep_model, api_key = resolve_endpoint("default", owner=owner)
-            
-            if not ep:
-                raise HTTPException(400, "No utility or default LLM configured to generate summary.")
-
-            url = build_chat_url(ep.base_url)
-            headers = build_headers(ep.base_url, api_key)
-
-            summary = await llm_call_async(
-                url=url,
-                model=ep_model or "gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                headers=headers,
-                temperature=0.3,
-                max_tokens=200
-            )
-
-            project.agent_summary = summary.strip()
-            db.commit()
-
-            return {"summary": project.agent_summary}
-        except Exception as e:
-            logger.error(f"Summarize failed: {e}", exc_info=True)
-            raise HTTPException(500, str(e))
-        finally:
-            db.close()
-
     @router.post("")
     def create_new_project(request: Request, body: ProjectCreateRequest):
         """Create a new project workspace and scaffold directory."""
@@ -256,17 +177,17 @@ Description: {project.description}
                 raise HTTPException(404, f"Project {project_id} not found")
 
             if body.name is not None:
-                project.name = body.name
+                project.name = body.name.strip()
             if body.description is not None:
                 project.description = body.description
             if body.status is not None:
-                project.status = body.status
-                if body.status == "active" and body.status_reason is None:
+                project.status = body.status.lower().strip()
+                if project.status == "active":
                     project.status_reason = None
-            if body.status_reason is not None:
-                project.status_reason = body.status_reason
+            if body.status_reason is not None and project.status != "active":
+                project.status_reason = body.status_reason.strip() or None
             if body.priority is not None:
-                project.priority = body.priority
+                project.priority = body.priority.lower().strip()
 
             db.commit()
 

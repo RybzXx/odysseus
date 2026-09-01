@@ -56,6 +56,18 @@ function _esc(s) {
   }[c]));
 }
 
+function _notifyToast(msg, isError = false) {
+  if (typeof window !== 'undefined' && window.uiModule) {
+    if (isError && window.uiModule.showError) window.uiModule.showError(msg);
+    else if (window.uiModule.showToast) window.uiModule.showToast(msg);
+  } else if (typeof uiModule !== 'undefined' && uiModule) {
+    if (isError && uiModule.showError) uiModule.showError(msg);
+    else if (uiModule.showToast) uiModule.showToast(msg);
+  } else {
+    console.log('[Projects]', msg);
+  }
+}
+
 function _formatBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B';
   const k = 1024;
@@ -1477,7 +1489,7 @@ async function _renderLandingPage() {
       if (found) {
         _selectedModel = found;
         localStorage.setItem('odysseus-project-summary-model', found.mid);
-        uiModule.showToast(`Selected model: ${found.displayName}`);
+        _notifyToast(`Selected model: ${found.displayName}`);
       }
     });
   }
@@ -1506,13 +1518,13 @@ async function _renderLandingPage() {
         });
         if (!res.ok) throw new Error('Summarization failed');
         const data = await res.json();
-        uiModule.showToast(`Project summarized via ${data.model_used || 'AI'}!`);
+        _notifyToast(`Project summarized via ${data.model_used || 'AI'}!`);
         await _fetchProjectsList();
         _renderLandingPage();
       } catch (err) {
-        if(window.uiModule) window.uiModule.showError(err.message);
         btn.innerHTML = originalText;
         btn.disabled = false;
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -1530,11 +1542,13 @@ async function _renderLandingPage() {
 }
 
 function _openStatusEditModal(project) {
+  if (!project) return;
   const old = document.getElementById('proj-status-modal-overlay');
   if (old) old.remove();
 
   const currentStatus = (project.status || 'active').toLowerCase();
   const currentReason = project.status_reason || '';
+  const projId = project.id || project.slug;
 
   const overlay = document.createElement('div');
   overlay.id = 'proj-status-modal-overlay';
@@ -1588,7 +1602,7 @@ function _openStatusEditModal(project) {
         reasonWrap.style.display = 'none';
       } else {
         reasonWrap.style.display = 'block';
-        reasonInput.focus();
+        if (reasonInput) reasonInput.focus();
       }
     });
   });
@@ -1601,23 +1615,65 @@ function _openStatusEditModal(project) {
     const selectedRadio = overlay.querySelector('input[name="proj_status_radio"]:checked');
     const newStatus = selectedRadio ? selectedRadio.value : 'active';
     const newReason = reasonInput ? reasonInput.value.trim() : null;
+    const saveBtn = overlay.querySelector('#proj-status-save-btn');
+
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving...';
+    }
 
     try {
-      const res = await fetch(`/api/projects/${project.id}`, {
+      const payload = {
+        status: newStatus,
+        status_reason: newStatus === 'active' ? null : (newReason || 'No reason specified'),
+      };
+
+      const res = await fetch(`/api/projects/${projId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: newStatus,
-          status_reason: newStatus === 'active' ? null : (newReason || 'No reason specified'),
-        }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('Failed to update project status');
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Failed to update status (HTTP ${res.status})`);
+      }
+
+      const resData = await res.json();
+      const updatedProject = resData.project || {};
+
+      // Instantly mutate in-memory state
+      project.status = updatedProject.status || newStatus;
+      project.status_reason = updatedProject.status_reason !== undefined ? updatedProject.status_reason : payload.status_reason;
+
+      const pIdx = _projects.findIndex(p => p.id === project.id || p.slug === project.slug);
+      if (pIdx !== -1) {
+        _projects[pIdx].status = project.status;
+        _projects[pIdx].status_reason = project.status_reason;
+      }
+      if (_currentProject && (_currentProject.id === project.id || _currentProject.slug === project.slug)) {
+        _currentProject.status = project.status;
+        _currentProject.status_reason = project.status_reason;
+      }
+
       overlay.remove();
-      uiModule.showToast(`Status updated to ${newStatus.toUpperCase()}!`);
+      _notifyToast(`Status updated to ${newStatus.toUpperCase()}!`);
+      
       await _fetchProjectsList();
-      _renderLandingPage();
+
+      if (_currentProjectId) {
+        const body = document.getElementById('proj-body');
+        if (body) _renderOverviewTab(body);
+      } else {
+        _renderLandingPage();
+      }
     } catch (err) {
-      uiModule.showError(err.message);
+      console.error('Failed to update project status:', err);
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Status';
+      }
+      _notifyToast(err.message, true);
     }
   });
 }
@@ -1659,12 +1715,14 @@ function _renderOverviewTab(container) {
       <div>
         <h2 style="margin:0 0 4px;">${_esc(p.name)}</h2>
         <div style="color:var(--fg-muted,#888); font-size:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span>Status: <strong style="text-transform:uppercase;">${_esc(p.status || 'active')}</strong></span> &bull;
           <span>Slug: <code>${_esc(p.slug)}</code></span> &bull; 
           <span>Priority: <strong>${_esc(p.priority || 'normal')}</strong></span> &bull;
           <span>Folder: <code>${_esc(struct.folder_path || p.folder_path || 'data/projects/' + p.slug)}</code></span>
         </div>
       </div>
       <div style="display:flex; gap:6px;">
+        <button id="proj-edit-status-header-btn" class="proj-btn" title="Edit Status"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Status</button>
         <button id="proj-edit-manifest-btn" class="proj-btn" title="Edit Raw Manifest"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> ${_isEditingSummary ? 'Close Editor' : 'Edit Manifest'}</button>
       </div>
     </div>
@@ -1881,6 +1939,11 @@ function _renderOverviewTab(container) {
     });
   });
 
+  // Wire Edit Status Header Button
+  container.querySelector('#proj-edit-status-header-btn')?.addEventListener('click', () => {
+    _openStatusEditModal(p);
+  });
+
   // Wire Edit Manifest Button
   container.querySelector('#proj-edit-manifest-btn')?.addEventListener('click', () => {
     _isEditingSummary = !_isEditingSummary;
@@ -1908,10 +1971,10 @@ function _renderOverviewTab(container) {
       });
       if (!res.ok) throw new Error('Spec save failed');
       _isEditingSpec = false;
-      uiModule.showToast('Spec saved and synced!');
+      _notifyToast('Spec saved and synced!');
       await _loadProjectDetail(p.id);
     } catch (err) {
-      uiModule.showError('Spec save error: ' + err.message);
+      _notifyToast('Spec save error: ' + err.message, true);
     }
   });
 }
@@ -2348,11 +2411,11 @@ function _renderTasksTab(container) {
       if (e.dataTransfer.files?.length) {
         for (const file of e.dataTransfer.files) {
           try {
-            uiModule.showToast(`Uploading ${file.name}...`);
+            _notifyToast(`Uploading ${file.name}...`);
             const att = await _uploadAndAttachFile(file);
             _composerAttachments.push(att);
           } catch (err) {
-            uiModule.showError(err.message);
+            _notifyToast(err.message, true);
           }
         }
         _renderTasksTab(container);
@@ -2362,11 +2425,11 @@ function _renderTasksTab(container) {
       if (fileInput.files?.length) {
         for (const file of fileInput.files) {
           try {
-            uiModule.showToast(`Uploading ${file.name}...`);
+            _notifyToast(`Uploading ${file.name}...`);
             const att = await _uploadAndAttachFile(file);
             _composerAttachments.push(att);
           } catch (err) {
-            uiModule.showError(err.message);
+            _notifyToast(err.message, true);
           }
         }
         _renderTasksTab(container);
@@ -2380,11 +2443,11 @@ function _renderTasksTab(container) {
     if (extraFileInput.files?.length) {
       for (const file of extraFileInput.files) {
         try {
-          uiModule.showToast(`Uploading ${file.name}...`);
+          _notifyToast(`Uploading ${file.name}...`);
           const att = await _uploadAndAttachFile(file);
           _composerAttachments.push(att);
         } catch (err) {
-          uiModule.showError(err.message);
+          _notifyToast(err.message, true);
         }
       }
       _renderTasksTab(container);
@@ -2414,7 +2477,7 @@ function _renderTasksTab(container) {
     }
 
     if (!title && !content && (!items || items.length === 0) && _composerAttachments.length === 0) {
-      uiModule.showError('Please provide a title, content, or checklist items.');
+      _notifyToast('Please provide a title, content, or checklist items.', true);
       return;
     }
 
@@ -2430,7 +2493,7 @@ function _renderTasksTab(container) {
     };
 
     try {
-      uiModule.showToast('Saving note...');
+      _notifyToast('Saving note...');
       const res = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2446,7 +2509,7 @@ function _renderTasksTab(container) {
 
       await _loadProjectDetail(p.id, true);
     } catch (err) {
-      uiModule.showError('Save note error: ' + err.message);
+      _notifyToast('Save note error: ' + err.message, true);
     }
   });
 
@@ -2793,7 +2856,7 @@ function _wireNoteCards(container, project) {
           window.sessionModule.switchSession(data.session_id);
         }
       } catch (err) {
-        uiModule.showError('Agent launch error: ' + err.message);
+        _notifyToast('Agent launch error: ' + err.message, true);
       }
     });
   });
@@ -2814,7 +2877,7 @@ function _wireNoteCards(container, project) {
         await fetch(`/api/notes/${noteId}`, { method: 'DELETE' });
         await _loadProjectDetail(project.id, true);
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
@@ -2903,7 +2966,7 @@ function _renderLinksTab(container) {
         await fetch(`/api/projects/${p.id}/links/${linkId}`, { method: 'DELETE' });
         await _loadProjectDetail(p.id);
       } catch (err) {
-        uiModule.showError(err.message);
+        _notifyToast(err.message, true);
       }
     });
   });
