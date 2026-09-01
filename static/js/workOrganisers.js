@@ -815,10 +815,26 @@ export function closeOrganisers() {
   _doClose();
 }
 
-// Auto-wire navigation rail button
-document.addEventListener('DOMContentLoaded', () => {
+// Global window exposure
+if (typeof window !== 'undefined') {
+  window.openWorkOrganisers = openOrganisers;
+  window.openOrganisers = openOrganisers;
+}
+
+// Auto-wire navigation rail and sidebar buttons
+function _bindLauncherButtons() {
   const railBtn = document.getElementById('rail-organisers');
   if (railBtn) {
     railBtn.addEventListener('click', () => openOrganisers());
   }
-});
+  const sidebarBtn = document.getElementById('tool-organisers-btn');
+  if (sidebarBtn) {
+    sidebarBtn.addEventListener('click', () => openOrganisers());
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _bindLauncherButtons);
+} else {
+  _bindLauncherButtons();
+}

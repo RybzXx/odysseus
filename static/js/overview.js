@@ -469,6 +469,10 @@ function _getModal() {
       </div>
       <div class="overview-header-actions">
         <span id="overview-cache-status" style="font-size:11px;opacity:0.6;font-family:'Fira Code',monospace;"></span>
+        <button class="overview-btn" id="overview-open-organisers-btn" title="Open AI Work Organisers">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+          <span>AI Organisers</span>
+        </button>
         <button class="overview-btn" id="overview-refresh-btn" title="Refresh Dashboard">
           ${ICONS.refresh}
           <span>Refresh</span>
@@ -488,6 +492,11 @@ function _getModal() {
   makeWindowDraggable(_modal, { header });
 
   _modal.querySelector('#overview-close-btn').addEventListener('click', closeOverview);
+  _modal.querySelector('#overview-open-organisers-btn').addEventListener('click', () => {
+    if (window.openOrganisers) {
+      window.openOrganisers();
+    }
+  });
   _modal.querySelector('#overview-minimize-btn').addEventListener('click', () => {
     Modals.minimize('overview-modal');
   });
