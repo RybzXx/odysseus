@@ -63,17 +63,37 @@ function _injectStyles() {
   const style = document.createElement('style');
   style.id = 'organisers-styles';
   style.textContent = `
-    #organisers-modal .modal-content {
-      width: min(1200px, 95vw);
-      height: min(780px, 90vh);
+    .organisers-modal {
+      position: fixed;
+      top: 36px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(1320px, calc(100vw - 32px));
+      height: min(880px, calc(100vh - 64px));
+      max-height: calc(100vh - 48px);
+      background: var(--panel, #1e2227);
+      border: 1px solid var(--border, rgba(255,255,255,0.12));
+      border-radius: 10px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+      z-index: 10000;
       display: flex;
       flex-direction: column;
-      background: var(--bg-primary, #1e1e24);
-      color: var(--fg, #abb2bf);
-      border: 1px solid var(--border, rgba(255,255,255,0.1));
-      border-radius: 8px;
       overflow: hidden;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+      font-family: var(--font-family, system-ui, sans-serif);
+      color: var(--fg, #abb2bf);
+    }
+    .organisers-modal.hidden {
+      display: none !important;
+    }
+    .org-top-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg, #282c34);
+      user-select: none;
+      flex-shrink: 0;
     }
     .org-layout {
       display: flex;
@@ -306,6 +326,38 @@ function _injectStyles() {
       font-size: 12px;
       line-height: 1.4;
     }
+
+    @media (max-width: 768px) {
+      .organisers-modal {
+        top: 0 !important;
+        left: 0 !important;
+        transform: none !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        border-radius: 0 !important;
+        border: none !important;
+        z-index: 100000 !important;
+      }
+      .org-layout {
+        flex-direction: column !important;
+      }
+      .org-sidebar {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-height: 220px !important;
+        border-right: none !important;
+        border-bottom: 1px solid var(--border, rgba(255,255,255,0.1)) !important;
+      }
+      .org-main {
+        flex: 1 !important;
+        min-height: 0 !important;
+      }
+      .org-btn-text {
+        display: none !important;
+      }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -321,33 +373,32 @@ function _getModal() {
     _injectStyles();
     _modal = document.createElement('div');
     _modal.id = 'organisers-modal';
-    _modal.className = 'modal-window hidden';
+    _modal.className = 'organisers-modal hidden';
     _modal.innerHTML = `
-      <div class="modal-content">
-        <div class="modal-header">
-          <div class="modal-title" style="display:flex;align-items:center;gap:8px;">
-            ${ICONS.layers}
-            <span>AI Work Organisers</span>
-          </div>
-          <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-            <button class="overview-btn" id="org-seed-btn" title="Seed empirical categories from 14d email analysis">
-              ${ICONS.refresh} Seed Defaults
-            </button>
-            <button class="overview-btn primary" id="org-new-btn">
-              ${ICONS.plus} New Organiser
-            </button>
-            <button class="modal-close" id="org-modal-close">${ICONS.close}</button>
-          </div>
+      <div class="org-top-header" id="org-drag-header">
+        <div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;color:#fff;">
+          ${ICONS.layers}
+          <span>AI Work Organisers</span>
         </div>
-        <div class="modal-body" style="padding:0;overflow:hidden;flex:1;display:flex;">
-          <div class="org-layout" id="org-layout-container">
-            <div class="overview-loading" style="padding:40px;text-align:center;">Loading AI Work Organisers...</div>
-          </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+          <button class="overview-btn" id="org-seed-btn" title="Seed empirical categories from 14d email analysis">
+            ${ICONS.refresh} <span class="org-btn-text">Seed Defaults</span>
+          </button>
+          <button class="overview-btn" id="org-new-btn" style="background:var(--brand-color,#61afef);color:#fff;border:none;">
+            ${ICONS.plus} <span class="org-btn-text">New Organiser</span>
+          </button>
+          <button class="overview-btn" id="org-modal-close" title="Close">${ICONS.close}</button>
+        </div>
+      </div>
+      <div style="padding:0;overflow:hidden;flex:1;display:flex;">
+        <div class="org-layout" id="org-layout-container" style="flex:1;display:flex;overflow:hidden;">
+          <div class="overview-loading" style="padding:40px;text-align:center;">Loading AI Work Organisers...</div>
         </div>
       </div>
     `;
     document.body.appendChild(_modal);
-    makeWindowDraggable(_modal);
+    const header = _modal.querySelector('#org-drag-header');
+    makeWindowDraggable(_modal, { header });
 
     _modal.querySelector('#org-modal-close').addEventListener('click', () => _doClose());
     _modal.querySelector('#org-seed-btn').addEventListener('click', () => _seedDefaults());
@@ -794,6 +845,13 @@ export function openOrganisers() {
   modal.classList.remove('hidden', 'modal-minimized');
   modal.style.display = 'flex';
 
+  // On mobile screens, dismiss the sidebar overlay
+  if (window.innerWidth < 768) {
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) sidebar.classList.add('hidden');
+    document.documentElement.classList.add('ody-sidebar-off');
+  }
+
   Modals.register('organisers-modal', {
     railBtnId: 'rail-organisers',
     sidebarBtnId: 'tool-organisers-btn',
@@ -825,11 +883,21 @@ if (typeof window !== 'undefined') {
 function _bindLauncherButtons() {
   const railBtn = document.getElementById('rail-organisers');
   if (railBtn) {
-    railBtn.addEventListener('click', () => openOrganisers());
+    railBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!Modals.toggle('organisers-modal')) {
+        openOrganisers();
+      }
+    });
   }
   const sidebarBtn = document.getElementById('tool-organisers-btn');
   if (sidebarBtn) {
-    sidebarBtn.addEventListener('click', () => openOrganisers());
+    sidebarBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!Modals.toggle('organisers-modal')) {
+        openOrganisers();
+      }
+    });
   }
 }
 
