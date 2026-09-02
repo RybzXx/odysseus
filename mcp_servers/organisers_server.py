@@ -19,8 +19,12 @@ from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.database import SessionLocal, WorkOrganiser, ProjectTask, Memory
-from routes.organisers.organisers_routes import _get_recent_emails, _matches_rule
+from core.database import SessionLocal, WorkOrganiser, ProjectTask
+from routes.organisers.organisers_routes import (
+    _get_recent_emails,
+    _matches_rule,
+    _organiser_memories,
+)
 
 server = Server("organisers")
 
@@ -71,7 +75,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="record_work_insight",
-            description="Record a new insight, status update, or learned fact under a work organiser's dedicated memory lane.",
+            description="UNAVAILABLE — recording under an organiser memory lane is not implemented; this tool refuses every call. Use the memory server to record an ordinary memory instead.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -145,10 +149,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if project_ids:
                 tasks = db.query(ProjectTask).filter(ProjectTask.project_id.in_(project_ids)).all()
 
-            # Linked memories
-            mems = []
-            if org.memory_lane:
-                mems = db.query(Memory).filter(Memory.lane == org.memory_lane).all()
+            # Linked memories. Read through the shared helper, not the
+            # SQLAlchemy Memory model: that model has no `lane` column, so
+            # `Memory.lane` raised AttributeError for every organiser that has
+            # a lane set — which is all of them.
+            mems = _organiser_memories(org, owner)
 
             out = {
                 "name": org.name,
@@ -165,7 +170,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     for t in tasks
                 ],
                 "memory_notes": [
-                    {"content": m.content, "lane": m.lane}
+                    {"content": m.get("content"), "lane": m.get("category")}
                     for m in mems
                 ],
             }
@@ -174,7 +179,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "record_work_insight":
             slug = arguments.get("slug", "").strip()
             note = arguments.get("note", "").strip()
-            tag = arguments.get("tag", "general").strip()
             if not slug or not note:
                 return _text_result("Error: slug and note are required")
 
@@ -185,16 +189,21 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if not org:
                 return _text_result(f"Error: Work organiser '{slug}' not found.")
 
+            # Deliberately not implemented. This wrote Memory(content=…,
+            # lane=…, tags=…) — three columns the Memory model does not have,
+            # so every call raised TypeError — and it wrote to the SQLAlchemy
+            # `memories` table, which is not the store the organiser detail
+            # view reads. Repairing the write is not enough on its own: how a
+            # memory legitimately acquires an organiser lane is an open design
+            # question, deferred with the WorkBench decision. Refusing plainly
+            # beats writing somewhere nothing reads.
             lane = org.memory_lane or f"organisers:{org.slug}"
-            new_mem = Memory(
-                content=f"[{org.name}] {note}",
-                lane=lane,
-                tags=f"organiser,{org.slug},{tag}",
-                owner=owner,
+            return _text_result(
+                f"Unavailable: recording insights under an organiser lane is not "
+                f"implemented. '{org.name}' ({lane}) was found, but there is no "
+                f"supported path that writes a memory tagged with an organiser "
+                f"lane. Do not retry; record this as an ordinary memory instead."
             )
-            db.add(new_mem)
-            db.commit()
-            return _text_result(f"Recorded insight under '{org.name}' ({lane})")
 
         else:
             return _text_result(f"Error: Unknown tool '{name}'")

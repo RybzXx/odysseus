@@ -300,6 +300,49 @@ def _get_memory_manager():
         return None
 
 
+def _organiser_memories(org, owner, limit: int = 20) -> List[Dict[str, Any]]:
+    """The memories bound to one organiser's lane.
+
+    Pre:  org is a persisted WorkOrganiser; owner is the caller's username, or
+          None for an unscoped read.
+    Post: at most `limit` entries the caller owns, each either carrying the
+          organiser's memory lane or category group as its category, or naming
+          the organiser's slug in its text.
+    Inv:  reads the JSON store through MemoryManager, which is where memories
+          actually live — the SQLAlchemy Memory table is a separate store that
+          nothing in this system writes or reads. Never raises: an unreadable
+          store yields [].
+
+    Shared with mcp_servers/organisers_server.py so the MCP tool and the HTTP
+    route cannot drift into answering the same question differently.
+    """
+    mem_mgr = _get_memory_manager()
+    if not mem_mgr or not org.slug:
+        return []
+    try:
+        # Scope to the caller. load_all() is unfiltered and returned every
+        # user's memories on a multi-user deploy.
+        own_mems = mem_mgr.load(owner) if owner else mem_mgr.load_all()
+        target_slug = org.slug.lower()
+        categories = {
+            c for c in (org.memory_lane, org.category_group)
+            if c and c.strip()
+        }
+        return [
+            {
+                "id": m.get("id"),
+                "content": m.get("text"),
+                "category": m.get("category"),
+                "timestamp": m.get("timestamp"),
+            }
+            for m in own_mems
+            if m.get("category") in categories
+            or target_slug in (m.get("text") or "").lower()
+        ][:limit]
+    except Exception:
+        return []
+
+
 def _format_organiser_summary(
     org: WorkOrganiser,
     all_emails: List[Dict[str, Any]],
@@ -495,31 +538,7 @@ def setup_organisers_routes() -> APIRouter:
         # category_group: no existing memory carries a namespaced category, so
         # letting the lane displace category_group would empty this tab for
         # every seeded organiser. Match either, plus the slug-in-text heuristic.
-        memories_list = []
-        mem_mgr = _get_memory_manager()
-        if mem_mgr and org.slug:
-            try:
-                # Scope to the caller. load_all() is unfiltered and returned
-                # every user's memories on a multi-user deploy.
-                own_mems = mem_mgr.load(owner) if owner else mem_mgr.load_all()
-                target_slug = org.slug.lower()
-                categories = {
-                    c for c in (org.memory_lane, org.category_group)
-                    if c and c.strip()
-                }
-                memories_list = [
-                    {
-                        "id": m.get("id"),
-                        "content": m.get("text"),
-                        "category": m.get("category"),
-                        "timestamp": m.get("timestamp"),
-                    }
-                    for m in own_mems
-                    if m.get("category") in categories
-                    or target_slug in (m.get("text") or "").lower()
-                ][:20]
-            except Exception:
-                memories_list = []
+        memories_list = _organiser_memories(org, owner)
 
         return {
             "ok": True,

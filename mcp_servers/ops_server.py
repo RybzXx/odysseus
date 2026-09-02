@@ -165,6 +165,53 @@ _STRUCTURAL_FIELDS = (
 )
 
 
+# Bil Weekend's data-entry team types "Not known" into a queue column for a
+# field the submitter left blank, rather than leaving it NULL, and the intake
+# form concatenates a country-code sign onto it ("+Not known"). Both carry the
+# same absence of information as NULL, so the worklist must treat them the
+# same way. Mirrors _isEmptyDetailValue in static/js/operations.js, which does
+# this for the raw-record detail view — that view keeps its own copy because it
+# renders the raw record, empties included, behind a "show empty fields"
+# toggle, and so cannot share a helper that suppresses them.
+_PLACEHOLDER_VALUES = {"not known"}
+
+
+def _is_empty_value(value) -> bool:
+    """True when a column carries no information.
+
+    Pre:  value is whatever the source column holds — any type.
+    Post: True for None, for blank text, and for the placeholders the intake
+          sources write in place of NULL; False for every real value.
+    Inv:  a real value is never suppressed. The placeholder set is matched
+          whole and case-insensitively, after trimming surrounding space and a
+          leading country-code sign, never as a substring — "Not known Road"
+          is a real address and survives.
+    """
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip().lstrip("+-").strip()
+    return not stripped or stripped.casefold() in _PLACEHOLDER_VALUES
+
+
+def _day_count_summary(value) -> str | None:
+    """A trip length carrying exactly one unit.
+
+    Pre:  value is the source column — an int, a bare number as text, or text
+          that already carries the unit ("10 days", which is what the queue's
+          free-text trip_days column actually holds).
+    Post: None when the value is empty; otherwise the value with exactly one
+          trailing unit. Never "10 days days".
+    """
+    if _is_empty_value(value):
+        return None
+    text = str(value).strip()
+    if text.casefold().endswith(("day", "days")):
+        return text
+    return f"{text} days"
+
+
 def _phone_display(country_code, phone) -> str | None:
     """Country code + number, as Bil Weekend's phoneDisplay() renders it.
 
@@ -174,7 +221,7 @@ def _phone_display(country_code, phone) -> str | None:
     passes them together. Falls back to the bare number when there's no
     country code to prefix, rather than dropping the phone entirely.
     """
-    if not phone:
+    if _is_empty_value(phone):
         return None
     return f"{country_code} {phone}".strip() if country_code else str(phone)
 
@@ -284,7 +331,7 @@ async def _fetch_merged_worklist() -> list[dict]:
             elif source == "curated":
                 summary = [
                     ", ".join(data["regions"]) if data.get("regions") else None,
-                    f"{data['tripDays']} days" if data.get("tripDays") else None,
+                    _day_count_summary(data.get("tripDays")),
                     f"{data['numberOfPeople']} people" if data.get("numberOfPeople") else None,
                     _curated_travel_window(data),
                 ]
@@ -312,14 +359,14 @@ async def _fetch_merged_worklist() -> list[dict]:
                 "name": data.get(name_f),
                 "email": data.get(email_f) if email_f else None,
                 "phone": _phone_display(data.get("countryCode"), data.get(phone_f)) if phone_f else None,
-                "summary": [s for s in summary if s],
+                "summary": [s for s in summary if not _is_empty_value(s)],
             })
 
     for r in queue_rows:
         moderation = r.get("moderation")
         summary = [
             r.get("service_type"), r.get("request_type"), r.get("regions"),
-            f"{r['trip_days']} days" if r.get("trip_days") else None,
+            _day_count_summary(r.get("trip_days")),
             r.get("travel_date"),
         ]
         rows.append({
@@ -339,8 +386,11 @@ async def _fetch_merged_worklist() -> list[dict]:
             "risk": _risk_verdict(None, None, moderation, None, scored=False),
             "name": r.get("full_name"),
             "email": r.get("customer_email") or r.get("respondent_email"),
-            "phone": r.get("phone"),
-            "summary": [s for s in summary if s],
+            # The queue has no separate country-code column, so its phone is
+            # passed through rather than composed — but it carries the same
+            # "+Not known" placeholder the composed sources do.
+            "phone": None if _is_empty_value(r.get("phone")) else r.get("phone"),
+            "summary": [s for s in summary if not _is_empty_value(s)],
         })
 
     return rows
