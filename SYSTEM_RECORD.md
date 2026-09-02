@@ -2290,9 +2290,53 @@ Backup taken before any mutation: `/data/data/com.termux/files/home/odysseus-dat
 
 ## Open
 
-- **The unified WorkBench is still unchosen.** C1 (Tabbed Shell) and C2 (Cockpit Drilldown) were evaluated across nine dimensions. C1 wins on cost, risk and reversibility; C2 wins on phone-width fit and the AI-integration phase, at the price of making the 120s two-tier SWR cache load-bearing for every screen and needing a back stack nothing in the codebase has. Deferred by the user until tasks 1–7 landed. They have.
+- ~~**The unified WorkBench is still unchosen.**~~ C1 (Tabbed Shell) and C2 (Cockpit Drilldown) were evaluated across nine dimensions. C1 wins on cost, risk and reversibility; C2 wins on phone-width fit and the AI-integration phase, at the price of making the 120s two-tier SWR cache load-bearing for every screen and needing a back stack nothing in the codebase has. Deferred by the user until tasks 1–7 landed. They have. *(Resolved in Rev Y: C2 chosen, S2 layered view host.)*
 - **D7's design question stands.** Nothing writes an organiser lane, and `record_work_insight` now says so out loud.
 - **`registerWidget` in `overview.js` has zero callers.** A descriptor-based widget registry, unused — a latent asset for C2 and dormant under C1.
 - **Module access is inconsistent.** `/projects` and `/operations` route through ES imports; `/overview` and `/organisers` through `window.*` globals. `projects.js` alone does not use `modalManager`. That normalisation is owed under either WorkBench candidate.
 - **15 Linux test failures remain uncharacterised** beyond their names.
 - **`odysseus-android-widget` still has no remote**, so all widget history is single-copy on this machine.
+
+# Rev Y (2026-09-02) — WorkBench chosen: C2 cockpit, S2 layered view host
+
+Rev X left the unified WorkBench unchosen. It is now decided, and specified to the point where implementation can start. No implementation code was written.
+
+## What was chosen
+
+**C2 — Cockpit Drilldown**, over C1 (Tabbed Shell). Overview becomes the WorkBench home; cards and rows drill into the relevant module rendered on the same surface, with a back stack. Chosen on the two dimensions the user weighted: phone viewport, and the AI-integration phase that follows. Its accepted price is that the 120s two-tier SWR cache becomes load-bearing for every screen.
+
+**S2 — Layered view host**, over S1 (body-swap strangler) and S3 (container-agnostic refactor). Views are sibling layers kept alive and toggled by the `hidden` property; the layer beneath is never re-rendered.
+
+- **S1 was rejected** because back would re-render the home, and Overview's filter state would have to be captured and replayed — the state-capture machinery it was meant to avoid.
+- **S3 was rejected as a starting point**, not as an end state. It is where this should eventually land, but it changes all four module lifecycles at once with no fallback, on a daily driver.
+
+**Back must preserve scroll position and filter state.** This is what makes S2's memory cost worth paying, and is the reason S1 lost.
+
+**Navigation uses the History API**, `pushState` per view, so the Android back gesture pops one level instead of closing the whole surface.
+
+Three supporting choices: all layers stay resident with a memory-measurement gate and a defined eviction fallback; the five existing routes are reused as view URLs; and a view registry (`registerView` with `mount`/`unmount`) replaces direct module access.
+
+## Findings that drove the decision
+
+All were read from the code this session.
+
+- **Overview already contains two ad-hoc drilldowns.** `data-drill-proj` (`overview.js:707`, wired at `:812`) navigates to a project, and `#overview-open-organisers-btn` (`:495`) calls `window.openOrganisers()`. C2's core gesture existed already, hardcoded twice. This made C2 substantially cheaper than the Rev X evaluation assumed.
+- **`app.py` registers exact-path SPA handlers with no catch-all** (`:958`–`:976`). `/projects/abc123` would 404 on a hard reload, so drill identity must travel in query parameters rather than path segments. This settled the URL scheme.
+- **`modalManager` is a minimize/restore registry, not a modal factory.** Its surface is `register/unregister/minimize/restore/toggle/close/injectMinimizeButton`. Rev X's note that `projects.js` alone does not use it remains accurate, but the gap is narrower than "a different modal system" — each module builds its own DOM regardless.
+- **Overview's filter state is module-level**, not per-instance: `_emailDaysFilter`, `_emailAccountFilter`, `_emailUnreadOnly`, `_opsFilterSource`. Making Overview a view means moving these into instance state.
+- **`registerWidget` still has zero callers.** Under C2 it folds into the view registry's descriptor rather than staying dormant.
+
+**A consequence forced by S2:** the home is itself a layer, so `overview.js` stops owning a modal and becomes a registered view like the other four. The shell above it owns only the header, back control and layer stack.
+
+## Specified but not built
+
+Nine work packages were specified with obligations and done-conditions: shell, view registry, layer stack, history integration, the Overview-to-home refactor, the three module views, cache policy, and verification. The existing `openProjects/openOperations/openOrganisers/openOverview` entry points stay working — that is the reversibility guarantee, and deleting them is explicitly deferred to a later step.
+
+Two verification items carry real risk. The memory gate is unmeasured: Operations alone renders roughly 200 rows in the live table read today, and five resident layers on the device is an open question — failing it triggers the eviction fallback. Live verification must happen at phone width on the device, consistent with the standing bar.
+
+## Open
+
+- **Two spec clarifications are unanswered.** Whether `/overview` should open the WorkBench-with-home or keep a standalone Overview modal in parallel; and whether D7's lane-writer belongs inside the WorkBench work, where an organiser view could own a "record insight" action, or stays a separate decision.
+- **D7's design question is now unblocked** but still undecided. It was tied to this choice, which has been made.
+- **The 15 Linux test failures remain uncharacterised** beyond their names.
+- **Five branches exist only locally** — `feature/agent-dev` and four `local-agent1-ops-*`. All are identical to `daily-driver` and carry no unique work; publishing or deleting them is undecided.
