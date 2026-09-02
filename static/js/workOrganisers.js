@@ -222,10 +222,18 @@ function _injectStyles() {
       display: flex;
       border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
       background: rgba(0,0,0,0.1);
-      padding: 0 16px;
+      padding: 0 12px;
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      white-space: nowrap;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .org-tabs-bar::-webkit-scrollbar {
+      display: none;
     }
     .org-tab-btn {
-      padding: 10px 14px;
+      padding: 10px 12px;
       background: none;
       border: none;
       border-bottom: 2px solid transparent;
@@ -236,6 +244,8 @@ function _injectStyles() {
       display: flex;
       align-items: center;
       gap: 6px;
+      flex-shrink: 0;
+      white-space: nowrap;
     }
     .org-tab-btn:hover { color: #fff; }
     .org-tab-btn.active {
@@ -637,7 +647,7 @@ function _renderTabContent(org, detail) {
         <textarea id="org-edit-ai-instructions" class="org-textarea" rows="4">${_esc(org.ai_instructions || '')}</textarea>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="org-grid-2col" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;">
         <div class="org-field-group">
           <label class="org-field-label">Domain Group</label>
           <select id="org-edit-group" class="org-select">
