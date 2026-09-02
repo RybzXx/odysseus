@@ -860,7 +860,9 @@ app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handl
 # Operations (Bil Weekend worklist panel — reads/writes the same API
 # mcp_servers/ops_server.py exposes to agents)
 from routes.operations.operations_routes import setup_operations_routes
+from routes.operations.itinerary_routes import router as itinerary_router
 app.include_router(setup_operations_routes())
+app.include_router(itinerary_router)
 
 # Projects Module (hybrid file-as-spec + SQLite project workspace management)
 from routes.projects.projects_routes import setup_projects_routes

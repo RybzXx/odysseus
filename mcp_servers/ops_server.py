@@ -84,18 +84,6 @@ def _config() -> tuple[str, str] | None:
     base_url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
     if not base_url or not key:
-        from dotenv import load_dotenv
-        load_dotenv(encoding="utf-8-sig")
-        for env_path in [
-            Path("/root/odysseus/.env"),
-            Path(__file__).resolve().parent.parent / ".env",
-            Path(os.getcwd()) / ".env",
-        ]:
-            if env_path.exists():
-                load_dotenv(env_path, encoding="utf-8-sig")
-        base_url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
-        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-    if not base_url or not key:
         return None
     return base_url, key
 
@@ -129,10 +117,7 @@ async def _sb_request(
     body are all errors, never a partial view. A caller that treated a
     truncated worklist as complete would report or act on rows it never saw.
     """
-    cfg = _config()
-    if cfg is None:
-        raise OpsApiError(_CONFIG_ERROR)
-    base_url, key = cfg
+    base_url, key = _config()  # type: ignore[misc]
     url = f"{base_url}/rest/v1/{table}"
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     if prefer:
@@ -749,6 +734,35 @@ async def list_tools() -> list[Tool]:
                 "required": ["key", "author", "text"],
             },
         ),
+        Tool(
+            name="itinerary_preview",
+            description=(
+                "Dry-run matching, day-code binding, and quote estimation for a worklist request "
+                "without creating a Google Doc. Returns matched route, confidence, bound codes, "
+                "gaps, and estimated pricing."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Worklist key, e.g. curated:uuid or queue:id."},
+                },
+                "required": ["key"],
+            },
+        ),
+        Tool(
+            name="itinerary_generate",
+            description=(
+                "Generates a live customized tour proposal Google Doc and calculates final quote pricing "
+                "for a worklist request. Also drafts personalized email and WhatsApp customer replies."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Worklist key, e.g. curated:uuid or queue:id."},
+                },
+                "required": ["key"],
+            },
+        ),
     ]
 
 
@@ -773,6 +787,49 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             raise OpsApiError("stage_change requires 'key'.")
         result = _stage_change(key, patch, expected_updated_at, f"agent:{author}", rationale)
         return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+    if name == "itinerary_preview":
+        key = arguments.get("key", "")
+        if not key:
+            raise OpsApiError("itinerary_preview requires 'key'.")
+        if ":" not in key:
+            raise OpsApiError("key must be in 'source:id' format.")
+        source, source_id = key.split(":", 1)
+        record = await _fetch_full_record(source, source_id)
+        if not record:
+            raise OpsApiError(f"No record found for key '{key}'.")
+        from services.itinerary import normalize_from_dict, preview_itinerary, compose_email_reply, compose_whatsapp_reply
+        norm_req = normalize_from_dict(key, record, source=source)
+        preview = preview_itinerary(norm_req)
+        email_draft = compose_email_reply(norm_req, preview, quote=preview.estimated_quote)
+        whatsapp_draft = compose_whatsapp_reply(norm_req, preview, quote=preview.estimated_quote)
+        out = {
+            "preview": preview.to_dict(),
+            "draft_email": email_draft,
+            "draft_whatsapp": whatsapp_draft,
+        }
+        return [TextContent(type="text", text=json.dumps(out, indent=2, ensure_ascii=False))]
+
+    if name == "itinerary_generate":
+        key = arguments.get("key", "")
+        if not key:
+            raise OpsApiError("itinerary_generate requires 'key'.")
+        if ":" not in key:
+            raise OpsApiError("key must be in 'source:id' format.")
+        source, source_id = key.split(":", 1)
+        record = await _fetch_full_record(source, source_id)
+        if not record:
+            raise OpsApiError(f"No record found for key '{key}'.")
+        from services.itinerary import normalize_from_dict, execute_generation, compose_email_reply, compose_whatsapp_reply
+        norm_req = normalize_from_dict(key, record, source=source)
+        gen_res = execute_generation(norm_req)
+        if gen_res.status != "success":
+            raise OpsApiError(f"Itinerary generation failed: {gen_res.error_message}")
+        email_draft = compose_email_reply(norm_req, gen_res.preview, doc_url=gen_res.doc_url, quote=gen_res.quote)
+        whatsapp_draft = compose_whatsapp_reply(norm_req, gen_res.preview, doc_url=gen_res.doc_url, quote=gen_res.quote)
+        gen_res.draft_email = email_draft
+        gen_res.draft_whatsapp = whatsapp_draft
+        return [TextContent(type="text", text=json.dumps(gen_res.to_dict(), indent=2, ensure_ascii=False))]
 
     if _config() is None:
         raise OpsApiError(_CONFIG_ERROR)

@@ -222,9 +222,18 @@ function _injectStyles() {
     #operations-modal .ops-push-view { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
     #operations-modal .ops-push-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
     #operations-modal .ops-push-item { border: 1px solid var(--border, #333); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 12px; }
-    #operations-modal .ops-push-item.ops-conflict { border-color: var(--color-danger, #d33); }
-    #operations-modal .ops-push-item-head { display: flex; justify-content: space-between; align-items: center; }
-    #operations-modal .ops-push-empty { padding: 40px; text-align: center; color: var(--fg-muted, #888); }
+    /* ---- Itinerary & Automated Replies ---- */
+    #operations-modal .ops-itinerary-section { margin-top: 10px; border-top: 1px dashed var(--border, #333); padding-top: 8px; }
+    #operations-modal .ops-itinerary-box { background: var(--bg, #1a1a1a); border: 1px solid var(--border, #333); border-radius: 6px; padding: 10px; margin-top: 6px; font-size: 11px; }
+    #operations-modal .ops-itinerary-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; align-items: center; }
+    #operations-modal .ops-itinerary-pill { background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); padding: 2px 8px; border-radius: 10px; font-weight: 600; font-size: 10px; text-transform: uppercase; }
+    #operations-modal .ops-itinerary-pill.high { border-color: #2e7d32; color: #4caf50; }
+    #operations-modal .ops-itinerary-pill.moderate { border-color: #e8a33d; color: #ffb74d; }
+    #operations-modal .ops-itinerary-pill.low { border-color: #d32f2f; color: #ef5350; }
+    #operations-modal .ops-itinerary-gaps { font-size: 11px; color: #ffb74d; background: rgba(232, 163, 61, 0.1); border-left: 3px solid #e8a33d; padding: 6px 8px; border-radius: 4px; margin-bottom: 8px; }
+    #operations-modal .ops-reply-box { margin-top: 8px; border-top: 1px solid var(--border, #333); padding-top: 8px; }
+    #operations-modal .ops-reply-box textarea { width: 100%; box-sizing: border-box; background: var(--bg-elev, #242424); color: var(--fg, #eee); border: 1px solid var(--border, #333); border-radius: 4px; font-family: monospace; font-size: 11px; padding: 6px; resize: vertical; min-height: 80px; }
+    #operations-modal .ops-reply-actions { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
   `;
   document.head.appendChild(style);
 }
@@ -340,6 +349,34 @@ async function _deleteAgentQueueItem(id) {
     credentials: 'same-origin',
   });
   if (!res.ok) throw await _errorFromResponse(res, 'Failed to remove agent-queue item');
+  return res.json();
+}
+
+async function _fetchItineraryPreview(key) {
+  const res = await fetch('/api/operations/itinerary/preview?key=' + encodeURIComponent(key), { credentials: 'same-origin' });
+  if (!res.ok) throw await _errorFromResponse(res, 'Failed to load itinerary preview');
+  return res.json();
+}
+
+async function _postGenerateItinerary(key, stage = true) {
+  const res = await fetch('/api/operations/itinerary/generate', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, stage }),
+  });
+  if (!res.ok) throw await _errorFromResponse(res, 'Failed to generate itinerary');
+  return res.json();
+}
+
+async function _postStageReply(key, docUrl, emailDraft, status = 'Replied') {
+  const res = await fetch('/api/operations/itinerary/stage-reply', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, doc_url: docUrl, email_draft: emailDraft, status }),
+  });
+  if (!res.ok) throw await _errorFromResponse(res, 'Failed to stage reply');
   return res.json();
 }
 
@@ -640,6 +677,16 @@ function _renderEditor(row, container) {
       <span class="ops-editor-hint"></span>
     </div>
     ${(row.source === 'queue' || row.source === 'curated') ? `<div class="ops-full-detail"><div class="ops-field-label">Full record (live from Supabase)</div><div class="ops-loading" style="padding:6px 0;">Loading…</div></div>` : ''}
+    <div class="ops-itinerary-section" data-itinerary-key="${_esc(row.key)}">
+      <div class="ops-field-label" style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
+        <span>⚡ Itinerary & Automated Replies</span>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="ops-chip ops-itinerary-preview-btn">Preview Itinerary</button>
+          <button type="button" class="ops-chip ops-itinerary-gen-btn" style="border-color:var(--accent, #e8a33d); color:var(--fg, #eee);">⚡ Generate Doc & Reply</button>
+        </div>
+      </div>
+      <div class="ops-itinerary-slot" style="margin-top:6px;"></div>
+    </div>
     <div class="ops-card-notes" data-notes-for="${_esc(row.key)}"></div>
     <button type="button" class="ops-card-add-note" data-note-key="${_esc(row.key)}">+ agent note</button>
     <button type="button" class="ops-card-add-agent-queue">+ agent queue</button>
@@ -683,9 +730,133 @@ function _renderEditor(row, container) {
 
   _wireNoteButtons(wrap);
   _wireAgentQueueButton(wrap, row);
+  _wireItinerarySection(wrap, row);
   container.appendChild(wrap);
   _renderNotesFor(row.key, wrap);
   _renderFullDetail(row, wrap);
+}
+
+function _renderItineraryBox(slot, data, isGenerated = false, rowKey = '') {
+  const p = data.preview || data;
+  const quote = data.quote || p.estimated_quote;
+  const docUrl = data.doc_url;
+  const emailDraft = data.draft_email || {};
+  const whatsappDraft = data.draft_whatsapp || '';
+
+  const pillClass = p.confidence_level || 'moderate';
+  const gapsHtml = (p.coverage_gaps || []).length
+    ? `<div class="ops-itinerary-gaps"><strong>Gaps/Transit notes:</strong><br>${p.coverage_gaps.map((g) => '• ' + _esc(g)).join('<br>')}</div>`
+    : '';
+  const warningsHtml = (p.calendar_warnings || []).length
+    ? `<div class="ops-itinerary-gaps" style="border-color:#d33; color:#f66; background:rgba(211,51,51,0.1);"><strong>Calendar warnings:</strong><br>${p.calendar_warnings.map((w) => '• ' + _esc(w)).join('<br>')}</div>`
+    : '';
+
+  let quoteHtml = '';
+  if (quote) {
+    quoteHtml = `<span class="ops-itinerary-pill" style="border-color:#2e7d32; color:#4caf50;">💰 Total: $${Number(quote.total_usd || 0).toLocaleString()} USD (pp: $${Number(quote.per_person_usd || 0).toLocaleString()})</span>`;
+  }
+
+  let docHtml = '';
+  if (docUrl) {
+    docHtml = `<div style="margin: 8px 0;"><a href="${_esc(docUrl)}" target="_blank" class="ops-chip" style="display:inline-block; border-color:var(--accent, #e8a33d); color:var(--fg, #eee); font-weight:600; text-decoration:none;">📄 Open Generated Google Doc</a></div>`;
+  }
+
+  const boundCodesStr = (p.bound_day_codes || []).join(' → ') || 'None';
+
+  slot.innerHTML = `
+    <div class="ops-itinerary-box">
+      <div class="ops-itinerary-meta">
+        <strong>Matched Route:</strong> ${_esc(p.matched_route_name || 'Standard Custom Route')}
+        <span class="ops-itinerary-pill ${pillClass}">${_esc(p.confidence_level || 'moderate')} (${Math.round((p.confidence_score || 0) * 100)}%)</span>
+        <span><strong>Days:</strong> ${p.delivered_day_count || p.requested_day_count}d (req: ${p.requested_day_count}d)</span>
+        ${quoteHtml}
+      </div>
+      <div style="font-size:10px; color:var(--fg-muted, #888); margin-bottom:6px;"><strong>Day Codes:</strong> ${_esc(boundCodesStr)}</div>
+      ${gapsHtml}
+      ${warningsHtml}
+      ${docHtml}
+      <div class="ops-reply-box">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <span class="ops-field-label" style="margin:0;">Drafted Customer Email (${_esc(emailDraft.subject || 'Proposal')})</span>
+          <div style="display:flex; gap:4px;">
+            <button type="button" class="ops-chip ops-copy-email-btn">Copy Email</button>
+            <button type="button" class="ops-chip ops-copy-wa-btn">Copy WhatsApp</button>
+            ${isGenerated ? `<button type="button" class="ops-chip ops-stage-replied-btn" style="border-color:var(--accent, #e8a33d); color:var(--fg, #eee);">Stage as Replied</button>` : ''}
+          </div>
+        </div>
+        <textarea class="ops-email-draft-textarea" rows="4">${_esc(emailDraft.body_text || '')}</textarea>
+        <div class="ops-reply-feedback" style="font-size:10px; color:var(--accent, #e8a33d); margin-top:2px;"></div>
+      </div>
+    </div>
+  `;
+
+  slot.querySelector('.ops-copy-email-btn')?.addEventListener('click', () => {
+    const text = slot.querySelector('.ops-email-draft-textarea').value;
+    navigator.clipboard.writeText(text).then(() => {
+      slot.querySelector('.ops-reply-feedback').textContent = 'Email copied to clipboard!';
+      setTimeout(() => { if (slot.isConnected) slot.querySelector('.ops-reply-feedback').textContent = ''; }, 3000);
+    });
+  });
+
+  slot.querySelector('.ops-copy-wa-btn')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(whatsappDraft).then(() => {
+      slot.querySelector('.ops-reply-feedback').textContent = 'WhatsApp message copied to clipboard!';
+      setTimeout(() => { if (slot.isConnected) slot.querySelector('.ops-reply-feedback').textContent = ''; }, 3000);
+    });
+  });
+
+  slot.querySelector('.ops-stage-replied-btn')?.addEventListener('click', async () => {
+    const fb = slot.querySelector('.ops-reply-feedback');
+    fb.textContent = 'Staging reply...';
+    try {
+      await _postStageReply(rowKey, docUrl, emailDraft, 'Replied');
+      fb.textContent = 'Reply staged! See Push tab to review and send live.';
+      _syncViewBadge();
+    } catch (err) {
+      fb.textContent = 'Failed to stage: ' + err.message;
+    }
+  });
+}
+
+function _wireItinerarySection(wrap, row) {
+  const section = wrap.querySelector('.ops-itinerary-section');
+  if (!section) return;
+  const slot = section.querySelector('.ops-itinerary-slot');
+  const previewBtn = section.querySelector('.ops-itinerary-preview-btn');
+  const genBtn = section.querySelector('.ops-itinerary-gen-btn');
+
+  previewBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    slot.innerHTML = '<div class="ops-loading" style="padding:6px 0;">Calculating itinerary preview & matching route…</div>';
+    try {
+      const data = await _fetchItineraryPreview(row.key);
+      _renderItineraryBox(slot, data, false, row.key);
+    } catch (err) {
+      slot.innerHTML = `<div class="ops-error" style="padding:4px 0;">${_esc(err.message)}</div>`;
+    }
+  });
+
+  genBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    slot.innerHTML = '<div class="ops-loading" style="padding:6px 0;">Generating Google Doc proposal and calculating quote… (this takes a few seconds)</div>';
+    try {
+      const data = await _postGenerateItinerary(row.key, true);
+      _renderItineraryBox(slot, data, true, row.key);
+      if (!_notesByKey.has(row.key)) _notesByKey.set(row.key, []);
+      if (data.doc_url) {
+        _notesByKey.get(row.key).unshift({
+          id: 'gen-' + Date.now(),
+          key: row.key,
+          author: 'itinerary',
+          text: `Generated Doc: ${data.doc_url}`,
+          created_at: new Date().toISOString(),
+        });
+        _renderNotesFor(row.key, wrap);
+      }
+    } catch (err) {
+      slot.innerHTML = `<div class="ops-error" style="padding:4px 0;">${_esc(err.message)}</div>`;
+    }
+  });
 }
 
 function _syncViewBadge() {
