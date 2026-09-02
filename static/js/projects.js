@@ -10,9 +10,13 @@ import { makeWindowDraggable } from './windowDrag.js';
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import { spawnConfetti } from './compare/vote.js';
+import { registerView } from './workbench.js';
 
 let _open = false;
 let _modal = null;
+// The WorkBench layer this hub is mounted into, or null when it owns a window
+// of its own. Read by _renderModalSkeleton to decide where the root lands.
+let _hostContainer = null;
 let _projects = [];
 let _currentProjectId = null;
 let _currentProject = null;
@@ -1094,8 +1098,13 @@ function _injectStyles() {
 // ---------------------------------------------------------------------------
 
 function _renderModalSkeleton() {
+  const parent = _hostContainer || document.body;
   let modalEl = document.getElementById('projects-modal');
-  if (modalEl) return modalEl;
+  // Inv: at most one #projects-modal exists. A skeleton built for the other
+  // host — body when we now want a layer, or the reverse — is discarded rather
+  // than reparented, so its listeners and stale tab state go with it.
+  if (modalEl && modalEl.parentElement === parent) return modalEl;
+  if (modalEl) modalEl.remove();
 
   modalEl = document.createElement('div');
   modalEl.id = 'projects-modal';
@@ -1135,13 +1144,17 @@ function _renderModalSkeleton() {
     </div>
   `;
 
-  document.body.appendChild(modalEl);
+  parent.appendChild(modalEl);
   _wireModalEvents(modalEl);
   return modalEl;
 }
 
 function _wireModalEvents(modalEl) {
-  modalEl.addEventListener('click', (e) => { if (e.target === modalEl) closeProjects(); });
+  // Click-outside dismisses the standalone window only — inside a WorkBench
+  // layer the root fills the layer, so this would close on a stray click.
+  modalEl.addEventListener('click', (e) => {
+    if (!_hostContainer && e.target === modalEl) closeProjects();
+  });
   modalEl.querySelector('#proj-close-btn')?.addEventListener('click', closeProjects);
   
   modalEl.querySelector('#proj-select')?.addEventListener('change', async (e) => {
@@ -1192,7 +1205,8 @@ function _wireModalEvents(modalEl) {
 
   const content = modalEl.querySelector('.proj-modal-content');
   const header = modalEl.querySelector('.proj-header');
-  if (content && header) {
+  // A layer is positioned by the shell; only a free-floating window drags.
+  if (content && header && !_hostContainer) {
     makeWindowDraggable(modalEl, { content, header });
   }
 }
@@ -3400,12 +3414,51 @@ export function isProjectsOpen() {
   return _open;
 }
 
+/**
+ * Render the Projects hub into a WorkBench layer.
+ *
+ * Pre:  `container` is an empty layer element.
+ * Post: the hub is inside `container` showing `params.projectId` when given,
+ *       otherwise its landing page.
+ * Inv:  tabs, notes, checklists and link management are untouched — only the
+ *       root element's parent differs from `openProjects()`.
+ */
+export function mount(container, params = {}) {
+  _hostContainer = container;
+  openProjects(params.projectId || null);
+}
+
+export function unmount(_container) {
+  _open = false;
+  if (_modal) {
+    _modal.remove();
+    _modal = null;
+  }
+  _hostContainer = null;
+  _currentProjectId = null;
+  document.getElementById('tool-projects-btn')?.classList.remove('active');
+}
+
+registerView({
+  id: 'projects',
+  title: 'Projects',
+  path: '/projects',
+  mount,
+  unmount,
+  // Identity travels as a query param: app.py registers exact-path SPA
+  // handlers with no catch-all, so /projects/<id> would 404 on a hard reload.
+  queryFromParams: (params) => (params && params.projectId ? `project=${encodeURIComponent(params.projectId)}` : ''),
+  paramsFromQuery: (search) => ({ projectId: search.get('project') || null }),
+});
+
 export default {
   openProjects,
   closeProjects,
   isProjectsOpen,
+  mount,
+  unmount,
 };
 
 if (typeof window !== 'undefined') {
-  window.projectsModule = { openProjects, closeProjects, isProjectsOpen };
+  window.projectsModule = { openProjects, closeProjects, isProjectsOpen, mount, unmount };
 }

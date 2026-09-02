@@ -1,6 +1,6 @@
 // static/js/overview.js
 /**
- * Executive Overview Hub — Morning Briefing & Cross-Module Operational Cockpit.
+ * Executive Overview Hub — the WorkBench home view, and a standalone modal.
  *
  * Core Features:
  * - High-density Morning Briefing KPI banner.
@@ -10,38 +10,45 @@
  * - Multi-tier SWR (Stale-While-Revalidate) caching for instant sub-10ms loads.
  * - Strictly zero emojis; native Odysseus Feather/Lucide inline SVG iconography.
  * - Real-time cross-layer state synchronicity via DOM event bus.
+ *
+ * Under the WorkBench (SYSTEM_RECORD Rev Y) this file no longer owns a window.
+ * It renders into a caller-supplied container and registers as the `home` view;
+ * `openOverview()` survives as chrome wrapped around that same render path, so
+ * there is one renderer whether the panels sit in a WorkBench layer or in the
+ * standalone modal. Filter state lives per mounted instance rather than in
+ * module scope, because two instances may now exist at once.
  */
 
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { registerView, navigate as workBenchNavigate } from './workbench.js';
 
-let _open = false;
-let _modal = null;
-let _overviewData = null;
-let _loading = false;
+/** container element -> render state. One entry per mounted instance. */
+const _instances = new Map();
+
 let _stylesInjected = false;
 
-// Filter states
-let _emailAccountFilter = 'all';
-let _emailDaysFilter = 7;
-let _emailUnreadOnly = false;
-let _expandedProjectIds = new Set();
-let _opsFilterSource = 'all';
-
-// Registered widget descriptors
-const _widgets = [];
+// The standalone modal, which is chrome around one mounted instance.
+let _modal = null;
+let _modalBody = null;
+let _open = false;
 
 /**
- * Register a modular dashboard widget.
+ * Per-instance render state.
+ *
+ * Inv: nothing here is module-level. A drilled-into layer that comes back must
+ *      show the filters it had, and a second instance must not steal them.
  */
-export function registerWidget(descriptor) {
-  if (!descriptor || !descriptor.id) return;
-  const existingIdx = _widgets.findIndex(w => w.id === descriptor.id);
-  if (existingIdx >= 0) {
-    _widgets[existingIdx] = descriptor;
-  } else {
-    _widgets.push(descriptor);
-  }
+function _newState() {
+  return {
+    emailAccountFilter: 'all',
+    emailDaysFilter: 7,
+    emailUnreadOnly: false,
+    opsFilterSource: 'all',
+    expandedProjectIds: new Set(),
+    data: null,
+    loading: false,
+  };
 }
 
 // Inline SVG Icon Helpers (Strictly No Emojis)
@@ -59,6 +66,7 @@ const ICONS = {
   chevronDown: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`,
   send: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`,
   sparkle: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+  layers: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
 };
 
 function _injectStyles() {
@@ -85,6 +93,32 @@ function _injectStyles() {
       overflow: hidden;
       font-family: var(--font-family, system-ui, sans-serif);
       color: var(--fg, #abb2bf);
+    }
+    /* The view itself: a toolbar over a scrolling body, filling whatever
+       container mounts it — a WorkBench layer or the standalone modal. */
+    .overview-view {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      font-family: var(--font-family, system-ui, sans-serif);
+      color: var(--fg, #abb2bf);
+    }
+    .overview-toolbar {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      background: var(--bg, #282c34);
+    }
+    .overview-toolbar .overview-cache-status {
+      font-size: 11px;
+      opacity: 0.6;
+      font-family: 'Fira Code', monospace;
+      margin-right: auto;
     }
     .overview-header {
       padding: 10px 16px;
@@ -162,6 +196,16 @@ function _injectStyles() {
     .overview-kpi-card.urgent {
       border-color: rgba(224, 108, 117, 0.4);
       background: rgba(224, 108, 117, 0.04);
+    }
+    /* KPI cards drill: emails to the digest, tasks to Projects, inquiries to
+       Operations. Only the drillable ones take the affordance. */
+    .overview-kpi-card[data-drill-view] {
+      cursor: pointer;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .overview-kpi-card[data-drill-view]:hover {
+      border-color: rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.03);
     }
     .overview-kpi-label {
       font-size: 11px;
@@ -451,131 +495,181 @@ function _injectStyles() {
   document.head.appendChild(style);
 }
 
-function _getModal() {
-  if (_modal && document.body.contains(_modal)) return _modal;
+// ---------------------------------------------------------------------------
+// View lifecycle — the WorkBench home
+// ---------------------------------------------------------------------------
+
+/**
+ * Render the cockpit into `container`.
+ *
+ * Pre:  `container` is attached to the document and is not already mounted.
+ * Post: the container holds a toolbar and a body; a briefing fetch is in
+ *       flight; an instance state exists for the container.
+ * Inv:  nothing outside `container` is written to — `document.body` is the
+ *       caller's business, never this view's.
+ */
+export function mount(container, _params = {}) {
+  if (_instances.has(container)) return;
   _injectStyles();
 
-  _modal = document.createElement('div');
-  _modal.id = 'overview-modal';
-  _modal.className = 'overview-modal hidden';
-  _modal.setAttribute('role', 'dialog');
-  _modal.setAttribute('aria-label', 'Executive Overview Hub');
+  const state = _newState();
+  _instances.set(container, state);
 
-  _modal.innerHTML = `
-    <div class="overview-header" id="overview-drag-header">
-      <div class="overview-title-group">
-        ${ICONS.dashboard}
-        <span>Executive Overview Hub</span>
-      </div>
-      <div class="overview-header-actions">
-        <span id="overview-cache-status" style="font-size:11px;opacity:0.6;font-family:'Fira Code',monospace;"></span>
-        <button class="overview-btn" id="overview-open-organisers-btn" title="Open AI Work Organisers">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-          <span>AI Organisers</span>
-        </button>
-        <button class="overview-btn" id="overview-refresh-btn" title="Refresh Dashboard">
-          ${ICONS.refresh}
-          <span>Refresh</span>
-        </button>
-        <button class="overview-btn" id="overview-minimize-btn" title="Minimize">_</button>
-        <button class="overview-btn" id="overview-close-btn" title="Close (Esc)">${ICONS.close}</button>
-      </div>
+  container.classList.add('overview-view');
+  container.innerHTML = `
+    <div class="overview-toolbar">
+      <span class="overview-cache-status" data-cache-status></span>
+      <button class="overview-btn" data-drill-organisers title="Open AI Work Organisers">
+        ${ICONS.layers}
+        <span>AI Organisers</span>
+      </button>
+      <button class="overview-btn" data-refresh-overview title="Refresh Dashboard">
+        ${ICONS.refresh}
+        <span>Refresh</span>
+      </button>
     </div>
-    <div class="overview-body" id="overview-body-container">
+    <div class="overview-body" data-overview-body>
       <div class="overview-empty">Loading executive briefing...</div>
     </div>
   `;
 
-  document.body.appendChild(_modal);
-
-  const header = _modal.querySelector('#overview-drag-header');
-  makeWindowDraggable(_modal, { header });
-
-  _modal.querySelector('#overview-close-btn').addEventListener('click', closeOverview);
-  _modal.querySelector('#overview-open-organisers-btn').addEventListener('click', () => {
-    if (window.openOrganisers) {
-      window.openOrganisers();
-    }
+  container.querySelector('[data-refresh-overview]').addEventListener('click', () => {
+    _fetchOverviewData(container, true);
   });
-  _modal.querySelector('#overview-minimize-btn').addEventListener('click', () => {
-    Modals.minimize('overview-modal');
-  });
-  _modal.querySelector('#overview-refresh-btn').addEventListener('click', () => {
-    refreshOverview(true);
+  container.querySelector('[data-drill-organisers]').addEventListener('click', () => {
+    _drill(container, 'organisers', {}, () => {
+      if (window.openOrganisers) window.openOrganisers();
+    });
   });
 
-  return _modal;
+  // The overview payload is served from a 120s two-tier SWR cache whose DB
+  // half survives a deploy. Opening the cockpit is exactly the moment a stale
+  // briefing is most misleading, so the first read of a mount forces through.
+  _fetchOverviewData(container, true);
 }
 
 /**
- * Fetch overview briefing data from the backend.
+ * Discard the instance mounted in `container`.
+ *
+ * Post: no listener, timer or in-flight render can still write to the
+ *       container — `_fetchOverviewData` checks membership before rendering,
+ *       and every listener died with the innerHTML that carried it.
  */
-async function _fetchOverviewData(forceRefresh = false) {
-  _loading = true;
-  _updateCacheStatusBanner();
+export function unmount(container) {
+  if (!_instances.has(container)) return;
+  _instances.delete(container);
+  container.innerHTML = '';
+  container.classList.remove('overview-view');
+}
+
+/**
+ * Drill from a cockpit row into a module.
+ *
+ * Inside a WorkBench layer this stacks a view; in the standalone modal it
+ * falls back to the module's own opener, which is what keeps `openOverview()`
+ * usable on its own.
+ */
+function _drill(container, viewId, params, legacyOpen) {
+  if (container.closest('.wb-layer')) {
+    workBenchNavigate(viewId, params);
+    return;
+  }
+  if (typeof legacyOpen === 'function') legacyOpen();
+}
+
+// ---------------------------------------------------------------------------
+// Data
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the briefing for one mounted instance and re-render it.
+ *
+ * Pre:  `container` is mounted.
+ * Post: on success the instance holds fresh data and has re-rendered; on
+ *       failure an unrendered instance shows the error and a rendered one
+ *       keeps the data it had.
+ */
+async function _fetchOverviewData(container, forceRefresh = false) {
+  const state = _instances.get(container);
+  if (!state) return;
+
+  state.loading = true;
+  _updateCacheStatusBanner(container);
   try {
-    const res = await fetch(`/api/overview?email_days=${_emailDaysFilter}&force_refresh=${forceRefresh}&_=${Date.now()}`, { credentials: 'same-origin' });
+    const res = await fetch(
+      `/api/overview?email_days=${state.emailDaysFilter}&force_refresh=${forceRefresh}&_=${Date.now()}`,
+      { credentials: 'same-origin' },
+    );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    _overviewData = await res.json();
-    _render();
+    const payload = await res.json();
+    // The instance may have been unmounted while the request was in flight.
+    if (_instances.get(container) !== state) return;
+    state.data = payload;
+    _render(container);
   } catch (err) {
     console.error('Failed to load overview data:', err);
-    const body = _modal ? _modal.querySelector('#overview-body-container') : null;
-    if (body && !_overviewData) {
-      body.innerHTML = `<div class="overview-empty" style="color:var(--red,#e06c75)">Failed to load briefing: ${err.message}</div>`;
+    if (_instances.get(container) !== state) return;
+    const body = container.querySelector('[data-overview-body]');
+    if (body && !state.data) {
+      body.innerHTML = `<div class="overview-empty" style="color:var(--red,#e06c75)">Failed to load briefing: ${_escape(err.message)}</div>`;
     }
   } finally {
-    _loading = false;
-    _updateCacheStatusBanner();
+    if (_instances.get(container) === state) {
+      state.loading = false;
+      _updateCacheStatusBanner(container);
+    }
   }
 }
 
-function _updateCacheStatusBanner() {
-  if (!_modal) return;
-  const banner = _modal.querySelector('#overview-cache-status');
+function _updateCacheStatusBanner(container) {
+  const state = _instances.get(container);
+  if (!state) return;
+  const banner = container.querySelector('[data-cache-status]');
   if (!banner) return;
 
-  if (_loading) {
+  if (state.loading) {
     banner.textContent = 'Updating...';
     return;
   }
-  if (_overviewData && _overviewData.cached_at) {
-    const timeStr = _overviewData.cached_at.substring(11, 16);
-    banner.textContent = `Synced ${timeStr} UTC ${_overviewData.is_stale ? '(Revalidating)' : ''}`;
+  if (state.data && state.data.cached_at) {
+    const timeStr = state.data.cached_at.substring(11, 16);
+    banner.textContent = `Synced ${timeStr} UTC ${state.data.is_stale ? '(Revalidating)' : ''}`;
   }
 }
 
-/**
- * Main render function.
- */
-function _render() {
-  if (!_modal || !_overviewData) return;
-  const container = _modal.querySelector('#overview-body-container');
-  if (!container) return;
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
 
-  const kpis = _overviewData.kpis || {};
-  const emailsData = _overviewData.email_digest || { accounts: [], emails: [] };
-  const projectsData = _overviewData.projects_matrix || [];
-  const opsData = _overviewData.operations_radar || { inquiries: [] };
+function _render(container) {
+  const state = _instances.get(container);
+  if (!state || !state.data) return;
+  const body = container.querySelector('[data-overview-body]');
+  if (!body) return;
+
+  const kpis = state.data.kpis || {};
+  const emailsData = state.data.email_digest || { accounts: [], emails: [] };
+  const projectsData = state.data.projects_matrix || [];
+  const opsData = state.data.operations_radar || { inquiries: [] };
 
   // Filter emails
   let filteredEmails = emailsData.emails || [];
-  if (_emailAccountFilter !== 'all') {
-    filteredEmails = filteredEmails.filter(e => e.account_id === _emailAccountFilter);
+  if (state.emailAccountFilter !== 'all') {
+    filteredEmails = filteredEmails.filter(e => e.account_id === state.emailAccountFilter);
   }
-  if (_emailUnreadOnly) {
+  if (state.emailUnreadOnly) {
     filteredEmails = filteredEmails.filter(e => !e.read);
   }
 
   // Filter operations
   let filteredOps = opsData.inquiries || [];
-  if (_opsFilterSource !== 'all') {
-    filteredOps = filteredOps.filter(i => i.source === _opsFilterSource);
+  if (state.opsFilterSource !== 'all') {
+    filteredOps = filteredOps.filter(i => i.source === state.opsFilterSource);
   }
 
-  const daysLabel = _emailDaysFilter === 1 ? 'Today' : `${_emailDaysFilter}d`;
+  const daysLabel = state.emailDaysFilter === 1 ? 'Today' : `${state.emailDaysFilter}d`;
 
-  container.innerHTML = `
+  body.innerHTML = `
     <!-- Top KPI Briefing Banner -->
     <div class="overview-kpi-grid">
       <div class="overview-kpi-card ${kpis.urgent_emails > 0 ? 'urgent' : ''}">
@@ -583,12 +677,12 @@ function _render() {
         <div class="overview-kpi-value">${kpis.urgent_emails || 0}</div>
         <div class="overview-kpi-sub">${kpis.unread_emails || 0} unread across ${emailsData.accounts.length || 1} accounts</div>
       </div>
-      <div class="overview-kpi-card">
+      <div class="overview-kpi-card" data-drill-view="projects">
         <div class="overview-kpi-label">${ICONS.folder} Open Tasks</div>
         <div class="overview-kpi-value">${kpis.open_tasks || 0}</div>
         <div class="overview-kpi-sub">Across ${kpis.active_projects || 0} active workspaces</div>
       </div>
-      <div class="overview-kpi-card ${kpis.overdue_inquiries > 0 ? 'urgent' : ''}">
+      <div class="overview-kpi-card ${kpis.overdue_inquiries > 0 ? 'urgent' : ''}" data-drill-view="operations">
         <div class="overview-kpi-label">${ICONS.operations} Inbound Inquiries</div>
         <div class="overview-kpi-value">${kpis.pending_inquiries || 0}</div>
         <div class="overview-kpi-sub">${kpis.overdue_inquiries || 0} overdue follow-up(s)</div>
@@ -607,15 +701,15 @@ function _render() {
           </div>
           <div class="overview-panel-body">
             <div class="overview-controls-row">
-              <select class="overview-select" id="overview-email-acc-select">
+              <select class="overview-select" data-email-account-select>
                 <option value="all">All Accounts (${emailsData.accounts.length})</option>
-                ${emailsData.accounts.map(a => `<option value="${a.id}" ${_emailAccountFilter === a.id ? 'selected' : ''}>${a.name}</option>`).join('')}
+                ${emailsData.accounts.map(a => `<option value="${a.id}" ${state.emailAccountFilter === a.id ? 'selected' : ''}>${a.name}</option>`).join('')}
               </select>
-              <button class="overview-btn ${_emailDaysFilter === 1 ? 'active' : ''}" data-days="1">Today</button>
-              <button class="overview-btn ${_emailDaysFilter === 3 ? 'active' : ''}" data-days="3">3d</button>
-              <button class="overview-btn ${_emailDaysFilter === 7 ? 'active' : ''}" data-days="7">7d</button>
+              <button class="overview-btn ${state.emailDaysFilter === 1 ? 'active' : ''}" data-days="1">Today</button>
+              <button class="overview-btn ${state.emailDaysFilter === 3 ? 'active' : ''}" data-days="3">3d</button>
+              <button class="overview-btn ${state.emailDaysFilter === 7 ? 'active' : ''}" data-days="7">7d</button>
               <label style="margin-left:auto;font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;">
-                <input type="checkbox" id="overview-unread-toggle" ${_emailUnreadOnly ? 'checked' : ''}>
+                <input type="checkbox" data-unread-toggle ${state.emailUnreadOnly ? 'checked' : ''}>
                 Unread only
               </label>
             </div>
@@ -643,16 +737,16 @@ function _render() {
         <div class="overview-panel">
           <div class="overview-panel-header">
             ${ICONS.operations}
-            <span>Operations & Inquiries Radar</span>
+            <span>Operations &amp; Inquiries Radar</span>
           </div>
           <div class="overview-panel-body">
             <div class="overview-controls-row">
-              <select class="overview-select" id="overview-ops-source-select">
+              <select class="overview-select" data-ops-source-select>
                 <option value="all">All Channels</option>
-                <option value="booking" ${_opsFilterSource === 'booking' ? 'selected' : ''}>Registration</option>
-                <option value="contact" ${_opsFilterSource === 'contact' ? 'selected' : ''}>Contact</option>
-                <option value="curated" ${_opsFilterSource === 'curated' ? 'selected' : ''}>Curated</option>
-                <option value="queue" ${_opsFilterSource === 'queue' ? 'selected' : ''}>WhatsApp Queue</option>
+                <option value="booking" ${state.opsFilterSource === 'booking' ? 'selected' : ''}>Registration</option>
+                <option value="contact" ${state.opsFilterSource === 'contact' ? 'selected' : ''}>Contact</option>
+                <option value="curated" ${state.opsFilterSource === 'curated' ? 'selected' : ''}>Curated</option>
+                <option value="queue" ${state.opsFilterSource === 'queue' ? 'selected' : ''}>WhatsApp Queue</option>
               </select>
             </div>
 
@@ -661,12 +755,12 @@ function _render() {
               ${filteredOps.map(op => `
                 <div class="overview-inquiry-item ${op.is_overdue ? 'overdue' : ''}">
                   <div class="overview-inquiry-header">
-                    <span class="overview-source-badge">${op.source}</span>
+                    <span class="overview-source-badge">${_escape(op.source)}</span>
                     <strong style="color:#fff;">${_escape(op.name)}</strong>
-                    <span style="font-size:11px;opacity:0.6;margin-left:auto;">${op.status}</span>
+                    <span style="font-size:11px;opacity:0.6;margin-left:auto;">${_escape(op.status)}</span>
                   </div>
                   <div style="font-size:12px;opacity:0.85;">${_escape(op.summary || 'Enquiry record')}</div>
-                  ${op.is_overdue ? `<div style="color:#e06c75;font-size:11px;display:flex;align-items:center;gap:4px;">${ICONS.alertCircle} Overdue action (${op.next_action_date})</div>` : ''}
+                  ${op.is_overdue ? `<div style="color:#e06c75;font-size:11px;display:flex;align-items:center;gap:4px;">${ICONS.alertCircle} Overdue action (${_escape(op.next_action_date)})</div>` : ''}
                   <div class="overview-inquiry-actions">
                     ${op.email ? `
                       <button class="overview-btn" data-draft-email="${_escape(op.email)}" data-draft-name="${_escape(op.name)}" data-draft-summary="${_escape(op.summary)}">
@@ -674,7 +768,7 @@ function _render() {
                         <span>Draft Reply</span>
                       </button>
                     ` : ''}
-                    <button class="overview-btn" data-open-ops="${_escape(op.key)}" style="margin-left:auto;">
+                    <button class="overview-btn" data-open-ops="${_escape(op.key)}" data-open-ops-name="${_escape(op.name)}" style="margin-left:auto;">
                       ${ICONS.externalLink}
                       <span>View in Operations</span>
                     </button>
@@ -690,7 +784,7 @@ function _render() {
       <div class="overview-panel" style="flex:1;">
         <div class="overview-panel-header">
           ${ICONS.folder}
-          <span>Active Projects & Tasks Matrix</span>
+          <span>Active Projects &amp; Tasks Matrix</span>
         </div>
         <div class="overview-panel-body">
           <div class="overview-projects-container">
@@ -699,7 +793,7 @@ function _render() {
               const completedCount = proj.tasks.filter(t => t.completed).length;
               const totalCount = proj.tasks.length;
               const percent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-              const isExpanded = _expandedProjectIds.has(proj.id);
+              const isExpanded = state.expandedProjectIds.has(proj.id);
 
               return `
                 <div class="overview-project-card" data-project-id="${proj.id}">
@@ -741,32 +835,40 @@ function _render() {
     </div>
   `;
 
-  _bindEventListeners(container);
+  _bindEventListeners(container, body, state);
 }
 
-function _bindEventListeners(container) {
+function _bindEventListeners(container, body, state) {
+  // KPI cards that stand for a module
+  body.querySelectorAll('[data-drill-view]').forEach(card => {
+    card.addEventListener('click', () => {
+      const viewId = card.dataset.drillView;
+      _drill(container, viewId, {}, () => _legacyOpen(viewId, {}));
+    });
+  });
+
   // Email account selector
-  const accSel = container.querySelector('#overview-email-acc-select');
+  const accSel = body.querySelector('[data-email-account-select]');
   if (accSel) {
     accSel.addEventListener('change', (e) => {
-      _emailAccountFilter = e.target.value;
-      _render();
+      state.emailAccountFilter = e.target.value;
+      _render(container);
     });
   }
 
   // Email days preset buttons
-  container.querySelectorAll('[data-days]').forEach(btn => {
+  body.querySelectorAll('[data-days]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const days = parseInt(btn.dataset.days, 10) || 7;
-      if (_emailDaysFilter === days) return;
-      _emailDaysFilter = days;
-      _fetchOverviewData(false);
+      if (state.emailDaysFilter === days) return;
+      state.emailDaysFilter = days;
+      _fetchOverviewData(container, false);
     });
   });
 
   // Email item click to open in Email reader
-  container.querySelectorAll('.overview-email-item').forEach(card => {
+  body.querySelectorAll('.overview-email-item').forEach(card => {
     card.addEventListener('click', async (e) => {
       e.stopPropagation();
       const uid = card.dataset.emailUid;
@@ -791,58 +893,55 @@ function _bindEventListeners(container) {
   });
 
   // Email unread toggle
-  const unreadToggle = container.querySelector('#overview-unread-toggle');
+  const unreadToggle = body.querySelector('[data-unread-toggle]');
   if (unreadToggle) {
     unreadToggle.addEventListener('change', (e) => {
-      _emailUnreadOnly = e.target.checked;
-      _render();
+      state.emailUnreadOnly = e.target.checked;
+      _render(container);
     });
   }
 
   // Operations source selector
-  const opsSel = container.querySelector('#overview-ops-source-select');
+  const opsSel = body.querySelector('[data-ops-source-select]');
   if (opsSel) {
     opsSel.addEventListener('change', (e) => {
-      _opsFilterSource = e.target.value;
-      _render();
+      state.opsFilterSource = e.target.value;
+      _render(container);
     });
   }
 
-  // Project drilldown button
-  container.querySelectorAll('[data-drill-proj]').forEach(el => {
+  // Project drilldown
+  body.querySelectorAll('[data-drill-proj]').forEach(el => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      const projId = el.dataset.drillProj;
-      if (window.projectsModule && window.projectsModule.openProjects) {
-        closeOverview();
-        window.projectsModule.openProjects(projId);
-      }
+      const projectId = el.dataset.drillProj;
+      _drill(container, 'projects', { projectId }, () => _legacyOpen('projects', { projectId }));
     });
   });
 
   // Project accordion toggle
-  container.querySelectorAll('[data-toggle-proj]').forEach(el => {
+  body.querySelectorAll('[data-toggle-proj]').forEach(el => {
     el.addEventListener('click', () => {
       const projId = el.dataset.toggleProj;
-      if (_expandedProjectIds.has(projId)) {
-        _expandedProjectIds.delete(projId);
+      if (state.expandedProjectIds.has(projId)) {
+        state.expandedProjectIds.delete(projId);
       } else {
-        _expandedProjectIds.add(projId);
+        state.expandedProjectIds.add(projId);
       }
-      _render();
+      _render(container);
     });
   });
 
-  container.querySelectorAll('[data-expand-proj]').forEach(btn => {
+  body.querySelectorAll('[data-expand-proj]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      _expandedProjectIds.add(btn.dataset.expandProj);
-      _render();
+      state.expandedProjectIds.add(btn.dataset.expandProj);
+      _render(container);
     });
   });
 
   // Task check-dot toggle
-  container.querySelectorAll('.overview-check-dot').forEach(dot => {
+  body.querySelectorAll('.overview-check-dot').forEach(dot => {
     dot.addEventListener('click', async (e) => {
       e.stopPropagation();
       const taskId = dot.dataset.taskId;
@@ -875,35 +974,54 @@ function _bindEventListeners(container) {
   });
 
   // Operations email draft bridge
-  container.querySelectorAll('[data-draft-email]').forEach(btn => {
+  body.querySelectorAll('[data-draft-email]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const email = btn.dataset.draftEmail;
       const name = btn.dataset.draftName || 'Customer';
       const summary = btn.dataset.draftSummary || 'your inquiry';
       const subject = `Re: Bil Weekend Inquiry - ${name}`;
-      const body = `Dear ${name},\n\nThank you for reaching out to Bil Weekend regarding ${summary}.\n\nBest regards,\nBil Weekend Operations Team`;
+      const emailBody = `Dear ${name},\n\nThank you for reaching out to Bil Weekend regarding ${summary}.\n\nBest regards,\nBil Weekend Operations Team`;
 
       // If email module compose modal exists, invoke it
       if (window.emailModule && window.emailModule.openCompose) {
-        window.emailModule.openCompose({ to: email, subject, body });
+        window.emailModule.openCompose({ to: email, subject, body: emailBody });
       } else {
         // Fallback: trigger mailto or notification
-        window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
       }
     });
   });
 
-  // Open in Operations
-  container.querySelectorAll('[data-open-ops]').forEach(btn => {
+  // Open in Operations. The record's name, not its key, is what carries:
+  // Operations' search matches name/email/phone/operator, never the row key.
+  body.querySelectorAll('[data-open-ops]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (window.operationsModule && window.operationsModule.openOperations) {
-        closeOverview();
-        window.operationsModule.openOperations();
-      }
+      const query = btn.dataset.openOpsName || '';
+      _drill(container, 'operations', { query }, () => _legacyOpen('operations', { query }));
     });
   });
+}
+
+/**
+ * Open a module the pre-WorkBench way, closing the standalone Overview first.
+ * Reached only from the standalone modal, which has no layer to stack onto.
+ */
+function _legacyOpen(viewId, params) {
+  if (viewId === 'projects' && window.projectsModule && window.projectsModule.openProjects) {
+    closeOverview();
+    window.projectsModule.openProjects(params.projectId || null);
+    return;
+  }
+  if (viewId === 'operations' && window.operationsModule && window.operationsModule.openOperations) {
+    closeOverview();
+    window.operationsModule.openOperations(params);
+    return;
+  }
+  if (viewId === 'organisers' && window.openOrganisers) {
+    window.openOrganisers();
+  }
 }
 
 function _escape(str) {
@@ -927,8 +1045,53 @@ function _formatDate(isoStr) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Standalone modal — retained as the WorkBench's fallback, not its rival
+// ---------------------------------------------------------------------------
+
+function _getModal() {
+  if (_modal && document.body.contains(_modal)) return _modal;
+  _injectStyles();
+
+  _modal = document.createElement('div');
+  _modal.id = 'overview-modal';
+  _modal.className = 'overview-modal hidden';
+  _modal.setAttribute('role', 'dialog');
+  _modal.setAttribute('aria-label', 'Executive Overview Hub');
+
+  _modal.innerHTML = `
+    <div class="overview-header" id="overview-drag-header">
+      <div class="overview-title-group">
+        ${ICONS.dashboard}
+        <span>Executive Overview Hub</span>
+      </div>
+      <div class="overview-header-actions">
+        <button class="overview-btn" id="overview-minimize-btn" title="Minimize">_</button>
+        <button class="overview-btn" id="overview-close-btn" title="Close (Esc)">${ICONS.close}</button>
+      </div>
+    </div>
+    <div id="overview-body-container" style="flex:1;min-height:0;display:flex;flex-direction:column;"></div>
+  `;
+
+  document.body.appendChild(_modal);
+
+  const header = _modal.querySelector('#overview-drag-header');
+  makeWindowDraggable(_modal, { content: _modal, header });
+
+  _modal.querySelector('#overview-close-btn').addEventListener('click', closeOverview);
+  _modal.querySelector('#overview-minimize-btn').addEventListener('click', () => {
+    Modals.minimize('overview-modal');
+  });
+
+  _modalBody = _modal.querySelector('#overview-body-container');
+  return _modal;
+}
+
 /**
- * Open the Overview Hub modal.
+ * Open the Overview Hub as a standalone window.
+ *
+ * Kept working per the WorkBench reversibility guarantee: the same view is
+ * mounted, only the chrome differs, so there is no second renderer to drift.
  */
 export function openOverview() {
   _open = true;
@@ -943,15 +1106,16 @@ export function openOverview() {
     restoreFn: () => {},
   });
 
-  _fetchOverviewData(false);
+  mount(_modalBody, {});
 }
 
 function _doClose() {
   Modals.unregister('overview-modal');
+  if (_modalBody) unmount(_modalBody);
   if (_modal) _modal.remove();
   _modal = null;
+  _modalBody = null;
   _open = false;
-  _overviewData = null;
 }
 
 export function closeOverview() {
@@ -962,26 +1126,50 @@ export function isOverviewOpen() {
   return _open;
 }
 
+/** Force a fresh briefing into every mounted instance. */
 export function refreshOverview(force = true) {
-  _fetchOverviewData(force);
+  for (const container of _instances.keys()) {
+    _fetchOverviewData(container, force);
+  }
 }
 
-// Global module export & Auto-wire setup
+// ---------------------------------------------------------------------------
+// Registration and wiring
+// ---------------------------------------------------------------------------
+
+registerView({
+  id: 'home',
+  title: 'Executive Overview',
+  path: '/overview',
+  icon: ICONS.dashboard,
+  mount,
+  unmount,
+});
+
 window.overviewModule = {
   openOverview,
   closeOverview,
   isOverviewOpen,
   refreshOverview,
-  registerWidget,
+  mount,
+  unmount,
 };
 
 // Wire rail and sidebar click events
 document.addEventListener('DOMContentLoaded', () => {
+  const openCockpit = () => {
+    if (window.workBench) {
+      window.workBench.openWorkBench({ viewId: 'home' });
+    } else {
+      openOverview();
+    }
+  };
+
   const railBtn = document.getElementById('rail-overview');
   if (railBtn) {
     railBtn.addEventListener('click', () => {
-      if (!Modals.toggle('overview-modal')) {
-        openOverview();
+      if (!Modals.toggle('workbench-modal') && !Modals.toggle('overview-modal')) {
+        openCockpit();
       }
     });
   }
@@ -989,19 +1177,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const sidebarBtn = document.getElementById('tool-overview-btn');
   if (sidebarBtn) {
     sidebarBtn.addEventListener('click', () => {
-      if (!Modals.toggle('overview-modal')) {
-        openOverview();
+      if (!Modals.toggle('workbench-modal') && !Modals.toggle('overview-modal')) {
+        openCockpit();
       }
     });
   }
 
-  // Cross-layer mutation listener
-  window.addEventListener('odysseus:task-toggle', () => {
-    if (_open) _fetchOverviewData(false);
-  });
-  window.addEventListener('odysseus:state-mutation', () => {
-    if (_open) _fetchOverviewData(false);
-  });
+  // Cross-layer mutation listeners. These refresh every mounted instance,
+  // which under the WorkBench includes a home layer sitting beneath a drill.
+  window.addEventListener('odysseus:task-toggle', () => refreshOverview(false));
+  window.addEventListener('odysseus:state-mutation', () => refreshOverview(false));
 
   // Deep link /overview is handled by app.js's _routeOpen map, which runs the
   // opener through startupShell's deferRouteOpener once module wiring has
@@ -1014,5 +1199,6 @@ export default {
   closeOverview,
   isOverviewOpen,
   refreshOverview,
-  registerWidget,
+  mount,
+  unmount,
 };

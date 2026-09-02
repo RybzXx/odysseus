@@ -13,9 +13,13 @@
 
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { registerView } from './workbench.js';
 
 let _open = false;
 let _modal = null;
+// The WorkBench layer this panel is mounted into, or null when it owns a
+// window of its own. Set before _getModal() so the modal is built in place.
+let _hostContainer = null;
 let _organisers = [];
 let _selectedId = null;
 let _activeDetail = null; // cached full detail for _selectedId
@@ -406,9 +410,10 @@ function _getModal() {
         </div>
       </div>
     `;
-    document.body.appendChild(_modal);
+    (_hostContainer || document.body).appendChild(_modal);
     const header = _modal.querySelector('#org-drag-header');
-    makeWindowDraggable(_modal, { header });
+    // A layer is positioned by the shell; only a free-floating window drags.
+    if (!_hostContainer) makeWindowDraggable(_modal, { header });
 
     _modal.querySelector('#org-modal-close').addEventListener('click', () => _doClose());
     _modal.querySelector('#org-seed-btn').addEventListener('click', () => _seedDefaults());
@@ -849,27 +854,57 @@ function _bindEvents(layout, selectedOrg) {
 
 // ================= MODAL LIFECYCLE =================
 
-export function openOrganisers() {
+/**
+ * Open the Organisers panel as a standalone window.
+ *
+ * @param {string} [organiserId] Select this organiser instead of the first,
+ *        so a drill from the cockpit lands on the one the user clicked.
+ */
+export function openOrganisers(organiserId = null) {
   _open = true;
+  // Defensive: this is also reachable as a bare click handler, which would
+  // otherwise pass an Event where an id is expected.
+  if (typeof organiserId === 'string' && organiserId) _selectedId = organiserId;
   const modal = _getModal();
   modal.classList.remove('hidden', 'modal-minimized');
   modal.style.display = 'flex';
 
-  // On mobile screens, dismiss the sidebar overlay
-  if (window.innerWidth < 768) {
+  // On mobile screens, dismiss the sidebar overlay. Inside a WorkBench layer
+  // the shell already owns the viewport, so the sidebar is not ours to touch.
+  if (!_hostContainer && window.innerWidth < 768) {
     const sidebar = document.getElementById('sidebar');
     if (sidebar) sidebar.classList.add('hidden');
     document.documentElement.classList.add('ody-sidebar-off');
   }
 
-  Modals.register('organisers-modal', {
-    railBtnId: 'rail-organisers',
-    sidebarBtnId: 'tool-organisers-btn',
-    closeFn: () => _doClose(),
-    restoreFn: () => {},
-  });
+  if (!_hostContainer) {
+    Modals.register('organisers-modal', {
+      railBtnId: 'rail-organisers',
+      sidebarBtnId: 'tool-organisers-btn',
+      closeFn: () => _doClose(),
+      restoreFn: () => {},
+    });
+  }
 
   _fetchOrganisers();
+}
+
+/**
+ * Render the Organisers panel into a WorkBench layer.
+ *
+ * Pre:  `container` is an empty layer element.
+ * Post: the panel is inside `container` with `params.organiserId` selected
+ *       when given, and no window chrome of its own.
+ * Inv:  the rule engine, directives and email preview are untouched.
+ */
+export function mount(container, params = {}) {
+  _hostContainer = container;
+  openOrganisers(params && params.organiserId ? params.organiserId : null);
+}
+
+export function unmount(_container) {
+  _doClose();
+  _hostContainer = null;
 }
 
 function _doClose() {
@@ -883,10 +918,21 @@ export function closeOrganisers() {
   _doClose();
 }
 
+registerView({
+  id: 'organisers',
+  title: 'AI Work Organisers',
+  path: '/organisers',
+  mount,
+  unmount,
+  queryFromParams: (params) => (params && params.organiserId ? `organiser=${encodeURIComponent(params.organiserId)}` : ''),
+  paramsFromQuery: (search) => ({ organiserId: search.get('organiser') || null }),
+});
+
 // Global window exposure
 if (typeof window !== 'undefined') {
   window.openWorkOrganisers = openOrganisers;
   window.openOrganisers = openOrganisers;
+  window.organisersModule = { openOrganisers, closeOrganisers, mount, unmount };
 }
 
 // Auto-wire navigation rail and sidebar buttons

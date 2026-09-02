@@ -23,6 +23,7 @@
 
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { registerView } from './workbench.js';
 
 const JKANBAN_JS = '/static/lib/jkanban.min.js';
 const JKANBAN_CSS = '/static/lib/jkanban.min.css';
@@ -51,6 +52,9 @@ const PATCH_FIELD_LABELS = { status: 'Status', operator: 'Operator', next_action
 
 let _open = false;
 let _modal = null;
+// The WorkBench layer this panel is mounted into, or null when it owns a
+// window of its own. Set before _getModal() so the modal is built in place.
+let _hostContainer = null;
 let _rowsByKey = new Map();       // worklist key -> row, for expected_updated_at when staging
 let _lastRows = null;             // last successful fetch — reused across view switches, no refetch
 let _notesByKey = new Map();      // worklist key -> note[]
@@ -1442,11 +1446,16 @@ function _getModal() {
       </div>
       <div class="modal-body"><div id="ops-body"></div></div>
     </div>`;
-  document.body.appendChild(_modal);
+  (_hostContainer || document.body).appendChild(_modal);
   _modal.querySelectorAll('.ops-view-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === _viewMode));
   _modal.querySelector('#ops-refresh').addEventListener('click', () => _render());
   _modal.querySelector('#ops-close').addEventListener('click', closeOperations);
-  _modal.addEventListener('click', (e) => { if (e.target === _modal) closeOperations(); });
+  // Click-outside dismisses the standalone window only. Inside a WorkBench
+  // layer the modal element fills the layer, so the same handler would close
+  // the panel on a stray click and drop the user back to the cockpit.
+  _modal.addEventListener('click', (e) => {
+    if (!_hostContainer && e.target === _modal) closeOperations();
+  });
   _modal.querySelectorAll('.ops-view-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       _viewMode = btn.dataset.view;
@@ -1456,11 +1465,20 @@ function _getModal() {
   });
   const content = _modal.querySelector('.modal-content');
   const header = _modal.querySelector('.modal-header');
-  if (content && header) makeWindowDraggable(_modal, { content, header });
+  // A layer is positioned by the shell; only a free-floating window drags.
+  if (content && header && !_hostContainer) makeWindowDraggable(_modal, { content, header });
   return _modal;
 }
 
-export function openOperations() {
+/**
+ * Open Operations as a standalone window.
+ *
+ * @param {object} [params]
+ * @param {string} [params.query] Seeds the table search, so a drill from the
+ *        cockpit lands on the record the user clicked. The row key cannot do
+ *        this — search matches name, email, phone and operator, never the key.
+ */
+export function openOperations(params = {}) {
   if (_open) return;
   if (Modals.isMinimized('operations-modal')) {
     Modals.restore('operations-modal');
@@ -1468,6 +1486,7 @@ export function openOperations() {
     return;
   }
   _open = true;
+  if (params && params.query) _search = params.query;
   const modal = _getModal();
   modal.classList.remove('hidden', 'modal-minimized');
   modal.style.display = 'flex';
@@ -1478,6 +1497,29 @@ export function openOperations() {
     restoreFn: () => {},
   });
   _render();
+}
+
+/**
+ * Render Operations into a WorkBench layer.
+ *
+ * Pre:  `container` is an empty layer element; this module is not already open.
+ * Post: the panel is inside `container`, with no window chrome of its own.
+ * Inv:  the table, filters, staging and push logic are untouched — the only
+ *       difference from `openOperations()` is where the root element lands.
+ */
+export function mount(container, params = {}) {
+  _hostContainer = container;
+  if (params && params.query) _search = params.query;
+  _open = true;
+  const modal = _getModal();
+  modal.classList.remove('hidden', 'modal-minimized');
+  modal.style.display = 'flex';
+  _render();
+}
+
+export function unmount(_container) {
+  _doClose();
+  _hostContainer = null;
 }
 
 function _doClose() {
@@ -1504,4 +1546,15 @@ export function isOperationsOpen() {
   return _open;
 }
 
-export default { openOperations, closeOperations, isOperationsOpen };
+registerView({
+  id: 'operations',
+  title: 'Operations',
+  path: '/operations',
+  mount,
+  unmount,
+  queryFromParams: (params) => (params && params.query ? `q=${encodeURIComponent(params.query)}` : ''),
+  paramsFromQuery: (search) => ({ query: search.get('q') || '' }),
+});
+
+// window.operationsModule is set by app.js from this default export.
+export default { openOperations, closeOperations, isOperationsOpen, mount, unmount };

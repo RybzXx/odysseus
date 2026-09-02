@@ -34,6 +34,7 @@ import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import operationsModule from './js/operations.js';
 import projectsModule from './js/projects.js';
+import workBenchModule from './js/workbench.js';
 import activityLogModule from './js/activityLog.js';
 import adminModule from './js/admin.js?v=20260716openrouter3';
 import settingsModule from './js/settings.js?v=20260815approvalsave1';
@@ -66,6 +67,7 @@ window.cookbookModule = cookbookModule;
 window.projectsModule = projectsModule;
 window.operationsModule = operationsModule;
 window.notesModule = notesModule;
+window.workBench = workBenchModule;
 
 function _isMobileChatInput() {
   return window.innerWidth <= 768;
@@ -1269,16 +1271,33 @@ function initializeEventListeners() {
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
-    '/projects': () => projectsModule && projectsModule.openProjects(),
+    // The four operational routes open the one WorkBench surface, with the
+    // route's own view on top of the cockpit home — so back from a hard load
+    // of /operations lands on the cockpit rather than leaving the app.
+    // openFromRoute returns false for a path no view claims, which is the
+    // signal to fall back to the module's own window.
+    '/projects': () => {
+      if (workBenchModule.openFromRoute('/projects')) return;
+      if (projectsModule) projectsModule.openProjects();
+    },
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
     // app.py has served /operations since it shipped, but the map had no
     // entry — the route returned the SPA and then nothing opened.
-    '/operations': () => operationsModule && operationsModule.openOperations(),
+    '/operations': () => {
+      if (workBenchModule.openFromRoute('/operations')) return;
+      if (operationsModule) operationsModule.openOperations();
+    },
     // Overview and Organisers set their public surface on `window` at module
     // evaluation, and app.js is the last module script in index.html, so both
     // are present by the time this map is built.
-    '/overview': () => window.overviewModule && window.overviewModule.openOverview(),
-    '/organisers': () => window.openOrganisers && window.openOrganisers(),
+    '/overview': () => {
+      if (workBenchModule.openFromRoute('/overview')) return;
+      if (window.overviewModule) window.overviewModule.openOverview();
+    },
+    '/organisers': () => {
+      if (workBenchModule.openFromRoute('/organisers')) return;
+      if (window.openOrganisers) window.openOrganisers();
+    },
   };
   const _opener = _routeOpen[urlPath];
   // Defer the opener — at this point in init, the modules whose handlers we
