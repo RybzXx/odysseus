@@ -983,6 +983,64 @@ def _result_is_config_error(result: str | None) -> bool:
     )
 
 
+def _pass_report_failures(result: str | None) -> tuple[int, int]:
+    """Count the accounts that reported an error in one email pass report.
+
+    `_run_auto_summarize_once` returns a pass report: one
+    "[Account Name] <summary>" line per account when several are polled
+    (routes/email_pollers.py:495), or a bare summary for a single account. A
+    failed account contributes "[Name] Error: ..." (:1361, from the pass's own
+    exception handler) or "[Name] error: ..." (:498, from the aggregator's).
+
+    Pre:  none — `result` may be None, empty, or a non-string.
+    Post: returns (failed, reported) with 0 <= failed <= reported. Nothing
+          reported yields (0, 0), which is not the same as nothing failed and
+          must not be read as success.
+    Inv:  only a line's own leading "Error:" counts. A successful report that
+          merely mentions the word — a subject line, a tag — is untouched,
+          which is why this reads line prefixes and never searches the body.
+    """
+    if not isinstance(result, str) or not result.strip():
+        return (0, 0)
+    lines = [ln.strip() for ln in result.splitlines() if ln.strip()]
+    if not lines:
+        return (0, 0)
+
+    def _opens_with_error(text: str) -> bool:
+        return text.lstrip().lower().startswith("error:")
+
+    # Multi-account form: every account's line opens with a bracketed name.
+    accounts = [ln for ln in lines if ln.startswith("[")]
+    if accounts:
+        failed = 0
+        for line in accounts:
+            close = line.find("]")
+            body = line[close + 1:] if close != -1 else line
+            if _opens_with_error(body):
+                failed += 1
+        return (failed, len(accounts))
+
+    # Single-account form: the first line is the whole report; any further
+    # lines are its "Processed:" detail block.
+    return (1 if _opens_with_error(lines[0]) else 0, 1)
+
+
+def _pass_report_status(result: str | None) -> str | None:
+    """The activity-log status an email pass report warrants.
+
+    Post: "error" when every account that reported failed, "fallback" when
+          some did, None when none did or nothing was reported.
+    Inv:  a partial failure is never silent. It was: `_result_has_work`
+          returns True for a report of nothing but errors, so 18 of 57 live
+          rows recorded a total failure as "success" and the stats header read
+          "Errors: 0" throughout.
+    """
+    failed, reported = _pass_report_failures(result)
+    if not reported or not failed:
+        return None
+    return "error" if failed == reported else "fallback"
+
+
 def _email_task_account_id(kwargs) -> str | None:
     prompt = (kwargs.get("prompt") or "").strip()
     if not prompt:
@@ -1024,6 +1082,20 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
                 owner=owner,
             )
             return result, False
+        pass_status = _pass_report_status(result)
+        if pass_status:
+            log_system_query(
+                module="email",
+                action="summarize_emails",
+                target_name="Inbox Email Pass",
+                query_type="llm",
+                status=pass_status,
+                result_preview=str(result),
+                error=str(result),
+                owner=owner,
+            )
+            # A partial pass still did work for the accounts that answered.
+            return result, pass_status != "error"
         if not _result_has_work(result):
             log_system_query(
                 module="email",
@@ -1088,6 +1160,19 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
                 owner=owner,
             )
             return result, False
+        pass_status = _pass_report_status(result)
+        if pass_status:
+            log_system_query(
+                module="email",
+                action="draft_email_replies",
+                target_name="AI Reply Drafter",
+                query_type="llm",
+                status=pass_status,
+                result_preview=str(result),
+                error=str(result),
+                owner=owner,
+            )
+            return result, pass_status != "error"
         if not _result_has_work(result):
             log_system_query(
                 module="email",
@@ -1588,7 +1673,12 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                 parts.append(f"{unchanged} already set (skipped)")
             if failed:
                 parts.append(f"{failed} LLM failed")
-            return " · ".join(parts), True
+            # The counter is the truth about this run; reporting it in the
+            # text while returning an unconditional True is what logged
+            # "Scanned 2 · 1 already set · 1 LLM failed" as a success. A run
+            # that classified nothing it was asked to classify did not succeed.
+            classified_any = bool(classified_h or classified_llm)
+            return " · ".join(parts), not (failed and not classified_any)
         finally:
             db.close()
     except Exception as e:
@@ -1630,6 +1720,13 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
                 )
                 last_result = result or ""
                 if _result_is_config_error(result):
+                    return f"{result} ({label})", False
+                # This action does not log directly — its status reaches the
+                # activity log only through task_scheduler mirroring the
+                # boolean below, whose vocabulary is success/error. So a total
+                # failure can be told, a partial one cannot, and a partial
+                # pass falls through to the work check as before.
+                if _pass_report_status(result) == "error":
                     return f"{result} ({label})", False
                 if _result_has_work(result):
                     suffix = f"{label}" if not timed_out else f"{label}; retried after timeout"

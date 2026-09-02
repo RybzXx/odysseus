@@ -2520,7 +2520,10 @@ async def llm_call_async(
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
             if _cooled or attempt >= max_retries:
-                raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
+                # httpx.ConnectError often stringifies to "", which stored two
+                # live diagnostics as "Cannot reach http://host:11434:" — a
+                # bare colon and no reason. Fall back to the exception class.
+                raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e or type(e).__name__}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
         except httpx.ReadTimeout as e:
             duration = time.time() - start

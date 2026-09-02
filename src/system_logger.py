@@ -22,6 +22,46 @@ logger = logging.getLogger(__name__)
 MAX_RECORDS = 10000
 DEFAULT_RETENTION_DAYS = 30
 
+# The status vocabulary this log stores, per specs/system-activity-logger.md.
+# Nothing outside this set may reach the column.
+LOG_STATUSES = frozenset({"completed", "running", "error", "fallback", "halted"})
+
+# TaskRun uses a different vocabulary — running, success, error, aborted,
+# skipped (core/database.py) — and task_scheduler mirrors run.status straight
+# into this log. Untranslated, "success" reached 29 of 57 live rows: it has no
+# badge style, no filter option, and no place in any count. Normalising here
+# rather than at each caller means no future writer can reintroduce the leak.
+_STATUS_ALIASES = {
+    "success": "completed",
+    "ok": "completed",
+    "aborted": "halted",
+    "skipped": "halted",
+}
+
+
+def normalise_status(status: Optional[str]) -> str:
+    """Map any caller's status word onto this log's vocabulary.
+
+    Pre:  none — the caller may pass anything, including None.
+    Post: the return value is a member of LOG_STATUSES.
+    Inv:  an unrecognised word never reaches the database silently; it becomes
+          "completed" and is logged with the word that was rejected, so the
+          offending caller is findable rather than invisible.
+    """
+    if not status:
+        return "completed"
+    word = str(status).strip().lower()
+    if word in LOG_STATUSES:
+        return word
+    mapped = _STATUS_ALIASES.get(word)
+    if mapped:
+        return mapped
+    logger.warning(
+        "system_logger: unknown status %r normalised to 'completed'; "
+        "expected one of %s", status, sorted(LOG_STATUSES),
+    )
+    return "completed"
+
 
 def utcnow_naive() -> datetime:
     """Return naive UTC for database DateTime columns."""
@@ -53,6 +93,11 @@ def log_system_query(
     try:
         log_id = f"sqlog_{uuid.uuid4().hex[:8]}"
         now = utcnow_naive()
+
+        # Normalise before anything reads it: the dedup lookup below matches on
+        # status, so a raw and a normalised write of the same event would fail
+        # to stack and appear as two rows.
+        status = normalise_status(status)
 
         # Sanitize and truncate previews
         clean_prompt = None
@@ -89,6 +134,9 @@ def log_system_query(
                     SystemQueryLog.action == action,
                     SystemQueryLog.target_name == target_name,
                     SystemQueryLog.status == status,
+                    # Without this, one owner's repeat stacks onto — and
+                    # mutates the timestamp of — another owner's row.
+                    SystemQueryLog.owner == (owner or "default"),
                     SystemQueryLog.timestamp >= ten_mins_ago,
                 )
                 .order_by(SystemQueryLog.timestamp.desc())
@@ -229,14 +277,23 @@ def get_system_log_stats(owner: Optional[str] = None, db=None) -> Dict[str, Any]
         total_queries = q.count()
         running_count = q.filter(SystemQueryLog.status == "running").count()
         error_count = q.filter(SystemQueryLog.status == "error").count()
+        # Reported alongside errors, not summed into them. Six live rows carry
+        # a real llm_error under status "fallback" while the header read
+        # "Errors: 0" — degraded is not failed, but it is not silent either.
+        fallback_count = q.filter(SystemQueryLog.status == "fallback").count()
 
-        # Count by module
+        # Count by module, under the same owner filter as the total above.
+        # Without it the chips summed to more than the "All" count they sit
+        # beside — a visible contradiction in one toolbar.
+        grouped_q = db.query(SystemQueryLog.module, func.count(SystemQueryLog.id))
+        if owner:
+            grouped_q = grouped_q.filter(or_(
+                SystemQueryLog.owner == owner,
+                SystemQueryLog.owner == "default",
+                SystemQueryLog.owner == None,  # noqa: E711 — SQL NULL, not Python None
+            ))
         module_counts = {}
-        grouped = (
-            db.query(SystemQueryLog.module, func.count(SystemQueryLog.id))
-            .group_by(SystemQueryLog.module)
-            .all()
-        )
+        grouped = grouped_q.group_by(SystemQueryLog.module).all()
         for mod, cnt in grouped:
             if mod:
                 module_counts[mod] = cnt
@@ -246,6 +303,7 @@ def get_system_log_stats(owner: Optional[str] = None, db=None) -> Dict[str, Any]
             "total_queries": total_queries,
             "running_count": running_count,
             "error_count": error_count,
+            "fallback_count": fallback_count,
             "counts_by_module": module_counts,
         }
     finally:
