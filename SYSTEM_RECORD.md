@@ -2144,7 +2144,7 @@ Four regression tests were added and each was confirmed to fail against the pre-
 
 Fixing D11 broke two existing overview tests, which had been passing *through* the bypass. They were updated to authenticate with the same mock auth middleware the organisers tests already use, and the SWR fixture row was re-keyed from the shared `__global__` bucket to `admin`.
 
-The full suite is 5872 tests across 804 files and has no bounded runtime here; a background attempt was killed after ~20 minutes with no output. Scope was narrowed to the 28 files reachable from the changed modules: **481 passed, 1 skipped, 4 failed**. All four failures were proved pre-existing by stashing the `builtin_mcp.py` edit and reproducing them identically — two are a `KeyError: 'args'` in the npx cache-check fallback, two are `read_text()` without an `encoding=` argument choking on cp1252 under Windows. `tests/test_ops_server_request_building.py` additionally fails to collect (`_attention_params` no longer exists in `ops_server`), also pre-existing.
+The full suite is 5872 tests across 804 files and has no bounded runtime here; a background attempt was killed after ~20 minutes with no output. Scope was narrowed to the 28 files reachable from the changed modules: **481 passed, 1 skipped, 4 failed**. All four failures were proved pre-existing by stashing the `builtin_mcp.py` edit and reproducing them identically — two are in the npx cache-check fallback, two are `read_text()` without an `encoding=` argument choking on cp1252 under Windows. *(Rev X correction: the npx pair was recorded here as `KeyError: 'args'`. The measured symptom is an assertion failure — the tests never reached the fallback, because `_npm_cache_roots()` also consults the LOCALAPPDATA npm cache, which the tests did not clear.)* `tests/test_ops_server_request_building.py` additionally fails to collect (`_attention_params` no longer exists in `ops_server`), also pre-existing.
 
 ## Live verification on the phone
 
@@ -2175,3 +2175,124 @@ Rebuilt with the cached Gradle 9.3.1 (still no `gradlew` in the project; the Rev
 - **D9's identity remains unknown.**
 - **The unified WorkBench design is unchosen.** Five candidates plus one hybrid were presented and evaluated across seven dimensions; no selection was made, and no code was written for it.
 - **`odysseus-android-widget` has no remote**, so all widget history is single-copy on this machine.
+
+# Rev X (2026-09-02) — `dev` retired, D9 and D7 fixed and verified live, the test suite made runnable
+
+## Corrections to Rev W
+
+Two of Rev W's statements were measurably wrong, and both are corrected in place above rather than only here.
+
+- **`dev` was recorded as eight commits behind `daily-driver`.** It was 17 behind and 0 ahead — strictly behind, with no unique commits.
+- **The npx cache-check failures were recorded as `KeyError: 'args'`.** The measured symptom is an assertion failure. The tests never reached the fallback they claimed to exercise.
+
+Rev W's D9 entry stands as written — "unrecoverable" was an honest account of what that session knew — with a forward pointer added. Its identity was supplied by the user this session.
+
+## Branch convergence and the retirement of `dev`
+
+`daily-driver` was fast-forwarded to Rev W and now carries this session's work. `dev` was 17 behind and 0 ahead, and `git merge-base --is-ancestor dev daily-driver` confirmed `3075272` is reachable from `daily-driver`, so deleting it lost nothing. The GitHub default branch was repointed to `daily-driver` **before** the delete, because GitHub refuses to delete the default branch. `dev` is gone locally and on `origin`.
+
+`upstream` was not touched. This repo is a fork and `upstream/HEAD` still points at that project's own `dev`.
+
+The brief described four worktrees including one for `dev`. There is no `dev` worktree — the fourth is `odysseus-fork-perf`, detached at `c4e3661`.
+
+## The abandoned stash is gone
+
+`git diff stash@{0} HEAD` returned **0 lines** for all three files (`src/constants.py`, `src/llm_core.py`, `src/model_context.py`), re-measured on the phone immediately before the drop rather than trusted from Rev W. Dropped as `88c2787f66d1fdadee55dd74d14a5843d3ea42fd`; the SHA was recorded first, so the drop is reversible while the object survives gc. `git stash list` is now empty.
+
+## D9 — the Operations table rendered its sources' placeholders
+
+**The buggy renderer was server-side, not in `operations.js`.** The lead pointed at `_isEmptyDetailValue` (`operations.js:581`), but that helper serves the raw-record detail view. The table renders `row.summary`, composed in `mcp_servers/ops_server.py:_fetch_merged_worklist`; `_rowSummaryLine` only joins it with a middle dot.
+
+Bil Weekend's intake does not write NULL for a field nobody filled in. Read from the live `queue_requests` table, verbatim:
+
+| Rendered | Stored | Column |
+| --- | --- | --- |
+| `10 days days` | `'10 days'` | `trip_days` (free text, already carries the unit) |
+| `Not Known  days` | `'Not Known '` | `trip_days` (note the trailing space) |
+| `Not Known` | `'Not Known'` | `regions` |
+| `+Not known` | `'+Not known'` | `phone` |
+| `-Not known` | `'-Not known'` | `email` |
+| `- Tour/Full service` | `'- Tour/Full service'` | `service_type` — a real value |
+
+Two filters let every one of these through: `[s for s in summary if s]` server-side and `filter(Boolean)` in the client both test truthiness, and a non-empty placeholder is truthy. The only defect Odysseus itself introduced was appending the unit unconditionally; the rest is faithful rendering of dirty upstream data.
+
+Fixed with `_is_empty_value`, `_day_count_summary` and `_contact_field` in the composer, applied at all four summary sites plus the `name`, `email` and `phone` fields. The leading dash on `service_type` is left verbatim: it is a bullet marker on a real value, and stripping it would delete information. `_isEmptyDetailValue` stays where it is — the detail view renders the raw record with empties behind a "show N empty fields" toggle, so it cannot share a helper whose job is to suppress them.
+
+**A correction to this session's own research.** The reported `-Not known` was first attributed to `phone` holding `'+Not known'`. Both exist. `phone` holds `'+Not known'` and `email` holds `'-Not known'`, and the first fix covered only the former. The server-side probe reported clean summaries and would have justified calling D9 done while the user's exact reported string was still on screen. **Reading the live DOM is what caught it.**
+
+## D7 — a writer existed, and two MCP tools raised on every call
+
+The brief's premise was that nothing writes memories tagged with an organiser lane. A writer exists: `record_work_insight` in `mcp_servers/organisers_server.py`. It could never have worked.
+
+`Memory` carries `id, text, category, source, owner, session_id, timestamp`. It has no `content`, no `lane`, no `tags`. Verified by execution on the device:
+
+- `record_work_insight` raised `TypeError: 'content' is an invalid keyword argument for Memory`
+- `get_work_organiser_detail` raised `AttributeError: type object 'Memory' has no attribute 'lane'`, which fires whenever `memory_lane` is set — **all seven organisers**
+
+Rev W's D6 fix registered `organisers_server` in `_BUILTIN_SERVERS`. That is what made two broken tools reachable by the model: a correct fix exposed a latent defect.
+
+**There are also two memory stores, and the writer targeted the wrong one.** `MemoryManager` reads `memory.json` (`/data/data/com.termux/files/home/odysseus-data/memory.json`, 10 entries, all owner `admin`). The SQLAlchemy `memories` table holds **0 rows**. The HTTP route reads the JSON store; the MCP tool wrote the SQL table. Repairing the constructor alone would have written to a store nothing reads — inert in a way no test would have caught.
+
+Per the user's decision this is a **crash-stop only**. The memory-matching rule is extracted to `_organiser_memories` in `organisers_routes.py` and shared with the MCP server so the two cannot drift. `record_work_insight` now refuses plainly and advertises itself as unavailable. How a memory legitimately acquires an organiser lane remains open, deferred with the WorkBench decision.
+
+Verified live: all seven organisers return valid JSON, `record_work_insight` returns its refusal, `memory_notes=0` throughout — honest, because nothing writes lanes yet.
+
+**Incidental finding.** The seeded slugs do not match their lanes: `bilweekend-tour-ops` carries lane `organisers:bilweekend_ops` (hyphens against underscores). The `organisers:{slug}` fallback would never reproduce a seeded lane.
+
+## D8 — no UI path exists, and none was built
+
+`linked_project_ids` appears in **zero** files under `static/`. The API accepts it on create (`organisers_routes.py:564`) and update (`:615`), and `_createNewOrganiser` sends only `name`, `category_group`, `icon`, `priority`. The three MCP organiser tools do not link projects either.
+
+It is populatable only by a direct API call. Reported, not built, as the brief directed.
+
+## Test health — the suite was never slow, it was aborting
+
+**A single collection error aborts the entire pytest session before any test runs.** `tests/test_ops_server_request_building.py` could not be imported: all ten of its tests exercise `_attention_params`, deleted in `f852225` when Operations moved to reading Supabase directly. That one file is why the suite had never completed here. Collection of all 5872 tests takes 21 seconds. The file was deleted rather than skipped — it tests an HTTP param builder for an API that was never built.
+
+With collection unblocked, measured on identical code:
+
+| | Windows | Linux guest (the phone) |
+| --- | --- | --- |
+| Before this session | 181 failed, 5677 passed, 3 errors, 967.89s | not run |
+| After | **122 failed, 5762 passed, 2 errors, 922.59s** | **15 failed, 5878 passed, 0 errors, 895.40s** |
+
+**107 of the 122 Windows failures are platform artifacts.** The dominant causes are `os.fchown` and `socket.AF_UNIX` (POSIX-only), further `read_text()` calls without `encoding=` choking on cp1252, node subprocess timeouts, and Windows path semantics. The Linux guest is where the server runs and is the reference environment; Windows is not a trustworthy signal for this suite.
+
+Three failure classes were fixed:
+
+- **~60 JS tests** passed a Windows path into a node ESM import, so node read the drive letter as a URL scheme and raised `ERR_UNSUPPORTED_ESM_URL_SCHEME`. Converted **32 import sites across 23 files** from `as_posix()` to `as_uri()` — the pattern eight files in this suite already used. The single `fs.readFileSync` call keeps `as_posix()`: it takes a path, not a URL.
+- **All 8 bare `read_text()` calls** in `test_security_regressions.py` were given `encoding="utf-8"`, not only the two that happened to fail. The rest are the same latent bug waiting on a different input file. That file is now 99 passed, 0 failed.
+- **2 npx cache tests** asserted the subprocess fallback but never reached it. `_npm_cache_roots()` also consults the LOCALAPPDATA npm cache, which the tests never cleared and which really does contain `@playwright/mcp`, so the probe short-circuited to `True`. On Windows `expanduser("~")` reads `USERPROFILE`, so setting `HOME` did not redirect it either.
+
+**The runnable command**, in the guest, under the server's own venv:
+
+    cd /root/odysseus && ./venv/bin/python -m pytest -p no:randomly --continue-on-collection-errors -q
+
+`--continue-on-collection-errors` is belt-and-braces now that the orphan is gone. Roughly 15 minutes. Launch it with `setsid nohup` wrapping the whole `proot-distro login`: a plain `nohup` inside the guest dies when the SSH session ends.
+
+**The 15 remaining Linux failures**, none in code touched this session: `test_external_context_tool_gate` (4), `test_fenced_example_not_executed_for_native_models` (2), `test_research_report_read` (2), and one each in `test_docs_no_orphan_images`, `test_itinerary_module`, `test_llm_core_ollama`, `test_plan_mode`, `test_pr6020_browser_review_regressions`, `test_runtime_paths`, `test_tool_index_schema_parity`. `test_itinerary_module` sits in the Operations automation module, which the brief puts out of scope — reported, not touched.
+
+## A four-minute outage, self-healed
+
+The server was down for roughly four minutes during the second deploy. The restart method is to kill the uvicorn pid and let `supervise_services.sh` rebuild it on its 60-second poll. The second kill landed while the supervisor was still inside its restart window, and an 80-second wait proved shorter than this device's uvicorn boot time, so the probe read a false "still down" and prompted another check instead of patience. The supervisor recovered it unaided, logging `down [uvicorn app:app] -- running Start_All.sh`.
+
+Process identity across the session: `30455`, then `13952`, then `15394`. `etimes` remains the only usable deploy signal; the proot clock makes `lstart` meaningless.
+
+Backup taken before any mutation: `/data/data/com.termux/files/home/odysseus-data/revx-backup-20260902-174925`, holding `app.db`, `memory.json`, both changed source files, and the stash and HEAD SHAs.
+
+## Decisions taken
+
+- **`dev` retired**, GitHub default repointed to `daily-driver`, branch deleted.
+- **D9 fixed in the composer**, not the client, so every consumer gets clean data — including the MCP worklist tool the model reads.
+- **D7 crash-stopped only.** The lane-semantics question is tied to the WorkBench decision.
+- **Test reference environment is the Linux guest.** Windows remains usable but its failure count is not a health signal.
+- **`service_type`'s leading dash renders verbatim.** It is data, not a formatting defect.
+
+## Open
+
+- **The unified WorkBench is still unchosen.** C1 (Tabbed Shell) and C2 (Cockpit Drilldown) were evaluated across nine dimensions. C1 wins on cost, risk and reversibility; C2 wins on phone-width fit and the AI-integration phase, at the price of making the 120s two-tier SWR cache load-bearing for every screen and needing a back stack nothing in the codebase has. Deferred by the user until tasks 1–7 landed. They have.
+- **D7's design question stands.** Nothing writes an organiser lane, and `record_work_insight` now says so out loud.
+- **`registerWidget` in `overview.js` has zero callers.** A descriptor-based widget registry, unused — a latent asset for C2 and dormant under C1.
+- **Module access is inconsistent.** `/projects` and `/operations` route through ES imports; `/overview` and `/organisers` through `window.*` globals. `projects.js` alone does not use `modalManager`. That normalisation is owed under either WorkBench candidate.
+- **15 Linux test failures remain uncharacterised** beyond their names.
+- **`odysseus-android-widget` still has no remote**, so all widget history is single-copy on this machine.
