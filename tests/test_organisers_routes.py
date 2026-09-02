@@ -99,6 +99,51 @@ def test_rule_matching_engine():
     ) is False
 
 
+def test_organiser_with_no_criteria_matches_nothing():
+    """An organiser that declares neither accounts nor rules is unconfigured,
+    not universal. The account filter used to be skipped when target_accounts
+    was empty, after which the "no rules specified" branch returned True
+    unconditionally — every organiser claimed every email in the index."""
+    email_sample = {
+        "account_key": "99fccecdba6c497bb5961e5bf9b780d4",
+        "from_name": "Adrian Matache",
+        "from_address": "adrian@travelagency.ro",
+        "subject": "Quotation Request",
+        "snippet": "We have 37 pax interested in hotel booking.",
+    }
+
+    assert _matches_rule(email_sample, target_accounts=[], rules={}) is False
+    # Whitespace-only rule entries are stripped, so they count as absent.
+    assert _matches_rule(
+        email_sample,
+        target_accounts=[],
+        rules={"senders": ["  "], "keywords": [""], "domains": []},
+    ) is False
+
+    # An account filter alone still selects, per the documented contract.
+    assert _matches_rule(
+        email_sample,
+        target_accounts=["99fccecdba6c497bb5961e5bf9b780d4"],
+        rules={},
+    ) is True
+
+
+def test_account_filter_rejects_email_with_no_account_key():
+    """An email carrying no account key cannot be confirmed as a member of the
+    targeted accounts, so it fails the filter rather than bypassing it."""
+    orphan = {
+        "from_name": "Adrian Matache",
+        "from_address": "adrian@travelagency.ro",
+        "subject": "Quotation Request",
+        "snippet": "",
+    }
+    assert _matches_rule(
+        orphan,
+        target_accounts=["99fccecdba6c497bb5961e5bf9b780d4"],
+        rules={"senders": ["Adrian Matache"]},
+    ) is False
+
+
 def test_seed_defaults_and_list(client, db_session):
     """Ensure GET /api/organisers auto-seeds default categories when empty."""
     res = client.get("/api/organisers")

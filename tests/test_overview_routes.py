@@ -98,13 +98,22 @@ async def test_build_overview_payload_schema(test_db, monkeypatch):
     assert matrix[0]["agent_summary"] == "Test agent summary for hub."
 
 
-def test_overview_api_endpoint(test_db, monkeypatch):
-    engine, Session = test_db
-    monkeypatch.setattr("core.database.SessionLocal", Session)
-    monkeypatch.setattr("core.database.engine", engine)
-    _OVERVIEW_MEMORY_CACHE.clear()
+def _build_app(Session, authenticated=True):
+    """Assemble the overview router with a DB override.
 
+    `authenticated` installs the same mock auth middleware the organisers
+    tests use. /api/overview calls require_user, so an unauthenticated client
+    gets a 401 — which is the point of the without-auth regression below.
+    """
     app = FastAPI()
+
+    if authenticated:
+        @app.middleware("http")
+        async def mock_auth_middleware(request, call_next):
+            request.state.current_user = "admin"
+            request.state.api_token = False
+            return await call_next(request)
+
     app.include_router(setup_overview_routes())
 
     def override_get_db():
@@ -115,8 +124,29 @@ def test_overview_api_endpoint(test_db, monkeypatch):
             session.close()
 
     app.dependency_overrides[db.get_db] = override_get_db
+    return app
 
-    client = TestClient(app)
+
+def test_overview_api_requires_authentication(test_db, monkeypatch):
+    """An unauthenticated caller must be rejected, not served the shared
+    "__global__" cache bucket. require_user's 401 used to be swallowed by a
+    bare `except Exception` that fell through to owner=None."""
+    engine, Session = test_db
+    monkeypatch.setattr("core.database.SessionLocal", Session)
+    monkeypatch.setattr("core.database.engine", engine)
+    _OVERVIEW_MEMORY_CACHE.clear()
+
+    client = TestClient(_build_app(Session, authenticated=False))
+    assert client.get("/api/overview").status_code == 401
+
+
+def test_overview_api_endpoint(test_db, monkeypatch):
+    engine, Session = test_db
+    monkeypatch.setattr("core.database.SessionLocal", Session)
+    monkeypatch.setattr("core.database.engine", engine)
+    _OVERVIEW_MEMORY_CACHE.clear()
+
+    client = TestClient(_build_app(Session))
 
     # 1. Cold request -> computes fresh overview
     res1 = client.get("/api/overview")
@@ -157,9 +187,12 @@ def test_overview_swr_stale_revalidation(test_db, monkeypatch):
         "projects_matrix": [],
         "operations_radar": {"inquiries": []},
     }
+    # Keyed to the authenticated owner. Before /api/overview required auth,
+    # the caller resolved to owner=None and this row was seeded under the
+    # shared "__global__" bucket.
     session.add(db.OverviewCache(
-        id="__global__:overview:7",
-        owner=None,
+        id="admin:overview:7",
+        owner="admin",
         payload_json=json.dumps(stale_payload),
         cached_at=stale_time,
         expires_at=stale_time + timedelta(hours=24),
@@ -167,18 +200,7 @@ def test_overview_swr_stale_revalidation(test_db, monkeypatch):
     session.commit()
     session.close()
 
-    app = FastAPI()
-    app.include_router(setup_overview_routes())
-
-    def override_get_db():
-        session = Session()
-        try:
-            yield session
-        finally:
-            session.close()
-
-    app.dependency_overrides[db.get_db] = override_get_db
-    client = TestClient(app)
+    client = TestClient(_build_app(Session))
 
     # Stale read should return cached data immediately with is_stale: True
     res = client.get("/api/overview?email_days=7")
@@ -229,3 +251,55 @@ async def test_email_digest_urgency_file_parsing(test_db, tmp_path, monkeypatch)
     assert first_email["sender_name"] == "VIP Client"
     assert first_email["urgency"] == "critical"
     assert first_email["ai_comment"] == "Requires CEO signature today."
+
+
+@pytest.mark.asyncio
+async def test_discovered_accounts_yield_exactly_one_default(test_db, tmp_path, monkeypatch):
+    """Accounts discovered from the email stream have no EmailAccount row.
+
+    Two invariants held here. (1) Exactly one descriptor is the default: the
+    old per-append rule `acc_k == "default" or len(accounts_out) == 0` marked
+    both the first discovered account and a later literal "default". (2) The
+    `email` field carries an address or "" — it was being filled with the
+    display label, so consumers rendered "Account acc_1" as a mailbox address.
+    """
+    engine, Session = test_db
+    monkeypatch.setattr("core.database.SessionLocal", Session)
+    monkeypatch.setattr("core.database.engine", engine)
+    monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _msg(mid, acc):
+        return {
+            "id": f"{acc}:{mid}",
+            "sender_name": f"Sender {mid}",
+            "sender_email": f"s{mid}@example.com",
+            "subject": f"Subject {mid}",
+            "snippet": "",
+            "is_urgent": False,
+            "read": True,
+            "date": now_iso,
+        }
+
+    # "acc_1" sorts before "default", so the old rule marked acc_1 default
+    # (list was empty) and then default too (literal id match).
+    state_file = tmp_path / "email_urgency_state_default.json"
+    state_file.write_text(json.dumps({
+        "total_unread": 0,
+        "total_urgent": 0,
+        "accounts": {
+            "acc_1": {"messages": [_msg("101", "acc_1")]},
+            "default": {"messages": [_msg("202", "default")]},
+        },
+    }))
+
+    payload = await _build_overview_payload(owner=None, email_days=7)
+    accounts = payload["email_digest"]["accounts"]
+
+    assert {a["id"] for a in accounts} >= {"acc_1", "default"}
+    assert sum(1 for a in accounts if a["is_default"]) == 1
+    for a in accounts:
+        assert "@" in a["email"] or a["email"] == "", (
+            f"account {a['id']} has a display label in its email field: {a['email']!r}"
+        )

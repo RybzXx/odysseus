@@ -78,6 +78,9 @@ _BUILTIN_SERVERS = {
     # OPS_AGENT_TOKEN — every tool reports the missing configuration rather
     # than failing the connection, so registering it always is safe.
     "ops":        ("mcp_servers/ops_server.py",        "Built-in: Operations"),
+    # AI Work Organisers taxonomy. Reads the local DB and email index only —
+    # no external configuration, so registering it always is safe.
+    "organisers": ("mcp_servers/organisers_server.py", "Built-in: Work Organisers"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)

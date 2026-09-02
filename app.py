@@ -967,6 +967,10 @@ async def serve_operations(request: Request):
 async def serve_overview(request: Request):
     return await serve_index(request)
 
+@app.get("/organisers")
+async def serve_organisers(request: Request):
+    return await serve_index(request)
+
 @app.get("/library")
 async def serve_library(request: Request):
     return await serve_index(request)

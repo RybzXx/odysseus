@@ -1003,10 +1003,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (_open) _fetchOverviewData(false);
   });
 
-  // Handle SPA deep link /overview
-  if (window.location.pathname.toLowerCase() === '/overview') {
-    setTimeout(openOverview, 200);
-  }
+  // Deep link /overview is handled by app.js's _routeOpen map, which runs the
+  // opener through startupShell's deferRouteOpener once module wiring has
+  // settled. A second racing mechanism here (a bare 200ms timer) could fire
+  // before or after that one and open the modal twice.
 });
 
 export default {
