@@ -212,6 +212,19 @@ def _day_count_summary(value) -> str | None:
     return f"{text} days"
 
 
+def _contact_field(value) -> str | None:
+    """A name or email address, or None when the source only had a placeholder.
+
+    Pre:  value is the source column.
+    Post: None for a placeholder, the value unchanged otherwise.
+    Inv:  the row stays identifiable. operations.js titles a row
+          `row.name || row.email || row.key`, so suppressing both contact
+          fields falls back to the key rather than leaving the row nameless —
+          a visible key beats a confident "Not known".
+    """
+    return None if _is_empty_value(value) else value
+
+
 def _phone_display(country_code, phone) -> str | None:
     """Country code + number, as Bil Weekend's phoneDisplay() renders it.
 
@@ -356,8 +369,8 @@ async def _fetch_merged_worklist() -> list[dict]:
                 "risk_score": risk_score,
                 "flagged": flagged,
                 "risk": _risk_verdict(risk_score, flagged, moderation, intake_status, scored=True),
-                "name": data.get(name_f),
-                "email": data.get(email_f) if email_f else None,
+                "name": _contact_field(data.get(name_f)),
+                "email": _contact_field(data.get(email_f)) if email_f else None,
                 "phone": _phone_display(data.get("countryCode"), data.get(phone_f)) if phone_f else None,
                 "summary": [s for s in summary if not _is_empty_value(s)],
             })
@@ -384,8 +397,8 @@ async def _fetch_merged_worklist() -> list[dict]:
             # The queue is typed in by the data-entry team and never scored —
             # the only verdict it can carry is an admin's own moderation call.
             "risk": _risk_verdict(None, None, moderation, None, scored=False),
-            "name": r.get("full_name"),
-            "email": r.get("customer_email") or r.get("respondent_email"),
+            "name": _contact_field(r.get("full_name")),
+            "email": _contact_field(r.get("customer_email") or r.get("respondent_email")),
             # The queue has no separate country-code column, so its phone is
             # passed through rather than composed — but it carries the same
             # "+Not known" placeholder the composed sources do.

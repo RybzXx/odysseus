@@ -83,8 +83,10 @@ def _queue_row():
         "trip_days": "Not known ",
         "travel_date": "2026-11-01",
         "phone": "+Not known",
-        "full_name": "Test Submitter",
-        "customer_email": "someone@example.com",
+        "full_name": "Matheus Giacomet ",
+        # As stored: the queue's email column carries the placeholder too, and
+        # this is the row that rendered "Matheus Giacomet  · Not known ".
+        "customer_email": "Not known ",
         "status": "New",
     }
 
@@ -116,3 +118,27 @@ def test_composed_summary_never_doubles_the_unit(worklist_of_one_queue_row):
     """The pre-fix composer produced "Not known  days" for this row."""
     (row,) = worklist_of_one_queue_row
     assert not any("days days" in s or "known" in s.casefold() for s in row["summary"])
+
+
+def test_composed_row_drops_a_placeholder_email(worklist_of_one_queue_row):
+    """The contact line joins name/email/phone on truthiness in the client, so
+    a placeholder email rendered as "-Not known" — the exact string reported."""
+    (row,) = worklist_of_one_queue_row
+    assert row["email"] is None
+
+
+def test_placeholder_name_falls_back_rather_than_asserting_a_fake_one(monkeypatch):
+    """A row whose name and email are both placeholders keeps its key as the
+    only identifier. operations.js titles it `name || email || key`."""
+    queue = _queue_row()
+    queue["full_name"] = "Not known"
+    queue["customer_email"] = "-Not known"
+
+    async def fake_sb_request(method, table, params=None, json_body=None, prefer=None):
+        return [queue] if table == "queue_requests" else []
+
+    monkeypatch.setattr(ops_server, "_sb_request", fake_sb_request)
+    (row,) = asyncio.run(_fetch_merged_worklist())
+    assert row["name"] is None
+    assert row["email"] is None
+    assert row["key"] == "queue:qr-mtjze8ki-2e63fa17"
