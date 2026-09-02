@@ -1271,6 +1271,14 @@ function initializeEventListeners() {
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/projects': () => projectsModule && projectsModule.openProjects(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
+    // app.py has served /operations since it shipped, but the map had no
+    // entry — the route returned the SPA and then nothing opened.
+    '/operations': () => operationsModule && operationsModule.openOperations(),
+    // Overview and Organisers set their public surface on `window` at module
+    // evaluation, and app.js is the last module script in index.html, so both
+    // are present by the time this map is built.
+    '/overview': () => window.overviewModule && window.overviewModule.openOverview(),
+    '/organisers': () => window.openOrganisers && window.openOrganisers(),
   };
   const _opener = _routeOpen[urlPath];
   // Defer the opener — at this point in init, the modules whose handlers we

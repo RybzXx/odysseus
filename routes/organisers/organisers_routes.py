@@ -211,18 +211,34 @@ def _matches_rule(
     target_accounts: List[str],
     rules: Dict[str, Any],
 ) -> bool:
-    """Evaluate if an email matches an organiser's target accounts and rules."""
-    # 1. Account Filter
-    if target_accounts:
-        acc_id = email.get("account_key") or email.get("account_id") or ""
-        if acc_id and acc_id not in target_accounts:
-            return False
+    """Evaluate if an email matches an organiser's target accounts and rules.
 
+    An organiser selects an email when it passes the account filter (if one is
+    set) AND matches at least one sender / domain / keyword rule (if any are
+    set). An organiser that sets *neither* selects nothing: it is unconfigured,
+    not universal.
+    """
     senders = [s.strip().lower() for s in rules.get("senders", []) if s.strip()]
     keywords = [k.strip().lower() for k in rules.get("keywords", []) if k.strip()]
     domains = [d.strip().lower().lstrip("@") for d in rules.get("domains", []) if d.strip()]
 
-    # If no rules specified, target account match is sufficient
+    # An organiser with no criteria at all matches nothing. Previously the
+    # account filter was skipped when target_accounts was empty and the rule
+    # check then returned True unconditionally — so a freshly-created or
+    # seeded organiser claimed every email in the index (161 of 161 live).
+    if not target_accounts and not senders and not keywords and not domains:
+        return False
+
+    # 1. Account Filter
+    if target_accounts:
+        acc_id = email.get("account_key") or email.get("account_id") or ""
+        # An email carrying no account key cannot be confirmed as a member of
+        # the targeted accounts, so it fails the filter rather than bypassing
+        # it (the previous `if acc_id and ...` let those through).
+        if acc_id not in target_accounts:
+            return False
+
+    # Account match alone is sufficient when the organiser declares no rules.
     if not senders and not keywords and not domains:
         return True
 
@@ -469,12 +485,28 @@ def setup_organisers_routes() -> APIRouter:
             ]
 
         # 3. Linked Memories
+        #
+        # Memory entries carry (id, text, category, timestamp, owner) — there
+        # is no separate lane field, so `category` is what memory_lane can bind
+        # to. The column was written on create/update (seeds use namespaced
+        # values like "organisers:bilweekend_ops") and never read.
+        #
+        # The lane is an *additional* selector, not a replacement for
+        # category_group: no existing memory carries a namespaced category, so
+        # letting the lane displace category_group would empty this tab for
+        # every seeded organiser. Match either, plus the slug-in-text heuristic.
         memories_list = []
         mem_mgr = _get_memory_manager()
         if mem_mgr and org.slug:
             try:
-                all_mems = mem_mgr.load_all()
+                # Scope to the caller. load_all() is unfiltered and returned
+                # every user's memories on a multi-user deploy.
+                own_mems = mem_mgr.load(owner) if owner else mem_mgr.load_all()
                 target_slug = org.slug.lower()
+                categories = {
+                    c for c in (org.memory_lane, org.category_group)
+                    if c and c.strip()
+                }
                 memories_list = [
                     {
                         "id": m.get("id"),
@@ -482,8 +514,9 @@ def setup_organisers_routes() -> APIRouter:
                         "category": m.get("category"),
                         "timestamp": m.get("timestamp"),
                     }
-                    for m in all_mems
-                    if target_slug in (m.get("text") or "").lower() or m.get("category") == org.category_group
+                    for m in own_mems
+                    if m.get("category") in categories
+                    or target_slug in (m.get("text") or "").lower()
                 ][:20]
             except Exception:
                 memories_list = []

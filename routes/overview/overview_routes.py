@@ -288,16 +288,19 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
     # 5. Normalize accounts list: ensure all account_ids in raw_emails have descriptors
     existing_acc_ids = {a["id"] for a in accounts_out}
     discovered_acc_ids = {e.get("account_id") for e in raw_emails if e.get("account_id")}
-    
+
     for acc_k in sorted(discovered_acc_ids):
         if acc_k not in existing_acc_ids:
             existing_acc_ids.add(acc_k)
-            name_label = "Primary Inbox" if acc_k == "default" else f"Account {acc_k[:8]}"
             accounts_out.append({
                 "id": acc_k,
-                "name": name_label,
-                "email": name_label,
-                "is_default": (acc_k == "default" or len(accounts_out) == 0),
+                "name": "Primary Inbox" if acc_k == "default" else f"Account {acc_k[:8]}",
+                # A discovered id has no EmailAccount row, so no address is
+                # known. Real descriptors above use "" for that; putting the
+                # display label here made consumers render "Account a1b2c3d4"
+                # as if it were a mailbox address.
+                "email": "",
+                "is_default": False,
             })
 
     if not accounts_out:
@@ -305,10 +308,23 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
             {
                 "id": "default",
                 "name": "Primary Inbox",
-                "email": "Inbox",
+                "email": "",
                 "is_default": True,
             }
         ]
+
+    # Invariant: exactly one descriptor is the default. The per-append rule was
+    # `acc_k == "default" or len(accounts_out) == 0`, which marked both the
+    # first discovered account and a later literal "default" — two defaults.
+    # The first configured default wins; otherwise the first account does.
+    seen_default = False
+    for a in accounts_out:
+        if a["is_default"] and not seen_default:
+            seen_default = True
+        else:
+            a["is_default"] = False
+    if not seen_default:
+        accounts_out[0]["is_default"] = True
 
     # Sort emails by date_epoch descending
     raw_emails.sort(key=lambda m: m.get("date_epoch") or 0.0, reverse=True)
@@ -541,11 +557,12 @@ def setup_overview_routes() -> APIRouter:
         db: Session = Depends(get_db),
     ):
         """Retrieve aggregated morning briefing with SWR caching."""
-        owner = None
-        try:
-            owner = require_user(request)
-        except Exception:
-            owner = None
+        # Let require_user's 401 / 403 propagate. Swallowing it fell through to
+        # owner=None, whose cache key is "__global__" — an unauthenticated
+        # caller was served the shared briefing bucket, and the 403 that bars
+        # API tokens from user-scoped routes was discarded too. Every other
+        # route in the codebase calls this bare; match that.
+        owner = require_user(request)
 
         raw_owner_key = _get_owner_key(owner)
         owner_key = f"{raw_owner_key}:{email_days}"
