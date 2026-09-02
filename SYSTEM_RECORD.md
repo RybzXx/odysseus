@@ -2101,3 +2101,77 @@ A second widget feature (tap a to-do row's body to open a read-only detail view,
 - **Not done: `TaskDetailActivity` is not yet registered in `AndroidManifest.xml`, the project has not been rebuilt since these changes, and none of it has been installed or tested on the device.** Confirmed by grepping the manifest (zero matches) immediately before writing this entry.
 
 
+# Rev W (2026-09-02) — Fork merged into agent-2; eleven defects triaged and fixed; all verified live on the phone
+
+## Correction to Rev V
+
+Rev V's closing claim (line 2101) was false by the time it was read. It stated `TaskDetailActivity` "is not yet registered in `AndroidManifest.xml`, the project has not been rebuilt since these changes, and none of it has been installed or tested on the device." All three parts were wrong: the activity was registered at `AndroidManifest.xml:58`, the debug APK carried an mtime of Sep 1 18:25, and the device reported `lastUpdateTime=2026-09-01 18:25:57`. The feature was verified working on-device this session by tapping a real widget row. The Rev V entry appears to have been written from a grep that missed, and was never re-checked.
+
+## Worktree state and merge
+
+`local-agent-2` was 12 commits behind `daily-driver` and did not contain the Organisers, Overview Hub, or itinerary modules at all — an earlier pass in this session wrongly reported that "AI Work Organisers" and "Overview" did not exist, because the session was scoped to a worktree that predated them. Fast-forwarded `3075272` → `c2e7692` (26 files, +5742).
+
+Mid-session the user committed the fix set as `04abbd5` and merged both agent worktrees into `daily-driver` as `dbed04c`, before this session had committed anything. All nine changed files were confirmed byte-identical in `daily-driver` afterwards, and the two affected test suites re-run there green (11/11) — the merge with agent-1's work introduced no conflict. `local-agent-2` was stale on origin at `3075272` and was pushed to `04abbd5`.
+
+`04abbd5` also swept in `scratch/` and eight `scripts/test_*.py` files: 2091 insertions total against 248 belonging to the fix set.
+
+## Eleven defects: dispositions
+
+Nine were real and are fixed. One was not a defect. One could not be recovered.
+
+1. **D1 `routes/organisers/organisers_routes.py:209` — an organiser with no target accounts and no rules matched every email in the index.** The account filter was skipped when `target_accounts` was empty, after which the "no rules specified" branch returned `True` unconditionally. Proved by controlled experiment against the live API before the fix: `preview-matches` with empty rules returned 161 of 161. Now returns `False` when no criterion is declared at all. The same function also let an email carrying no `account_key` bypass an account filter entirely (`if acc_id and acc_id not in target_accounts`); it now fails the filter instead.
+2. **D2 `routes/overview/overview_routes.py:288` — accounts discovered from the email stream put a display label in the `email` field and could yield two defaults.** Real descriptors use an address or `""`; discovered ones were filled with `"Account a1b2c3d4"`. The per-append default rule (`acc_k == "default" or len(accounts_out) == 0`) marked both the first discovered account and a later literal `"default"`. Single-default is now enforced as an invariant over the finished list.
+3. **D3 `static/app.js` — `/operations` was served by `app.py` since it shipped but had no `_routeOpen` entry.** The route returned the SPA and nothing opened.
+4. **D4 — `/organisers` existed nowhere.** Added the `app.py` route and the map entry.
+5. **D5 `static/js/overview.js:1007` — two competing deep-link mechanisms for `/overview`.** `overview.js` carried its own bare `setTimeout(openOverview, 200)` racing `app.js`'s `deferRouteOpener`. The timer was removed; `_routeOpen` now owns it.
+6. **D6 `src/builtin_mcp.py` — `mcp_servers/organisers_server.py` shipped but was never registered** in `_BUILTIN_SERVERS`, despite commit `1eb1d2f` claiming MCP tools.
+7. **D7 `organisers_routes.py` — `memory_lane` was written on create/update and never read.** Now read, but see "known inert" below.
+8. **D8 — not a defect.** `linked_project_ids` is empty on all seven seeded organisers because `DEFAULT_ORGANISERS` deliberately defines `memory_lane` and no project links; linking is manual and the empty state already exists at `workOrganisers.js:728`. No change made.
+9. **D9 — unrecoverable.** Its identity was lost when the conversation was compacted. Rather than guess, the codebase was re-derived from scratch, which surfaced four defects not in the original list (recorded below).
+10. **D10 `odysseus-android-widget/AndroidManifest.xml` — both dialog activities inherited `app_name` ("Odysseus Gateway") as their title and recents entry.** Given explicit `android:label` values.
+11. **D11 `overview_routes.py:544` — an authentication bypass, not the dead code it was first taken for.** `require_user` raises 401 for unauthenticated callers and 403 for API tokens; a bare `except Exception` swallowed both and fell through to `owner=None`, whose cache key is `"__global__"` — the shared briefing bucket, served to anyone, with the API-token guard discarded. Now called bare, matching every other route in the repo.
+
+## Four further defects, found while re-deriving the list
+
+- `organisers_routes.py` called `mem_mgr.load_all()` unscoped, returning every user's memories in organiser detail on a multi-user deploy. Now scoped to the caller.
+- The account-key bypass in `_matches_rule`, described under D1.
+- `/projects` and `/operations` were absent from `index.html`'s per-route favicon and title maps, so bookmarking either fell back to the boat icon and a generic title.
+- `index.html`'s `modulepreload` for `app.js` carried a different `?v=` than its `<script>` tag (`20260815toolapproval4` vs `20260831notesparity1`), so the preload warmed a URL the page never requested.
+
+## Verification
+
+Four regression tests were added and each was confirmed to fail against the pre-fix code: unauthenticated `/api/overview` must 401; an organiser with no criteria must match nothing; an email with no account key must fail an account filter; discovered accounts must yield exactly one default and never a label in the `email` field.
+
+Fixing D11 broke two existing overview tests, which had been passing *through* the bypass. They were updated to authenticate with the same mock auth middleware the organisers tests already use, and the SWR fixture row was re-keyed from the shared `__global__` bucket to `admin`.
+
+The full suite is 5872 tests across 804 files and has no bounded runtime here; a background attempt was killed after ~20 minutes with no output. Scope was narrowed to the 28 files reachable from the changed modules: **481 passed, 1 skipped, 4 failed**. All four failures were proved pre-existing by stashing the `builtin_mcp.py` edit and reproducing them identically — two are a `KeyError: 'args'` in the npx cache-check fallback, two are `read_text()` without an `encoding=` argument choking on cp1252 under Windows. `tests/test_ops_server_request_building.py` additionally fails to collect (`_attention_params` no longer exists in `ops_server`), also pre-existing.
+
+## Live verification on the phone
+
+The phone was already at `dbed04c` and its server (pid 30455) had 7604 s of elapsed time at probe, placing its start ~13:50 — six minutes after the 13:43 commit, so it was running the new code.
+
+- **D1** — "Receipts and Payments" (0 accounts, 0 senders, 0 keywords, 0 domains) now matches **0 emails**; the six seeded organisers correctly vary at 27/15/26/10/13/26. Confirmed at function level under the server's own venv: `_matches_rule(email, [], {})` → `False`, account-only → `True`.
+- **D2** — after `force_refresh`, exactly one default (was two) and the `default` account's `email` is `""` (was `"Primary Inbox"`).
+- **D3 / D4 / D5** — `/operations` opens the Operations modal; `/organisers` serves and auto-opens with the title "Work Organisers — Odysseus"; the served `overview.js` no longer contains the old timer and `/overview` opens exactly one modal. Served HTML confirms preload and script `?v=` now match.
+- **D6** — on-device under the server venv: `REGISTERED: [image_gen, memory, rag, email, ops, organisers]`.
+- **D11** — the `try/except` is gone on the device; `owner = require_user(request)` is bare.
+
+**A stale cache produced a false negative worth remembering.** The first live read of `/api/overview` showed D2 apparently unfixed — two defaults, label in the email field. That was a stale SWR payload computed by the old code and still sitting in the `OverviewCache` table; `force_refresh=true` proved the fix was live. Anything cached there survives a deploy and keeps serving old-code output until it revalidates.
+
+## Known inert: D7
+
+The `memory_lane` fix is deployed and correct but has no effect on current data. The live memory store holds 10 entries, all owner `admin`, with categories `{fact:5, preference:3, contact:1, identity:1}`. None intersects the organiser category vocabulary (`operations/strategy/partnerships/finance/tech/personal`) and none uses a namespaced `organisers:` category, though the seeds write lanes in exactly that form (`organisers:bilweekend_ops`). Linked Memories therefore shows 0 for every organiser, as it did before. An earlier draft of the fix made the lane *replace* `category_group`, which would have guaranteed 0 forever; it was changed to match either. Making the tab useful requires something to write memories tagged with a lane.
+
+## Widget: committed, rebuilt, installed, verified
+
+`odysseus-android-widget` had 10 modified files plus six untracked ones — including `TaskDetailActivity.kt`, `OverviewActivity.kt`, their layouts, `EmailSummary.kt`, and `app/build.gradle.kts`. The task-detail feature was running on the device and had never been tracked in git. Committed as `35d7a18` (16 files, +592). **This repo has no git remote**, so it cannot be pushed; it exists only on this machine.
+
+Rebuilt with the cached Gradle 9.3.1 (still no `gradlew` in the project; the Rev V BOM fix in `local.properties` is holding), installed with `adb install -r` to preserve the widget's configured API token. The home-screen widget survived the reinstall and still reported "Synced (Tailscale)". Tapping a to-do row's body launched `TaskDetailActivity` as top-resumed activity and the dialog title rendered **"Task Detail"**, not "Odysseus Gateway" — `Theme.MaterialComponents.DayNight.Dialog` does render the activity label as the dialog title, contrary to the expectation held while making the fix. Device left restored: dialog closed, zero `TaskDetailActivity` instances, launcher focused.
+
+## Open
+
+- **`dev` is not merged.** It sits at `3075272`, eight commits behind `daily-driver` (`dbed04c`). It is the stated main/PR branch.
+- **The abandoned stash on the phone persists** — `phone-local-edits-before-operations-pull`, 108 insertions across `src/model_context.py`, `src/llm_core.py`, `src/constants.py`.
+- **D9's identity remains unknown.**
+- **The unified WorkBench design is unchosen.** Five candidates plus one hybrid were presented and evaluated across seven dimensions; no selection was made, and no code was written for it.
+- **`odysseus-android-widget` has no remote**, so all widget history is single-copy on this machine.
