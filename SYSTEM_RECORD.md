@@ -2127,7 +2127,7 @@ Nine were real and are fixed. One was not a defect. One could not be recovered.
 6. **D6 `src/builtin_mcp.py` — `mcp_servers/organisers_server.py` shipped but was never registered** in `_BUILTIN_SERVERS`, despite commit `1eb1d2f` claiming MCP tools.
 7. **D7 `organisers_routes.py` — `memory_lane` was written on create/update and never read.** Now read, but see "known inert" below.
 8. **D8 — not a defect.** `linked_project_ids` is empty on all seven seeded organisers because `DEFAULT_ORGANISERS` deliberately defines `memory_lane` and no project links; linking is manual and the empty state already exists at `workOrganisers.js:728`. No change made.
-9. **D9 — unrecoverable.** Its identity was lost when the conversation was compacted. Rather than guess, the codebase was re-derived from scratch, which surfaced four defects not in the original list (recorded below).
+9. **D9 — unrecoverable.** Its identity was lost when the conversation was compacted. Rather than guess, the codebase was re-derived from scratch, which surfaced four defects not in the original list (recorded below). *(Identity supplied by the user and fixed in Rev X: Operations table string defects — a duplicated unit and unsuppressed "Not known" placeholders.)*
 10. **D10 `odysseus-android-widget/AndroidManifest.xml` — both dialog activities inherited `app_name` ("Odysseus Gateway") as their title and recents entry.** Given explicit `android:label` values.
 11. **D11 `overview_routes.py:544` — an authentication bypass, not the dead code it was first taken for.** `require_user` raises 401 for unauthenticated callers and 403 for API tokens; a bare `except Exception` swallowed both and fell through to `owner=None`, whose cache key is `"__global__"` — the shared briefing bucket, served to anyone, with the API-token guard discarded. Now called bare, matching every other route in the repo.
 
@@ -2170,7 +2170,7 @@ Rebuilt with the cached Gradle 9.3.1 (still no `gradlew` in the project; the Rev
 
 ## Open
 
-- **`dev` is not merged.** It sits at `3075272`, eight commits behind `daily-driver` (`dbed04c`). It is the stated main/PR branch.
+- **`dev` is not merged.** It sits at `3075272`, 17 commits behind `daily-driver` (`dbed04c`) and 0 ahead. It is the stated main/PR branch.
 - **The abandoned stash on the phone persists** — `phone-local-edits-before-operations-pull`, 108 insertions across `src/model_context.py`, `src/llm_core.py`, `src/constants.py`.
 - **D9's identity remains unknown.**
 - **The unified WorkBench design is unchosen.** Five candidates plus one hybrid were presented and evaluated across seven dimensions; no selection was made, and no code was written for it.
