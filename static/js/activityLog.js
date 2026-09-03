@@ -297,8 +297,11 @@ function _injectStyles() {
       flex-wrap: wrap;
     }
 
-    /* One Dark, matching overview.js's urgency badges — semantic colour is a
-       literal in this codebase; var() is reserved for structural colour. */
+    /* Each status binds one colour; the badge shape is written once against
+       it. The tokens are derived per theme by deriveStatusColors in theme.js,
+       so these follow a theme switch instead of staying One Dark under all
+       sixteen. The literals are the pre-token values, kept as the last rung
+       of the cascade for a first paint with no stored theme. */
     .act-status-badge {
       font-size: 10px;
       font-weight: 700;
@@ -310,15 +313,18 @@ function _injectStyles() {
       align-items: center;
       gap: 4px;
       flex-shrink: 0;
+      background: color-mix(in srgb, var(--act-status) 18%, transparent);
+      color: var(--act-status);
+      border: 1px solid color-mix(in srgb, var(--act-status) 40%, transparent);
     }
     /* The glyphs are copied at their source size; the badge sets the size it
        needs rather than the copies being edited away from their originals. */
     .act-status-badge svg { width: 11px; height: 11px; }
-    .act-status-completed { background: rgba(152, 195, 121, 0.18); color: #98c379; border: 1px solid rgba(152, 195, 121, 0.4); }
-    .act-status-running   { background: rgba(229, 192, 123, 0.18); color: #e5c07b; border: 1px solid rgba(229, 192, 123, 0.4); }
-    .act-status-error     { background: rgba(224, 108, 117, 0.18); color: #e06c75; border: 1px solid rgba(224, 108, 117, 0.4); }
-    .act-status-fallback  { background: rgba(209, 154, 102, 0.18); color: #d19a66; border: 1px solid rgba(209, 154, 102, 0.4); }
-    .act-status-halted    { background: rgba(198, 120, 221, 0.18); color: #c678dd; border: 1px solid rgba(198, 120, 221, 0.4); }
+    .act-status-completed { --act-status: var(--status-ok, #98c379); }
+    .act-status-running   { --act-status: var(--status-busy, #61afef); }
+    .act-status-error     { --act-status: var(--status-error, #e06c75); }
+    .act-status-fallback  { --act-status: var(--status-warn, #d19a66); }
+    .act-status-halted    { --act-status: var(--status-idle, #c678dd); }
 
     .act-module-tag {
       font-size: 10px;
@@ -505,7 +511,7 @@ function _render() {
             ${log.error ? `
               <div class="act-detail-section">
                 <div class="act-detail-label">Error Diagnostics:</div>
-                <div class="act-detail-box" style="border-color:#e06c75;color:#e06c75;">${_esc(log.error)}</div>
+                <div class="act-detail-box" style="border-color:var(--status-error,#e06c75);color:var(--status-error,#e06c75);">${_esc(log.error)}</div>
               </div>
             ` : ''}
             <div class="act-detail-section">
@@ -568,9 +574,9 @@ Metadata: ${JSON.stringify(log.metadata || {}, null, 2)}</div>
 
     <div class="act-stats-bar">
       <div class="act-stat-item">Total Queries: <span class="act-stat-val">${total}</span></div>
-      <div class="act-stat-item">Running: <span class="act-stat-val" style="color:#e5c07b;">${running}</span></div>
-      <div class="act-stat-item">Errors: <span class="act-stat-val" style="color:#e06c75;">${errors}</span></div>
-      <div class="act-stat-item" title="Runs that produced output but degraded to a fallback">Degraded: <span class="act-stat-val" style="color:#d19a66;">${degraded}</span></div>
+      <div class="act-stat-item">Running: <span class="act-stat-val" style="color:var(--status-busy,#61afef);">${running}</span></div>
+      <div class="act-stat-item">Errors: <span class="act-stat-val" style="color:var(--status-error,#e06c75);">${errors}</span></div>
+      <div class="act-stat-item" title="Runs that produced output but degraded to a fallback">Degraded: <span class="act-stat-val" style="color:var(--status-warn,#d19a66);">${degraded}</span></div>
       <div style="flex:1;"></div>
       <div style="font-size:11px;opacity:0.6;">Auto-refreshes every 3s</div>
     </div>

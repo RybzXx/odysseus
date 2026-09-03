@@ -178,6 +178,40 @@ function deriveSyntaxColors(colors) {
   };
 }
 
+/**
+ * Derive the five operation-status colours from a theme's seed.
+ *
+ * Built to the same rule as deriveSyntaxColors above: the hue carries the
+ * meaning and is fixed, while saturation follows the theme's own foreground
+ * saturation (clamped) and lightness flips on isDark. That is what lets one
+ * five-colour seed dress sixteen themes without any module hardcoding a hex.
+ *
+ * Pre:  `colors` carries at least `fg` and `bg` as #rrggbb.
+ * Post: five hex strings, each ≥ 3.0:1 against the theme's own panel.
+ *       Measured across all sixteen presets: the worst is 3.61 (cute/ok).
+ * Inv:  the five stay mutually distinguishable in every theme — the closest
+ *       hue pair anywhere is 33.2° (paper, error/warn).
+ *
+ * An earlier draft passed the accent straight through for `busy`, on the
+ * grounds that the accent already means "active" elsewhere (toggleActive,
+ * sendBtnBg). Measurement killed it twice over: the raw accent falls to
+ * 2.24:1 on `paper`, and on `terminal` — whose accent is green — `busy` and
+ * `ok` landed 0.4° apart, indistinguishable. A fifth fixed hue removes both
+ * problems and drops the one exception to the fixed-hue rule.
+ */
+function deriveStatusColors(colors) {
+  const [, fgS] = hexToHSL(colors.fg);
+  const [, , bgL] = hexToHSL(colors.bg);
+  const isDark = bgL < 50;
+  return {
+    error: hslToHex(358, Math.min(fgS + 25, 65), isDark ? 68 : 45),
+    warn:  hslToHex(32,  Math.min(fgS + 25, 70), isDark ? 66 : 42),
+    busy:  hslToHex(200, Math.min(fgS + 20, 60), isDark ? 68 : 42),
+    ok:    hslToHex(135, Math.min(fgS + 15, 55), isDark ? 65 : 38),
+    idle:  hslToHex(280, Math.min(fgS + 15, 55), isDark ? 70 : 48),
+  };
+}
+
 // Advanced picker key → CSS variable mapping
 const ADV_KEYS = [
   { key: 'userBubbleBg',       css: '--user-bubble-bg',    label: 'User Chat Bubble', group: 'Chat Bubbles' },
@@ -279,6 +313,16 @@ export function applyColors(colors) {
   s.setProperty('--hl-builtin', syn.builtin);
   s.setProperty('--hl-variable', syn.variable);
   s.setProperty('--hl-params', syn.params);
+
+  // Derive and apply operation-status colours. Kept byte-identical to the
+  // copy in index.html's head script, which paints before any module loads;
+  // tests/test_theme_status_tokens_js.py asserts the two agree.
+  const st = deriveStatusColors(colors);
+  s.setProperty('--status-error', st.error);
+  s.setProperty('--status-warn', st.warn);
+  s.setProperty('--status-busy', st.busy);
+  s.setProperty('--status-ok', st.ok);
+  s.setProperty('--status-idle', st.idle);
 
   // Apply advanced overrides (or defaults)
   const adv = colors.advanced || {};

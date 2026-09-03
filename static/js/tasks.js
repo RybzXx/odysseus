@@ -431,8 +431,16 @@ function _absoluteTime(iso) {
 }
 
 function _statusDot(status) {
-  const colors = { active: '#4caf50', paused: '#ff9800', completed: '#888', error: '#f44336', failed: '#f44336' };
-  const c = colors[status] || '#888';
+  // Derived per theme by deriveStatusColors in theme.js; the literals are the
+  // last rung of the cascade, for a first paint with no stored theme.
+  const colors = {
+    active: 'var(--status-ok, #4caf50)',
+    paused: 'var(--status-warn, #ff9800)',
+    completed: 'var(--color-muted, #888)',
+    error: 'var(--status-error, #f44336)',
+    failed: 'var(--status-error, #f44336)',
+  };
+  const c = colors[status] || 'var(--color-muted, #888)';
   return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};box-shadow:0 0 6px ${c}, 0 0 3px ${c};flex-shrink:0;position:relative;top:4px;"></span>`;
 }
 

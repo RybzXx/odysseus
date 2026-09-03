@@ -194,8 +194,8 @@ function _injectStyles() {
       overflow: hidden;
     }
     .overview-kpi-card.urgent {
-      border-color: rgba(224, 108, 117, 0.4);
-      background: rgba(224, 108, 117, 0.04);
+      border-color: color-mix(in srgb, var(--status-error, #e06c75) 40%, transparent);
+      background: color-mix(in srgb, var(--status-error, #e06c75) 4%, transparent);
     }
     /* KPI cards drill: emails to the digest, tasks to Projects, inquiries to
        Operations. Only the drillable ones take the affordance. */
@@ -342,6 +342,10 @@ function _injectStyles() {
       margin-top: 2px;
       width: fit-content;
     }
+    /* Urgency binds one derived token per level; the badge shape is written
+       once against it. Derived per theme by deriveStatusColors in theme.js,
+       so an urgent email reads the same way on all sixteen themes without
+       this file naming a colour. */
     .overview-urgency-badge {
       font-size: 10px;
       font-weight: 700;
@@ -349,17 +353,12 @@ function _injectStyles() {
       padding: 2px 5px;
       border-radius: 3px;
       letter-spacing: 0.4px;
+      background: color-mix(in srgb, var(--overview-urgency) 20%, transparent);
+      color: var(--overview-urgency);
+      border: 1px solid var(--overview-urgency);
     }
-    .overview-urgency-badge.critical {
-      background: rgba(224, 108, 117, 0.2);
-      color: #e06c75;
-      border: 1px solid #e06c75;
-    }
-    .overview-urgency-badge.urgent {
-      background: rgba(229, 192, 123, 0.2);
-      color: #e5c07b;
-      border: 1px solid #e5c07b;
-    }
+    .overview-urgency-badge.critical { --overview-urgency: var(--status-error, #e06c75); }
+    .overview-urgency-badge.urgent   { --overview-urgency: var(--status-warn, #e5c07b); }
     /* Projects responsive container */
     .overview-projects-container {
       display: flex;
@@ -462,8 +461,8 @@ function _injectStyles() {
       gap: 6px;
     }
     .overview-inquiry-item.overdue {
-      border-color: rgba(224, 108, 117, 0.4);
-      background: rgba(224, 108, 117, 0.03);
+      border-color: color-mix(in srgb, var(--status-error, #e06c75) 40%, transparent);
+      background: color-mix(in srgb, var(--status-error, #e06c75) 3%, transparent);
     }
     .overview-inquiry-header {
       display: flex;
@@ -760,7 +759,7 @@ function _render(container) {
                     <span style="font-size:11px;opacity:0.6;margin-left:auto;">${_escape(op.status)}</span>
                   </div>
                   <div style="font-size:12px;opacity:0.85;">${_escape(op.summary || 'Enquiry record')}</div>
-                  ${op.is_overdue ? `<div style="color:#e06c75;font-size:11px;display:flex;align-items:center;gap:4px;">${ICONS.alertCircle} Overdue action (${_escape(op.next_action_date)})</div>` : ''}
+                  ${op.is_overdue ? `<div style="color:var(--status-error,#e06c75);font-size:11px;display:flex;align-items:center;gap:4px;">${ICONS.alertCircle} Overdue action (${_escape(op.next_action_date)})</div>` : ''}
                   <div class="overview-inquiry-actions">
                     ${op.email ? `
                       <button class="overview-btn" data-draft-email="${_escape(op.email)}" data-draft-name="${_escape(op.name)}" data-draft-summary="${_escape(op.summary)}">

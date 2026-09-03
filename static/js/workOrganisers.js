@@ -202,10 +202,21 @@ function _injectStyles() {
       border-radius: 3px;
       letter-spacing: 0.3px;
     }
-    .org-badge.critical { background: rgba(224,108,117,0.2); color: #e06c75; }
-    .org-badge.high { background: rgba(229,192,123,0.2); color: #e5c07b; }
-    .org-badge.normal { background: rgba(97,175,239,0.15); color: #61afef; }
-    .org-badge.low { background: rgba(152,195,121,0.15); color: #98c379; }
+    /* Priority binds one derived token per level. Four levels onto four of
+       the five status tokens: critical/high are the two alarm colours, normal
+       is the in-progress blue, low the settled green. Derived per theme by
+       deriveStatusColors in theme.js. */
+    .org-badge.critical,
+    .org-badge.high,
+    .org-badge.normal,
+    .org-badge.low {
+      background: color-mix(in srgb, var(--org-priority) 18%, transparent);
+      color: var(--org-priority);
+    }
+    .org-badge.critical { --org-priority: var(--status-error, #e06c75); }
+    .org-badge.high     { --org-priority: var(--status-warn, #e5c07b); }
+    .org-badge.normal   { --org-priority: var(--status-busy, #61afef); }
+    .org-badge.low      { --org-priority: var(--status-ok, #98c379); }
 
     /* Main Detail Pane */
     .org-main {

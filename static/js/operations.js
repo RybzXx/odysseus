@@ -123,7 +123,9 @@ function _injectStyles() {
     #operations-modal .modal-body { flex: 1; overflow: hidden; padding: 0; }
     #operations-modal #ops-body { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
     #operations-modal .ops-loading, #operations-modal .ops-error { padding: 24px; color: var(--fg-muted, #888); }
-    #operations-modal .ops-error { color: var(--color-danger, var(--accent-error, #d33)); }
+    /* Was var(--color-danger, var(--accent-error, #d33)) — three names for one
+       colour, of which --accent-error is set by nobody. One derived token. */
+    #operations-modal .ops-error { color: var(--status-error, #e06c75); }
     #operations-modal .ops-view-toggle { display: flex; gap: 4px; margin-left: auto; margin-right: 12px; }
     #operations-modal .ops-view-btn { background: var(--bg-elev, #242424); border: 1px solid var(--border, #333); color: var(--fg-muted, #888); border-radius: 6px; font-size: 11px; padding: 4px 10px; cursor: pointer; position: relative; }
     #operations-modal .ops-view-btn.active { color: var(--fg, #eee); border-color: var(--accent, #e8a33d); }
@@ -153,8 +155,8 @@ function _injectStyles() {
     #operations-modal .ops-card-contact { color: var(--fg-dim, #aaa); font-size: 11px; margin-bottom: 4px; }
     #operations-modal .ops-card-meta { color: var(--fg-muted, #888); font-size: 11px; }
     #operations-modal .ops-risk { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
-    #operations-modal .ops-risk-confirmed-spam { background: var(--color-danger, #d33); }
-    #operations-modal .ops-risk-suspected { background: var(--accent, #e8a33d); }
+    #operations-modal .ops-risk-confirmed-spam { background: var(--status-error, #e06c75); }
+    #operations-modal .ops-risk-suspected { background: var(--status-warn, #d19a66); }
     #operations-modal .ops-risk-clean, #operations-modal .ops-risk-not-scored { background: transparent; }
     #operations-modal .ops-card-notes { margin-top: 6px; border-top: 1px dashed var(--border, #333); padding-top: 6px; }
     #operations-modal .ops-card-note { font-size: 11px; color: var(--fg-dim, #aaa); margin-bottom: 3px; }
@@ -165,7 +167,7 @@ function _injectStyles() {
     #operations-modal button.ops-chip, #operations-modal .ops-note-editor-actions button, #operations-modal .ops-editor-actions button, #operations-modal .ops-status-pill, #operations-modal .ops-mod-pill { font-size: 11px; padding: 3px 10px; border-radius: 12px; border: 1px solid var(--border, #333); background: var(--bg-elev, #242424); color: var(--fg-muted, #888); cursor: pointer; }
     #operations-modal .ops-note-save, #operations-modal .ops-editor-save { border-color: var(--accent, #e8a33d); color: var(--fg, #eee); }
     #operations-modal .ops-status-pill.active { background: var(--accent, #e8a33d); color: #111; border-color: var(--accent, #e8a33d); }
-    #operations-modal .ops-mod-pill.active { background: var(--color-danger, #d33); color: #fff; border-color: var(--color-danger, #d33); }
+    #operations-modal .ops-mod-pill.active { background: var(--status-error, #e06c75); color: #fff; border-color: var(--status-error, #e06c75); }
 
     /* ---- Table (primary view) ---- */
     #operations-modal .ops-table-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -752,7 +754,7 @@ function _renderItineraryBox(slot, data, isGenerated = false, rowKey = '') {
     ? `<div class="ops-itinerary-gaps"><strong>Gaps/Transit notes:</strong><br>${p.coverage_gaps.map((g) => '• ' + _esc(g)).join('<br>')}</div>`
     : '';
   const warningsHtml = (p.calendar_warnings || []).length
-    ? `<div class="ops-itinerary-gaps" style="border-color:#d33; color:#f66; background:rgba(211,51,51,0.1);"><strong>Calendar warnings:</strong><br>${p.calendar_warnings.map((w) => '• ' + _esc(w)).join('<br>')}</div>`
+    ? `<div class="ops-itinerary-gaps" style="border-color:var(--status-warn,#d19a66); color:var(--status-warn,#d19a66); background:color-mix(in srgb, var(--status-warn,#d19a66) 10%, transparent);"><strong>Calendar warnings:</strong><br>${p.calendar_warnings.map((w) => '• ' + _esc(w)).join('<br>')}</div>`
     : '';
 
   let quoteHtml = '';

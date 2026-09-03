@@ -68,6 +68,14 @@
         s.setProperty('--hl-builtin', hsl2h(180,Math.min(fH[1]+15,60),dk?65:40));
         s.setProperty('--hl-variable', hsl2h((fH[0]+30)%360,Math.min(fH[1]+5,60),fH[2]));
         s.setProperty('--hl-params', hsl2h(fH[0],Math.max(fH[1]-5,10),dk?Math.min(fH[2]+8,85):Math.max(fH[2]-8,25)));
+        // Operation-status colours. Byte-identical to deriveStatusColors in
+        // theme.js — status badges must not flash a default colour and then
+        // correct themselves once the modules load.
+        s.setProperty('--status-error', hsl2h(358,Math.min(fH[1]+25,65),dk?68:45));
+        s.setProperty('--status-warn',  hsl2h(32, Math.min(fH[1]+25,70),dk?66:42));
+        s.setProperty('--status-busy',  hsl2h(200,Math.min(fH[1]+20,60),dk?68:42));
+        s.setProperty('--status-ok',    hsl2h(135,Math.min(fH[1]+15,55),dk?65:38));
+        s.setProperty('--status-idle',  hsl2h(280,Math.min(fH[1]+15,55),dk?70:48));
         // Apply advanced overrides if present
         if (c.advanced) {
           var a = c.advanced;
