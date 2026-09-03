@@ -2518,7 +2518,9 @@ three commits and no failure in any module touched.
   `style.css:14` names `--color-error --color-success --color-warning
   --color-danger`, defined as fixed hexes in `:root`: 259 usages between them.
   They were left alone — aliasing them onto the new tokens would theme 259 call
-  sites in one move.
+  sites in one move. *(Corrected in Rev AB: it is not one move. Roughly a third
+  of those usages are backgrounds, and one alias cannot serve both text and
+  fill. The header line reference is also stale — `2bba4ce` rewrote it.)*
 - **The two derivation copies have drifted.** `index.html`'s `advMap` carries
   `--accent-primary`, `--accent-error`, `--section-accent` and `--toggle-bg`;
   `theme.js`'s `ADV_KEYS` carries none of them. A stored custom theme setting
@@ -2550,7 +2552,8 @@ three commits and no failure in any module touched.
 - **Phone-width layout is unverified** for the WorkBench, and the memory gate
   was measured off-device.
 - **259 `--color-*` usages remain unthemed**, and 196 bare `var(--accent)`
-  usages remain fallback-less.
+  usages remain fallback-less. *(Rev AB measured the first: it is not the
+  one-line alias Rev Z promised — see there.)*
 - **Two literals stay in activityLog** — a model pill and a latency badge.
   Neither is an operation status and no token means them.
 - ~~**Two defects found while reading, unfixed:**~~ `activityLog.js` calls
@@ -2641,13 +2644,123 @@ real invariant (listeners attached once) rather than loosened to pass.
 
 ## Open
 
-- **Two commits are undeployed** — `ecafbcd` and `ac64323`, plus this record.
-  Both static-only; the phone needs `git pull --ff-only` when it returns.
+- ~~**Two commits are undeployed**~~ — `ecafbcd` and `ac64323`, plus this
+  record. Both static-only; the phone needs `git pull --ff-only` when it
+  returns. *(Deployed in Rev AB: the phone is at `5c0df2e`, zero downtime.)*
 - **Each search keystroke still fires its own request.** It predates this work
   and is a rate concern, not a focus one.
 - **259 `--color-*` usages remain unthemed**, and 196 bare `var(--accent)`
-  usages remain fallback-less.
+  usages remain fallback-less. *(Rev AB measured the first: it is not the
+  one-line alias Rev Z promised — see there.)*
 - **Phone-width layout is unverified** for the WorkBench, and its memory gate
   was measured off-device.
 - **D7's lane-writer, the 15 Linux test failures, and five local-only
   branches** all stand from earlier revisions.
+
+# Rev AB (2026-09-03) — the colour work deployed, and a promised one-liner withdrawn
+
+## Deployed — the phone is at `5c0df2e`
+
+The phone returned to the tailnet (`active; direct 192.168.0.209:39180`) and the
+three outstanding commits went out together: `ecafbcd` status-colour derivation,
+`ac64323` drag and search-focus fixes, `5c0df2e` the Rev AA record.
+
+**Zero downtime.** All static, so `git pull` sufficed; pid 15566 was never
+restarted and its `etimes` climbed unbroken through the deploy. Backup taken
+first at `/root/odysseus-backups/colour-20260903-090334`, HEAD `210b62e`.
+
+### The derivation reproduced its predicted values on the device
+
+Under the `claude` theme the five tokens resolved to `#d2898b` error, `#cfab81`
+warn, `#8db8ce` busy, `#87c596` ok, `#bb98cd` idle — identical to what the
+offline sweep computed for `claude` before any of it shipped. All 78 badges
+track their token.
+
+### The truthfulness fix caught real failures in production
+
+**The header reads `Errors: 21` where it read `Errors: 0` yesterday.** The cause
+is visible in the log: while the phone was off the tailnet, email polling failed
+repeatedly with `[Errno -3] Temporary failure in name resolution`. Those runs,
+dated 06:00–08:04 today, are all correctly labelled `error`. Before this work
+every one would have been recorded `success` and the header would still say
+zero.
+
+### Drag and focus verified on the device
+
+Mousedown converted the centring transform into explicit `left/top`
+(477px, 93px) and the move landed at exactly +120/+70. Typing `err` with the
+caret at position 1 kept the input as the same DOM node, focused, caret intact,
+across a five-second wait spanning two polls while the list re-rendered from 78
+rows to 38.
+
+**Two verification scripts hit a 45-second CDP timeout**, and the cause was not
+the drag: awaiting `requestAnimationFrame` during the 3s poll, with 78 rows and
+4,000-character previews re-rendering, was enough to stall the evaluate.
+Synchronous versions ran fine. The chrome/render split removed the panel
+rebuild, but the row list is still rebuilt wholesale on every poll. At 57 rows
+this was invisible; at 78 it is measurable, and the log has no automatic
+pruning.
+
+## A promised one-liner withdrawn
+
+**Rev Z said aliasing `--color-*` onto the derived tokens was "a one-line change
+in `:root`". That was wrong, and measuring how those variables are consumed is
+what showed it.**
+
+| | `color` | `background` | `border` |
+|---|---|---|---|
+| `--color-error` | 54 | 20 | 23 |
+| `--color-danger` | 11 | 6 | 4 |
+| `--color-success` | 15 | 11 | 5 |
+| `--color-warning` | 10 | **13** | 4 |
+
+`--color-warning` is a fill more often than it is text. A token tuned for
+text-on-panel contrast is a different problem as a background carrying text, and
+one alias cannot serve both uses.
+
+**About half the fills are tints** — `color-mix(… 12%, transparent)` — safe with
+any hue. The rest are solid fills, roughly fourteen sites.
+
+**Those fills already fail contrast today.** White on the current literals is
+**1.95:1** at worst across the sixteen themes, with error best at 3.41. The
+derived tokens give 1.77 worst. Aliasing would not introduce a failure; it would
+leave an existing one differently broken — not a good enough reason to change
+259 computed colours on a daily driver.
+
+**Doing it properly needs a background-safe surface variant plus edits to those
+fourteen fill sites.** That is a new member of the token family and a design
+decision, so it was not taken unilaterally.
+
+## The stylesheet header described a system that does not exist — `2bba4ce`
+
+`style.css`'s variable header claimed `--accent-primary` and `--accent-error`
+are "set by theme.js". Neither ever is. It listed five core variables as the
+theme-public surface when `applyColors` writes 29, and gave no hint that `--red`
+is the accent rather than a hue.
+
+Rewritten to state which variables are written at runtime, which are fixed hex
+that no theme touches, and which are override slots nobody fills — `--accent`
+alone has 1,073 usages and is declared by no one. Comment-only; no selector,
+declaration or value changed.
+
+## Verification
+
+Seven failures appeared in the stylesheet-adjacent run and all seven are
+pre-existing. The one that targets `static/style.css` was proven so directly:
+stashing the edit and running it against HEAD fails identically. All seven
+appear in the pre-change baseline.
+
+## Open
+
+- **`2bba4ce` is undeployed.** Comment-only with no user-visible effect; it
+  should ride along with the next change rather than justify its own deploy.
+- **The `--color-*` unification is unresolved** and now has a measured shape:
+  a surface variant plus fourteen fill sites.
+- **The activity log re-renders every row every three seconds.** 78 rows today,
+  growing, with no automatic pruning.
+- **196 bare `var(--accent)` usages remain fallback-less**, and each search
+  keystroke still fires its own request.
+- **Phone-width layout is unverified** for the WorkBench, and its memory gate
+  was measured off-device.
+- **D7's lane-writer, the 15 Linux test failures, and five local-only
+  branches** stand from earlier revisions.
