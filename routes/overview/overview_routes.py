@@ -44,6 +44,12 @@ _OVERVIEW_MEMORY_CACHE: Dict[str, Dict[str, Any]] = {}
 _REVALIDATING_OWNERS: Set[str] = set()
 _CACHE_FRESHNESS_TTL_SECONDS = 120  # 2 minutes
 
+# The single window the briefing is built and cached at. The email panel's
+# duration buttons narrow the rows client-side rather than asking for a
+# different window, so one bucket per owner is all that is ever needed.
+# Mirrored by FETCH_WINDOW_DAYS in static/js/overview.js.
+_BRIEFING_WINDOW_DAYS = 30
+
 
 def _owner_slug(owner: Optional[str]) -> str:
     """Normalize owner username to safe filename/cache slug."""
@@ -59,6 +65,200 @@ def _is_owner_match(row_owner: Optional[str], owner: Optional[str]) -> bool:
     if owner is None:
         return True
     return row_owner is None or row_owner == owner
+
+
+_ACTION_LINE_PREFIXES = ("action items:", "action item:", "action:", "actions:")
+
+
+def _split_summary_and_action(summary: Optional[str]) -> tuple[str, Optional[str]]:
+    """Separate a stored AI summary into its narrative and its action line.
+
+    Summaries are written as bullet lists whose last bullet names what the
+    reader has to do ("- Action items: Request an invitation..."). The row shows
+    the narrative as body text and the action on its own, so the action must be
+    lifted out rather than left duplicated in both places.
+
+    Pre:  summary is a stored ``email_summaries.summary`` value, or None.
+    Post: returns (body, action). ``action`` is None when the summary names no
+          action. ``body`` never contains the action line, and is "" when the
+          summary was nothing but an action line -- the caller then falls back
+          to the subject, so a row is never left with empty body text.
+    """
+    if not summary or not str(summary).strip():
+        return "", None
+
+    body_lines: List[str] = []
+    action: Optional[str] = None
+    for line in str(summary).splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        unmarked = stripped.lstrip("-*• \t")
+        lowered = unmarked.lower()
+        matched = next((p for p in _ACTION_LINE_PREFIXES if lowered.startswith(p)), None)
+        if matched and action is None:
+            action = unmarked[len(matched):].strip() or unmarked.strip()
+        else:
+            body_lines.append(unmarked)
+
+    return " ".join(body_lines).strip(), action
+
+
+def _compose_row_text(
+    *,
+    stored_summary: Optional[str] = None,
+    explicit_snippet: Optional[str] = None,
+    explicit_comment: Optional[str] = None,
+    triage_reason: Optional[str] = None,
+    subject: Optional[str] = None,
+) -> tuple[str, Optional[str], Optional[str]]:
+    """Resolve one stream row's body, action and triage label.
+
+    Three call sites build stream rows -- the urgency file's ``per_uid`` map,
+    its ``accounts`` map, and ``email_message_index`` -- and each used to
+    compose this text itself. Two of the three fell back to the triage reason
+    for body text while also returning it as the comment, so every row rendered
+    the same string twice. Resolving it in one place is what stops those three
+    from drifting apart again.
+
+    Pre:  the caller supplies whichever of the five inputs its source carries.
+    Post: returns (body, action, reason).
+          - body is never the triage reason, and is "" only when the source
+            carried no summary, no snippet and no subject.
+          - action is None unless the source named one.
+          - reason is the triage label, for a chip; it is never body text.
+    Inv:  body, action and reason are three distinct roles. A caller that
+          renders any two of them from the same value has reintroduced the
+          duplicate this function exists to prevent.
+    """
+    summary_body, summary_action = _split_summary_and_action(stored_summary)
+
+    body = summary_body or (explicit_snippet or "").strip() or (subject or "").strip()
+    action = (explicit_comment or "").strip() or summary_action or None
+    reason = (triage_reason or "").strip() or None
+
+    # A source may carry the same string as both comment and triage label
+    # (email_urgency_alerts stores one `reason` read by both). Showing it twice
+    # is the fault; the chip is the better home for it.
+    if action and reason and action == reason:
+        action = None
+
+    return body, action, reason
+
+
+
+def _replied_message_ids(sched_db_path, owner: Optional[str]) -> set:
+    """Message-ids the user has answered, drawn from their own sent mail.
+
+    Pre:  sched_db_path points at the email cache; the Sent folder may or may
+          not have been indexed yet.
+    Post: the set of Message-IDs that a sent message names as the thing it
+          replies to. Empty when Sent has never been indexed, which is the
+          normal state until the index_sent_mail task has run.
+    Inv:  read-only and never raises -- ranking is an enhancement to the
+          stream, so a missing column or table must not cost the briefing.
+    """
+    import sqlite3 as _sql3
+
+    replied = set()
+    try:
+        conn = _sql3.connect(str(sched_db_path), timeout=2.0)
+        try:
+            rows = conn.execute(
+                """
+                SELECT in_reply_to, references_hdr
+                FROM email_message_index
+                WHERE (owner = ? OR owner IS NULL OR owner = '')
+                  AND lower(folder) LIKE '%sent%'
+                  AND (in_reply_to != '' OR references_hdr != '')
+                """,
+                (owner or "",),
+            ).fetchall()
+        finally:
+            conn.close()
+        for in_reply_to, references in rows:
+            for token in f"{in_reply_to or ''} {references or ''}".split():
+                token = token.strip().strip(',')
+                if token:
+                    replied.add(token)
+    except Exception as e:
+        logger.debug("Replied-thread lookup skipped: %s", e)
+    return replied
+
+
+def _tag_emails_with_organisers(
+    emails: List[Dict[str, Any]], db: Session, owner: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Attach each stream row's organiser ids, so the panel can filter by them.
+
+    Membership is resolved once per refresh for the whole stream rather than per
+    filter interaction, because the filter narrows rows the client already holds.
+
+    Pre:  emails are stream rows from _fetch_email_digest_data; db is open.
+    Post: every row carries ``organiser_ids`` (possibly empty), and the return
+          value is the organiser descriptors the panel needs for its control.
+          On any failure the rows are left untagged rather than the briefing
+          failing -- organiser filtering enhances the stream, it is not a
+          precondition for showing it.
+    Inv:  membership comes from the organisers module's own resolver, so this
+          filter and the Organisers panel cannot disagree about where an email
+          belongs.
+    """
+    try:
+        from core.database import WorkOrganiser
+        from routes.organisers.organisers_routes import (
+            email_belongs_to_organiser,
+            load_organiser_overrides,
+        )
+    except Exception as exc:
+        logger.debug("Organiser tagging unavailable: %s", exc)
+        return []
+
+    try:
+        organisers = db.query(WorkOrganiser).filter(
+            WorkOrganiser.is_active == True,
+            or_(WorkOrganiser.owner == owner, WorkOrganiser.owner == None),
+        ).order_by(WorkOrganiser.sort_order.asc()).all()
+        if not organisers:
+            return []
+        overrides = load_organiser_overrides(db, owner)
+    except Exception as exc:
+        logger.debug("Organiser tagging skipped: %s", exc)
+        return []
+
+    parsed = []
+    for org in organisers:
+        try:
+            accounts = json.loads(org.target_accounts) if org.target_accounts else []
+        except Exception:
+            accounts = []
+        try:
+            rules = json.loads(org.rules_json) if org.rules_json else {}
+        except Exception:
+            rules = {}
+        parsed.append((org, accounts, rules))
+
+    for email in emails:
+        # The stream names its fields for display (sender_name, sender_email);
+        # the matcher speaks the index's vocabulary. Translating once here keeps
+        # that mismatch at the boundary rather than inside the matcher.
+        candidate = {
+            "account_key": email.get("account_id") or "",
+            "uid": email.get("uid") or "",
+            "from_name": email.get("sender_name") or "",
+            "from_address": email.get("sender_email") or "",
+            "subject": email.get("subject") or "",
+            "snippet": email.get("snippet") or "",
+        }
+        email["organiser_ids"] = [
+            org.id for org, accounts, rules in parsed
+            if email_belongs_to_organiser(candidate, org, accounts, rules, overrides)
+        ]
+
+    return [
+        {"id": org.id, "name": org.name, "icon": org.icon, "color": org.color}
+        for org, _accounts, _rules in parsed
+    ]
 
 
 def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -> Dict[str, Any]:
@@ -147,10 +347,13 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
                 score_val = float(msg.get("score") or 0)
                 is_urgent = score_val >= 2 or bool(msg.get("is_urgent"))
                 urgency_lvl = "critical" if score_val >= 3 else ("urgent" if is_urgent else "normal")
-                ai_comm = msg.get("reason") or msg.get("summary") or None
                 mid_clean = str(msg.get("message_id") or "").strip()
-                if not ai_comm and mid_clean in ai_summaries:
-                    ai_comm = ai_summaries[mid_clean]
+                body_text, action_text, triage_reason = _compose_row_text(
+                    stored_summary=ai_summaries.get(mid_clean) or msg.get("summary"),
+                    explicit_snippet=msg.get("snippet") or msg.get("preview"),
+                    triage_reason=msg.get("reason"),
+                    subject=msg.get("subject"),
+                )
 
                 msg_date_str = ""
                 if msg_epoch:
@@ -172,12 +375,15 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
                     "sender_name": msg.get("from") or msg.get("sender_name") or msg.get("sender") or "Unknown",
                     "sender_email": msg.get("from_address") or msg.get("from_email") or "",
                     "subject": msg.get("subject") or "(No Subject)",
-                    "snippet": msg.get("snippet") or msg.get("preview") or ai_comm or "",
+                    "message_id": mid_clean,
+                    "snippet": body_text,
                     "timestamp": msg_date_str,
                     "date_epoch": msg_epoch or now_utc.timestamp(),
                     "read": not bool(msg.get("unread", True)),
                     "urgency": urgency_lvl,
-                    "ai_comment": ai_comm,
+                    "ai_comment": action_text,
+                    "triage_reason": triage_reason,
+                    "tags": [t for t in (msg.get("tags") or []) if t],
                     "folder": "INBOX",
                 })
 
@@ -205,6 +411,15 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
                     seen_ids.add(msg_id)
                     urgency_lvl = msg.get("urgency") or ("critical" if msg.get("is_urgent") else "normal")
 
+                    acc_mid = str(msg.get("message_id") or "").strip()
+                    body_text, action_text, triage_reason = _compose_row_text(
+                        stored_summary=ai_summaries.get(acc_mid) or msg.get("summary"),
+                        explicit_snippet=msg.get("snippet") or msg.get("preview"),
+                        explicit_comment=msg.get("ai_comment"),
+                        triage_reason=msg.get("reason"),
+                        subject=msg.get("subject"),
+                    )
+
                     raw_emails.append({
                         "id": msg_id,
                         "uid": msg_uid,
@@ -213,12 +428,15 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
                         "sender_name": msg.get("sender_name") or msg.get("from_name") or msg.get("sender") or "Unknown",
                         "sender_email": msg.get("sender_email") or msg.get("from_email") or "",
                         "subject": msg.get("subject") or "(No Subject)",
-                        "snippet": msg.get("snippet") or msg.get("preview") or "",
+                        "message_id": acc_mid,
+                        "snippet": body_text,
                         "timestamp": msg_ts_str,
                         "date_epoch": msg_epoch,
                         "read": bool(msg.get("read", False)),
                         "urgency": urgency_lvl,
-                        "ai_comment": msg.get("ai_comment") or msg.get("summary") or None,
+                        "ai_comment": action_text,
+                        "triage_reason": triage_reason,
+                        "tags": [t for t in (msg.get("tags") or []) if t],
                         "folder": "INBOX",
                     })
         except Exception as e:
@@ -259,7 +477,11 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
                     score_info = urgency_scores.get(mid_clean) or (0.0, "")
                     score_val = score_info[0]
                     urgency_lvl = "critical" if score_val >= 80 else ("urgent" if score_val >= 50 else "normal")
-                    ai_comm = ai_summaries.get(mid_clean) or score_info[1] or None
+                    body_text, action_text, triage_reason = _compose_row_text(
+                        stored_summary=ai_summaries.get(mid_clean),
+                        triage_reason=score_info[1],
+                        subject=subj,
+                    )
 
                     matched_acc = next((a for a in accounts_out if a["id"] == acc_key_str), None)
                     acc_display = matched_acc["name"] if matched_acc else (acc_key_str if acc_key_str != "default" else "Primary Inbox")
@@ -272,12 +494,15 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
                         "sender_name": from_n or from_a or "Unknown",
                         "sender_email": from_a or "",
                         "subject": subj or "(No Subject)",
-                        "snippet": ai_comm or "",
+                        "message_id": mid_clean,
+                        "snippet": body_text,
                         "timestamp": d_iso or now_utc.isoformat(),
                         "date_epoch": float(d_epoch or 0),
                         "read": is_read,
                         "urgency": urgency_lvl,
-                        "ai_comment": ai_comm,
+                        "ai_comment": action_text,
+                        "triage_reason": triage_reason,
+                        "tags": [],
                         "folder": "INBOX",
                     })
             finally:
@@ -327,7 +552,22 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
         accounts_out[0]["is_default"] = True
 
     # Sort emails by date_epoch descending
-    raw_emails.sort(key=lambda m: m.get("date_epoch") or 0.0, reverse=True)
+    # Threads the user has answered rank above equivalent ones they have not.
+    # Having replied is the strongest signal available that a thread matters,
+    # and it costs one indexed read. Empty until Sent has been indexed.
+    replied_ids = _replied_message_ids(sched_db_path, owner)
+    if replied_ids:
+        for email in raw_emails:
+            mid = str(email.get("message_id") or "").strip()
+            email["replied"] = bool(mid and mid in replied_ids)
+    else:
+        for email in raw_emails:
+            email["replied"] = False
+
+    raw_emails.sort(
+        key=lambda m: (bool(m.get("replied")), m.get("date_epoch") or 0.0),
+        reverse=True,
+    )
 
     # Dynamically compute unread and urgent counts for the active duration
     total_unread = sum(1 for e in raw_emails if not e.get("read"))
@@ -466,6 +706,13 @@ async def _build_overview_payload(owner: Optional[str], email_days: int = 7, db:
         # 2. Email Digest
         email_digest = _fetch_email_digest_data(db, owner, days=email_days)
 
+        # 2b. Organiser membership, so the email panel can filter by the same
+        # taxonomy the Organisers module maintains. Adding an organiser there
+        # makes it selectable here on the next refresh, with no code change.
+        email_digest["organisers"] = _tag_emails_with_organisers(
+            email_digest.get("emails") or [], db, owner,
+        )
+
         # 3. Operations Radar
         ops_radar = await _fetch_operations_radar_data()
 
@@ -552,11 +799,19 @@ def setup_overview_routes() -> APIRouter:
     @router.get("")
     async def get_overview_briefing(
         request: Request,
-        email_days: int = Query(7, ge=1, le=30),
+        email_days: int = Query(_BRIEFING_WINDOW_DAYS, ge=1, le=_BRIEFING_WINDOW_DAYS),
         force_refresh: bool = Query(False),
         db: Session = Depends(get_db),
     ):
-        """Retrieve aggregated morning briefing with SWR caching."""
+        """Retrieve aggregated morning briefing with SWR caching.
+
+        The served window is always ``_BRIEFING_WINDOW_DAYS``; ``email_days`` is
+        accepted for compatibility and clamped up to it. Narrowing by date is
+        the client's job, because the duration control belongs to the email
+        panel alone -- when it drove this parameter, every press rebuilt the
+        projects and operations panels too and gave each duration its own cache
+        bucket, multiplying identical payloads.
+        """
         # Let require_user's 401 / 403 propagate. Swallowing it fell through to
         # owner=None, whose cache key is "__global__" — an unauthenticated
         # caller was served the shared briefing bucket, and the 403 that bars
@@ -564,6 +819,9 @@ def setup_overview_routes() -> APIRouter:
         # route in the codebase calls this bare; match that.
         owner = require_user(request)
 
+        # One window, one bucket per owner. The key still names the window it
+        # holds, so it stays truthful if that constant ever changes.
+        email_days = _BRIEFING_WINDOW_DAYS
         raw_owner_key = _get_owner_key(owner)
         owner_key = f"{raw_owner_key}:{email_days}"
         now_dt = utcnow_naive()

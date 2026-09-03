@@ -886,6 +886,8 @@ def _init_scheduled_db():
             size INTEGER DEFAULT 0,
             flags TEXT DEFAULT '',
             has_attachments INTEGER DEFAULT 0,
+            in_reply_to TEXT DEFAULT '',
+            references_hdr TEXT DEFAULT '',
             updated_at TEXT NOT NULL,
             PRIMARY KEY (owner, account_key, folder, uid)
         )
@@ -940,6 +942,17 @@ def _init_scheduled_db():
             created_at TEXT NOT NULL
         )
     """)
+    # Lazy migration: the message index gained threading keys. Without them a
+    # sent reply cannot be resolved to the message it answers, so the index
+    # could hold both halves of a conversation and still not connect them.
+    try:
+        idx_cols = [r[1] for r in conn.execute("PRAGMA table_info(email_message_index)").fetchall()]
+        for col in ("in_reply_to", "references_hdr"):
+            if col not in idx_cols:
+                conn.execute(f"ALTER TABLE email_message_index ADD COLUMN {col} TEXT DEFAULT ''")
+    except Exception:
+        logger.debug("email_message_index threading-key migration skipped", exc_info=True)
+
     # Lazy migration: add account_id column to scheduled_emails if missing
     try:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(scheduled_emails)").fetchall()]

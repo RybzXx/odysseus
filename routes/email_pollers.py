@@ -1563,3 +1563,144 @@ def _start_poller():
 
         # Store for the router lifespan / first-request hook
         _start_poller._deferred = _deferred_start
+
+
+# ── Sent-mail indexing ──────────────────────────────────────────────────
+#
+# The message index is otherwise a side effect of browsing: it records whichever
+# folder the user happens to be looking at, and nobody browses Sent. So the
+# system held 475 received messages and not one the user wrote, which is why
+# nothing could learn from their replies.
+#
+# This is the sweep that fixes that. It is deliberately header-only -- no
+# bodies -- so a daily pass over a mailbox costs a few hundred header fetches
+# rather than a full download.
+
+SENT_FOLDER_CANDIDATES = ("Sent", "INBOX/Sent", "Sent Items", "[Gmail]/Sent Mail", "Sent Mail")
+
+# One pass indexes at most this many messages per account, so a first run over
+# a long backfill window cannot hold the connection open indefinitely.
+_SENT_INDEX_MAX_PER_ACCOUNT = 500
+
+
+def _discover_sent_folder(conn) -> str | None:
+    """Find this mailbox's Sent folder by name.
+
+    Servers disagree on what it is called, so the candidates are tried in turn
+    and the first that selects wins. Returns None when none of them do, which
+    is a normal answer for an account that has no Sent folder.
+    """
+    for name in SENT_FOLDER_CANDIDATES:
+        try:
+            status, _ = conn.select(_q(name), readonly=True)
+            if status == "OK":
+                return name
+        except Exception:
+            continue
+    return None
+
+
+def _index_sent_for_account(account_id: str | None, days_back: int) -> tuple[int, str]:
+    """Index one account's Sent folder into email_message_index.
+
+    Pre:  the account is configured and reachable; days_back >= 1.
+    Post: returns (indexed_count, message). Every sent message newer than
+          days_back is in the index under its real folder name, carrying its
+          threading keys. Read-only on the mail server: the folder is selected
+          readonly and only headers are fetched.
+    Inv:  never raises. A mailbox that is unreachable, has no Sent folder, or
+          returns nothing yields (0, reason) so the fan-out continues to the
+          next account rather than failing the whole pass.
+    """
+    from datetime import timedelta as _td
+
+    from routes.email_routes import (
+        _email_index_upsert,
+        _group_uid_fetch_records,
+        _imap_uid_fetch,
+        _parse_email_list_record,
+    )
+
+    owner = _owner_for_email_account(account_id)
+    conn = None
+    try:
+        conn = _imap_connect(account_id, owner=owner)
+        folder = _discover_sent_folder(conn)
+        if not folder:
+            return 0, "no Sent folder"
+
+        since = (datetime.utcnow() - _td(days=max(1, days_back))).strftime("%d-%b-%Y")
+        status, data = conn.uid("search", None, f'(SINCE {since})')
+        if status != "OK" or not data or not data[0]:
+            return 0, "no sent mail in window"
+
+        uids = data[0].split()[-_SENT_INDEX_MAX_PER_ACCOUNT:]
+        if not uids:
+            return 0, "no sent mail in window"
+
+        fetched: list[dict] = []
+        # Batched so one oversized response cannot stall the pass.
+        for start in range(0, len(uids), 50):
+            chunk = b",".join(uids[start:start + 50]).decode()
+            st, msg_data = _imap_uid_fetch(conn, chunk, "(UID FLAGS RFC822.HEADER RFC822.SIZE)")
+            if st != "OK" or not msg_data:
+                continue
+            for meta_b, raw_header in _group_uid_fetch_records(msg_data):
+                parsed = _parse_email_list_record(meta_b, raw_header)
+                if parsed:
+                    fetched.append(parsed)
+
+        if not fetched:
+            return 0, "no headers returned"
+
+        _email_index_upsert(owner, account_id, folder, fetched)
+        return len(fetched), f"indexed {len(fetched)} from {folder}"
+    except Exception as e:
+        logger.warning("Sent indexing failed for account %s: %s", account_id, e)
+        return 0, f"error: {e}"
+    finally:
+        if conn is not None:
+            try:
+                conn.logout()
+            except Exception:
+                pass
+
+
+async def index_sent_mail(days_back: int = 1, account_id: str | None = None) -> str:
+    """Index Sent mail for one account, or for every enabled account.
+
+    Pre:  days_back >= 1. A daily schedule passes 1; a backfill passes more.
+    Post: returns a human-readable report. The index holds the sent messages
+          found in the window, so replies can be matched to what they answer.
+    """
+    import asyncio
+
+    if account_id is not None:
+        count, message = await asyncio.to_thread(_index_sent_for_account, account_id, days_back)
+        return f"Sent: {message}"
+
+    try:
+        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        db = _SL()
+        try:
+            accounts = (
+                db.query(_EA)
+                .filter(_EA.enabled == True)  # noqa: E712
+                .order_by(_EA.is_default.desc(), _EA.created_at.asc())
+                .all()
+            )
+            targets = [(a.id, a.name) for a in accounts]
+        finally:
+            db.close()
+    except Exception as e:
+        return f"Sent indexing could not list accounts: {e}"
+
+    if not targets:
+        return "Sent indexing: no enabled accounts"
+
+    total, reports = 0, []
+    for acc_id, name in targets:
+        count, message = await asyncio.to_thread(_index_sent_for_account, acc_id, days_back)
+        total += count
+        reports.append(f"{name}: {message}")
+    return f"Sent indexing ({total} total) — " + "; ".join(reports)

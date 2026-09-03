@@ -39,16 +39,397 @@ let _open = false;
  * Inv: nothing here is module-level. A drilled-into layer that comes back must
  *      show the filters it had, and a second instance must not steal them.
  */
+/**
+ * The window every fetch asks for, in days.
+ *
+ * The duration buttons filter the rows already held, so the request never
+ * varies. It used to carry the selected duration, which meant each button
+ * refetched the whole briefing -- projects and operations included -- and gave
+ * every duration its own server cache bucket. Operations has no duration of
+ * its own, so those refetches could not change it; they only made it flicker.
+ */
+const FETCH_WINDOW_DAYS = 30;
+
+/** Panels the grid can hold, in default column order. */
+const PANEL_IDS = ['emails', 'operations', 'projects'];
+
+/** Where the live layout is kept. Per device, by design — see _persistLayout. */
+const LAYOUT_STORAGE_KEY = 'odysseus.overview.layout';
+
+/** Below this width the grid is one column and a saved layout is not applied. */
+const SINGLE_COLUMN_MAX_WIDTH = 980;
+
+const MIN_SPLIT_PERCENT = 22;
+const MIN_PANEL_HEIGHT = 120;
+
+/**
+ * The arrangement the grid starts from.
+ *
+ * Inv: every id in PANEL_IDS appears exactly once across `columns`. A stored
+ *      layout is reconciled against this before use, so a panel added in a
+ *      later version still appears for someone carrying an older saved layout.
+ */
+function _defaultLayout() {
+  return {
+    columns: [['emails', 'operations'], ['projects']],
+    split: 50,
+    heights: { emails: 360, operations: 300 },
+  };
+}
+
 function _newState() {
   return {
     emailAccountFilter: 'all',
     emailDaysFilter: 7,
     emailUnreadOnly: false,
+    emailOrganiserFilter: 'all',
+    emailTagFilter: 'all',
     opsFilterSource: 'all',
+    opsDaysFilter: 'all',
     expandedProjectIds: new Set(),
+    layout: _loadLayout(),
+    presets: [],
     data: null,
     loading: false,
   };
+}
+
+/**
+ * Reconcile a stored layout against the panels this version actually has.
+ *
+ * Pre:  `raw` is anything at all — parsed JSON from storage, or undefined.
+ * Post: a layout whose columns hold every current panel id exactly once, with
+ *       a split inside the draggable range. An unknown id is dropped and a
+ *       missing one is appended to the first column, so neither a removed nor
+ *       a newly added panel can strand the grid.
+ */
+function _reconcileLayout(raw) {
+  const fallback = _defaultLayout();
+  if (!raw || typeof raw !== 'object') return fallback;
+
+  const seen = new Set();
+  const columns = [0, 1].map(i => {
+    const col = Array.isArray(raw.columns?.[i]) ? raw.columns[i] : [];
+    return col.filter(id => PANEL_IDS.includes(id) && !seen.has(id) && seen.add(id));
+  });
+
+  for (const id of PANEL_IDS) {
+    if (!seen.has(id)) columns[0].push(id);
+  }
+
+  const split = Number(raw.split);
+  return {
+    columns,
+    split: Number.isFinite(split)
+      ? Math.min(100 - MIN_SPLIT_PERCENT, Math.max(MIN_SPLIT_PERCENT, split))
+      : fallback.split,
+    heights: (raw.heights && typeof raw.heights === 'object') ? { ...raw.heights } : fallback.heights,
+  };
+}
+
+function _loadLayout() {
+  try {
+    return _reconcileLayout(JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY)));
+  } catch (_) {
+    // Private windows and blocked site data throw on access. The default
+    // arrangement is a complete answer, so this is not worth surfacing.
+    return _defaultLayout();
+  }
+}
+
+/**
+ * Save the in-flight layout to this device.
+ *
+ * Device-local on purpose: a dragged column width is a property of the screen
+ * being dragged on, and a 1320px desktop split makes no sense on a phone.
+ * Named presets are the thing worth carrying between machines, and those go to
+ * the per-user prefs store instead — see _savePreset.
+ */
+function _persistLayout(state) {
+  try {
+    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(state.layout));
+  } catch (_) {
+    // Nothing to do: the layout still applies for this session.
+  }
+}
+
+/**
+ * Named layouts, kept per user rather than per device.
+ *
+ * A preset is a layout the user deliberately named and expects to find again;
+ * carrying it between the desktop and the phone is the point of naming it. The
+ * generic prefs key/value store already does exactly this, so no new endpoint
+ * is added for it.
+ */
+const LAYOUT_PRESETS_PREF_KEY = 'overview_layout_presets';
+
+async function _loadPresets(state) {
+  try {
+    const res = await fetch(`/api/prefs/${LAYOUT_PRESETS_PREF_KEY}`, { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const body = await res.json();
+    state.presets = Array.isArray(body.value) ? body.value : [];
+  } catch (err) {
+    // Presets are a convenience; losing them must not stop the briefing.
+    console.error('Could not load layout presets:', err);
+  }
+}
+
+/**
+ * Write the preset list back.
+ *
+ * Pre:  state.presets is the complete list to store.
+ * Post: the stored list matches it, or the failure is reported and the
+ *       in-memory list is left as the user sees it.
+ */
+async function _savePresets(state) {
+  try {
+    const res = await fetch(`/api/prefs/${LAYOUT_PRESETS_PREF_KEY}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ value: state.presets }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.error('Could not save layout presets:', err);
+  }
+}
+
+/**
+ * Wire the toolbar's layout preset controls.
+ *
+ * Pre:  the toolbar markup is in place and state.presets may be unloaded.
+ * Post: the dropdown lists every saved preset, choosing one applies and
+ *       persists it as the live layout, and Save stores the current layout
+ *       under a name the user supplies.
+ */
+function _bindPresetControls(container, state) {
+  const select = container.querySelector('[data-preset-select]');
+  const saveBtn = container.querySelector('[data-save-preset]');
+  if (!select || !saveBtn) return;
+
+  const repaint = () => {
+    select.innerHTML =
+      '<option value="">Layout…</option>' +
+      state.presets
+        .map((p, i) => `<option value="${i}">${_escape(p.name)}</option>`)
+        .join('');
+  };
+
+  _loadPresets(state).then(repaint);
+
+  select.addEventListener('change', () => {
+    const preset = state.presets[Number(select.value)];
+    select.value = '';
+    if (!preset) return;
+    state.layout = _reconcileLayout(preset.layout);
+    _persistLayout(state);
+    _render(container);
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    const name = (window.prompt('Name this layout') || '').trim();
+    if (!name) return;
+    // Saving under an existing name replaces it, so a user refining a layout
+    // updates it rather than accumulating near-duplicates.
+    const existing = state.presets.findIndex(p => p.name === name);
+    const entry = { name, layout: state.layout };
+    if (existing >= 0) state.presets[existing] = entry;
+    else state.presets.push(entry);
+    repaint();
+    await _savePresets(state);
+  });
+}
+
+/** Whether the grid is wide enough for two columns to mean anything. */
+function _isTwoColumn(body) {
+  return (body.clientWidth || window.innerWidth) > SINGLE_COLUMN_MAX_WIDTH;
+}
+
+/**
+ * Put the saved arrangement onto freshly rendered markup.
+ *
+ * Pre:  `body` holds the default markup — both columns present, every panel
+ *       carrying data-panel-id.
+ * Post: each panel sits in its stored column at its stored index, the grid
+ *       tracks match the stored split, and each list is at its stored height.
+ * Inv:  below SINGLE_COLUMN_MAX_WIDTH nothing is applied. A split saved on a
+ *       1320px desktop would otherwise be forced onto a 390px phone, where the
+ *       grid is a single column and the second track does not exist.
+ */
+function _applyLayout(body, state) {
+  const grid = body.querySelector('[data-main-grid]');
+  if (!grid) return;
+
+  const columns = Array.from(grid.querySelectorAll('[data-column]'));
+  if (columns.length < 2) return;
+
+  if (!_isTwoColumn(body)) {
+    grid.style.gridTemplateColumns = '';
+    return;
+  }
+
+  const { split, columns: order, heights } = state.layout;
+  grid.style.gridTemplateColumns = `${split}% 6px ${100 - split - 1}%`;
+
+  order.forEach((ids, columnIndex) => {
+    const target = columns[columnIndex];
+    if (!target) return;
+    for (const id of ids) {
+      const panel = grid.querySelector(`[data-panel-id="${id}"]`);
+      // appendChild moves an existing node, so this both relocates a panel to
+      // another column and settles the order within one.
+      if (panel) target.appendChild(panel);
+    }
+  });
+
+  for (const [id, height] of Object.entries(heights || {})) {
+    const scroll = grid.querySelector(`[data-panel-id="${id}"] [data-panel-scroll]`);
+    if (scroll && Number.isFinite(Number(height))) {
+      scroll.style.maxHeight = `${Math.max(MIN_PANEL_HEIGHT, Number(height))}px`;
+    }
+  }
+}
+
+/**
+ * Read the panel order back out of the DOM after a drag.
+ *
+ * Post: state.layout.columns matches what the user sees, and is persisted.
+ *       Derived from the DOM rather than tracked alongside it, so the two
+ *       cannot disagree about where a panel ended up.
+ */
+function _captureColumnOrder(body, state) {
+  const columns = Array.from(body.querySelectorAll('[data-column]'));
+  state.layout.columns = columns.map(col =>
+    Array.from(col.querySelectorAll('[data-panel-id]')).map(el => el.dataset.panelId),
+  );
+  _persistLayout(state);
+}
+
+/**
+ * Drag the gutter to change how the two columns share the width.
+ *
+ * Pre:  the grid is in two-column mode.
+ * Post: state.layout.split holds the new percentage, clamped so neither column
+ *       can be dragged away entirely, and is persisted on release.
+ */
+function _bindColumnResize(body, state) {
+  const grid = body.querySelector('[data-main-grid]');
+  const gutter = body.querySelector('[data-col-gutter]');
+  if (!grid || !gutter) return;
+
+  const applySplit = (percent) => {
+    state.layout.split = Math.min(
+      100 - MIN_SPLIT_PERCENT, Math.max(MIN_SPLIT_PERCENT, percent),
+    );
+    grid.style.gridTemplateColumns =
+      `${state.layout.split}% 6px ${100 - state.layout.split - 1}%`;
+  };
+
+  const onPointerMove = (e) => {
+    const rect = grid.getBoundingClientRect();
+    if (!rect.width) return;
+    applySplit(((e.clientX - rect.left) / rect.width) * 100);
+  };
+
+  const onPointerUp = () => {
+    gutter.classList.remove('dragging');
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    _persistLayout(state);
+  };
+
+  gutter.addEventListener('pointerdown', (e) => {
+    if (!_isTwoColumn(body)) return;
+    e.preventDefault();
+    gutter.classList.add('dragging');
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  });
+
+  // Keyboard equivalent, so the split is reachable without a pointer.
+  gutter.addEventListener('keydown', (e) => {
+    const step = e.key === 'ArrowLeft' ? -2 : e.key === 'ArrowRight' ? 2 : 0;
+    if (!step) return;
+    e.preventDefault();
+    applySplit(state.layout.split + step);
+    _persistLayout(state);
+  });
+}
+
+/**
+ * Drag a panel's bottom strip to change how tall its list is.
+ *
+ * Post: state.layout.heights[panelId] holds the new height in pixels, floored
+ *       at MIN_PANEL_HEIGHT so a panel cannot be collapsed to nothing, and is
+ *       persisted on release.
+ */
+function _bindPanelResize(body, state) {
+  body.querySelectorAll('[data-panel-resize]').forEach(handle => {
+    const panel = handle.closest('[data-panel-id]');
+    const scroll = panel?.querySelector('[data-panel-scroll]');
+    if (!panel || !scroll) return;
+    const panelId = panel.dataset.panelId;
+
+    const applyHeight = (px) => {
+      const height = Math.max(MIN_PANEL_HEIGHT, Math.round(px));
+      scroll.style.maxHeight = `${height}px`;
+      state.layout.heights = { ...state.layout.heights, [panelId]: height };
+    };
+
+    const onPointerMove = (e) => {
+      applyHeight(e.clientY - scroll.getBoundingClientRect().top);
+    };
+
+    const onPointerUp = () => {
+      handle.classList.remove('dragging');
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      _persistLayout(state);
+    };
+
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      handle.classList.add('dragging');
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+    });
+
+    handle.addEventListener('keydown', (e) => {
+      const step = e.key === 'ArrowUp' ? -24 : e.key === 'ArrowDown' ? 24 : 0;
+      if (!step) return;
+      e.preventDefault();
+      applyHeight(scroll.getBoundingClientRect().height + step);
+      _persistLayout(state);
+    });
+  });
+}
+
+/**
+ * Make the panels in each column reorderable by dragging their headers.
+ *
+ * Reuses the project's own dragSort helper rather than adding a library: the
+ * page carries no runtime dependencies and this does not justify the first.
+ * dragSort keys instances by container id, so each column is given one.
+ */
+async function _bindPanelReorder(body, state) {
+  let dragSort;
+  try {
+    dragSort = await import('./dragSort.js');
+  } catch (err) {
+    console.error('Panel reordering unavailable:', err);
+    return;
+  }
+
+  body.querySelectorAll('[data-column]').forEach((col, index) => {
+    if (!col.id) col.id = `overview-column-${index}-${Math.random().toString(36).slice(2, 8)}`;
+    dragSort.enable(col.id, '[data-panel-id]', {
+      handleSelector: '[data-panel-handle]',
+      instanceKey: col.id,
+      onReorder: () => _captureColumnOrder(body, state),
+    });
+  });
 }
 
 // Inline SVG Icon Helpers (Strictly No Emojis)
@@ -226,16 +607,75 @@ function _injectStyles() {
       font-size: 11px;
       opacity: 0.6;
     }
+    /* Three tracks: column, gutter, column. The two column widths are written
+       by _applyLayout from the saved split; the gutter is what the user drags
+       to change them. */
     .overview-main-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 6px 1fr;
       gap: 16px;
       flex: 1;
+      align-items: start;
     }
+    .overview-column {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-width: 0;
+    }
+    .overview-col-gutter {
+      align-self: stretch;
+      min-height: 40px;
+      border-radius: 3px;
+      cursor: col-resize;
+      background: var(--border, rgba(255,255,255,0.08));
+      opacity: 0.5;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .overview-col-gutter:hover,
+    .overview-col-gutter:focus-visible,
+    .overview-col-gutter.dragging {
+      opacity: 1;
+      background: var(--brand-color, #61afef);
+    }
+    .overview-panel-scroll {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow-y: auto;
+    }
+    /* Grab strip along a panel's bottom edge. Sits inside the panel so it
+       resizes that panel's list rather than the grid track. */
+    .overview-panel-resize {
+      height: 7px;
+      margin-top: 2px;
+      border-radius: 3px;
+      cursor: ns-resize;
+      background: var(--border, rgba(255,255,255,0.08));
+      opacity: 0;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .overview-panel:hover .overview-panel-resize { opacity: 0.6; }
+    .overview-panel-resize:hover,
+    .overview-panel-resize:focus-visible,
+    .overview-panel-resize.dragging {
+      opacity: 1;
+      background: var(--brand-color, #61afef);
+    }
+    .overview-panel.dragging { opacity: 0.55; }
+    .drag-placeholder {
+      border: 1px dashed var(--brand-color, #61afef);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--brand-color, #61afef) 8%, transparent);
+    }
+    /* One column below this width. A layout saved on a wide desktop must not
+       be applied here — see _applyLayout, which leaves the grid alone. */
     @media (max-width: 980px) {
       .overview-main-grid {
         grid-template-columns: 1fr;
       }
+      .overview-col-gutter { display: none; }
+      .overview-panel-resize { display: none; }
     }
     .overview-panel {
       background: var(--panel, #21252b);
@@ -329,23 +769,75 @@ function _injectStyles() {
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+    /* The action pill carries what the reader has to DO, lifted out of the AI
+       summary. Bound to --status-busy rather than a literal so it tracks the
+       active theme, matching the urgency badge convention below. */
     .overview-ai-pill {
       display: inline-flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 4px;
-      background: rgba(97, 175, 239, 0.12);
-      border: 1px solid rgba(97, 175, 239, 0.3);
-      color: #61afef;
+      background: color-mix(in srgb, var(--status-busy, #61afef) 14%, transparent);
+      border: 1px solid color-mix(in srgb, var(--status-busy, #61afef) 34%, transparent);
+      color: var(--status-busy, #61afef);
       padding: 2px 6px;
       border-radius: 4px;
       font-size: 11px;
+      line-height: 1.35;
       margin-top: 2px;
       width: fit-content;
+      max-width: 100%;
+    }
+    .overview-ai-pill svg { flex: none; margin-top: 1px; }
+    /* Triage label and message tags: metadata, not prose. Both stay visually
+       quieter than the summary they sit under. */
+    .overview-email-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      margin-top: 3px;
+    }
+    .overview-triage-chip,
+    .overview-tag-chip {
+      font-size: 10px;
+      line-height: 1.6;
+      padding: 0 5px;
+      border-radius: 3px;
+      white-space: nowrap;
+      border: 1px solid var(--border, rgba(255,255,255,0.10));
+    }
+    .overview-triage-chip {
+      color: var(--fg, #abb2bf);
+      opacity: 0.6;
+      background: rgba(0,0,0,0.16);
+    }
+    .overview-tag-chip {
+      color: var(--brand-color, #61afef);
+      background: color-mix(in srgb, var(--brand-color, #61afef) 10%, transparent);
+      border-color: color-mix(in srgb, var(--brand-color, #61afef) 26%, transparent);
+    }
+    .overview-tag-chip.action-needed {
+      color: var(--status-warn, #e5c07b);
+      background: color-mix(in srgb, var(--status-warn, #e5c07b) 12%, transparent);
+      border-color: color-mix(in srgb, var(--status-warn, #e5c07b) 30%, transparent);
     }
     /* Urgency binds one derived token per level; the badge shape is written
        once against it. Derived per theme by deriveStatusColors in theme.js,
        so an urgent email reads the same way on all sixteen themes without
        this file naming a colour. */
+    /* A thread the user answered. Bound to the theme's ok token: it is a
+       reassurance, not an alarm. */
+    .overview-replied-badge {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      padding: 2px 5px;
+      border-radius: 3px;
+      letter-spacing: 0.4px;
+      color: var(--status-ok, #98c379);
+      background: color-mix(in srgb, var(--status-ok, #98c379) 16%, transparent);
+      border: 1px solid color-mix(in srgb, var(--status-ok, #98c379) 34%, transparent);
+    }
     .overview-urgency-badge {
       font-size: 10px;
       font-weight: 700;
@@ -518,6 +1010,12 @@ export function mount(container, _params = {}) {
   container.innerHTML = `
     <div class="overview-toolbar">
       <span class="overview-cache-status" data-cache-status></span>
+      <select class="overview-select" data-preset-select title="Apply a saved layout">
+        <option value="">Layout…</option>
+      </select>
+      <button class="overview-btn" data-save-preset title="Save the current layout under a name">
+        <span>Save layout</span>
+      </button>
       <button class="overview-btn" data-drill-organisers title="Open AI Work Organisers">
         ${ICONS.layers}
         <span>AI Organisers</span>
@@ -535,6 +1033,8 @@ export function mount(container, _params = {}) {
   container.querySelector('[data-refresh-overview]').addEventListener('click', () => {
     _fetchOverviewData(container, true);
   });
+
+  _bindPresetControls(container, state);
   container.querySelector('[data-drill-organisers]').addEventListener('click', () => {
     _drill(container, 'organisers', {}, () => {
       if (window.openOrganisers) window.openOrganisers();
@@ -596,7 +1096,7 @@ async function _fetchOverviewData(container, forceRefresh = false) {
   _updateCacheStatusBanner(container);
   try {
     const res = await fetch(
-      `/api/overview?email_days=${state.emailDaysFilter}&force_refresh=${forceRefresh}&_=${Date.now()}`,
+      `/api/overview?email_days=${FETCH_WINDOW_DAYS}&force_refresh=${forceRefresh}&_=${Date.now()}`,
       { credentials: 'same-origin' },
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -651,7 +1151,9 @@ function _render(container) {
   const projectsData = state.data.projects_matrix || [];
   const opsData = state.data.operations_radar || { inquiries: [] };
 
-  // Filter emails
+  // Filter emails. Every filter here is client-side, so changing one re-renders
+  // from data already held and cannot disturb the other panels.
+  const nowSeconds = Date.now() / 1000;
   let filteredEmails = emailsData.emails || [];
   if (state.emailAccountFilter !== 'all') {
     filteredEmails = filteredEmails.filter(e => e.account_id === state.emailAccountFilter);
@@ -659,12 +1161,39 @@ function _render(container) {
   if (state.emailUnreadOnly) {
     filteredEmails = filteredEmails.filter(e => !e.read);
   }
+  if (state.emailDaysFilter) {
+    const emailCutoff = nowSeconds - state.emailDaysFilter * 86400;
+    filteredEmails = filteredEmails.filter(e => (e.date_epoch || 0) >= emailCutoff);
+  }
+  if (state.emailOrganiserFilter !== 'all') {
+    filteredEmails = filteredEmails.filter(
+      e => (e.organiser_ids || []).includes(state.emailOrganiserFilter),
+    );
+  }
+  if (state.emailTagFilter !== 'all') {
+    filteredEmails = filteredEmails.filter(e => (e.tags || []).includes(state.emailTagFilter));
+  }
 
-  // Filter operations
+  // Filter operations, on its own controls only.
   let filteredOps = opsData.inquiries || [];
   if (state.opsFilterSource !== 'all') {
     filteredOps = filteredOps.filter(i => i.source === state.opsFilterSource);
   }
+  if (state.opsDaysFilter !== 'all') {
+    const opsCutoff = nowSeconds - state.opsDaysFilter * 86400;
+    filteredOps = filteredOps.filter(i => {
+      const created = Date.parse(i.created_at || '');
+      // An inquiry with no parseable date stays visible: dropping it would
+      // hide work rather than filter it.
+      return Number.isNaN(created) ? true : created / 1000 >= opsCutoff;
+    });
+  }
+
+  // Facets come from the data, so a tag the triage stops producing stops being
+  // offered instead of lingering as a filter that selects nothing.
+  const availableTags = [
+    ...new Set((emailsData.emails || []).flatMap(e => e.tags || [])),
+  ].sort();
 
   const daysLabel = state.emailDaysFilter === 1 ? 'Today' : `${state.emailDaysFilter}d`;
 
@@ -688,13 +1217,14 @@ function _render(container) {
       </div>
     </div>
 
-    <!-- Main Dual Grid Layout -->
-    <div class="overview-main-grid">
-      <!-- LEFT COLUMN: Email Digest & Operations Radar -->
-      <div style="display:flex;flex-direction:column;gap:16px;">
+    <!-- Main grid. Column membership, order, widths and panel heights are all
+         restored by _applyLayout after this markup lands, so what is written
+         here is only the default arrangement. -->
+    <div class="overview-main-grid" data-main-grid>
+      <div class="overview-column" data-column="0">
         <!-- Email Digest Panel -->
-        <div class="overview-panel">
-          <div class="overview-panel-header">
+        <div class="overview-panel" data-panel-id="emails">
+          <div class="overview-panel-header" data-panel-handle>
             ${ICONS.mail}
             <span>Email Stream (${daysLabel})</span>
           </div>
@@ -704,6 +1234,23 @@ function _render(container) {
                 <option value="all">All Accounts (${emailsData.accounts.length})</option>
                 ${emailsData.accounts.map(a => `<option value="${a.id}" ${state.emailAccountFilter === a.id ? 'selected' : ''}>${a.name}</option>`).join('')}
               </select>
+              ${(emailsData.organisers || []).length ? `
+                <select class="overview-select" data-email-organiser-select
+                        title="Filter by AI Work Organiser">
+                  <option value="all">All organisers</option>
+                  ${emailsData.organisers.map(o => `
+                    <option value="${_escape(o.id)}" ${state.emailOrganiserFilter === o.id ? 'selected' : ''}>${_escape(o.name)}</option>
+                  `).join('')}
+                </select>
+              ` : ''}
+              ${availableTags.length ? `
+                <select class="overview-select" data-email-tag-select title="Filter by tag">
+                  <option value="all">All tags</option>
+                  ${availableTags.map(tag => `
+                    <option value="${_escape(tag)}" ${state.emailTagFilter === tag ? 'selected' : ''}>${_escape(tag)}</option>
+                  `).join('')}
+                </select>
+              ` : ''}
               <button class="overview-btn ${state.emailDaysFilter === 1 ? 'active' : ''}" data-days="1">Today</button>
               <button class="overview-btn ${state.emailDaysFilter === 3 ? 'active' : ''}" data-days="3">3d</button>
               <button class="overview-btn ${state.emailDaysFilter === 7 ? 'active' : ''}" data-days="7">7d</button>
@@ -713,28 +1260,38 @@ function _render(container) {
               </label>
             </div>
 
-            <div style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto;">
+            <div class="overview-panel-scroll" data-panel-scroll style="max-height:360px;">
               ${filteredEmails.length === 0 ? '<div class="overview-empty">No emails in this duration.</div>' : ''}
               ${filteredEmails.map(em => `
                 <div class="overview-email-item ${!em.read ? 'unread' : ''}" data-email-id="${em.id}" data-email-uid="${em.uid || ''}" data-email-account-id="${em.account_id || ''}" data-email-folder="${em.folder || 'INBOX'}">
                   <div class="overview-email-top">
                     <span class="overview-email-sender">${_escape(em.sender_name)}</span>
+                    ${em.replied ? `<span class="overview-replied-badge" title="You replied to this thread">Replied</span>` : ''}
                     ${em.urgency === 'critical' ? `<span class="overview-urgency-badge critical">Critical</span>` : ''}
                     ${em.urgency === 'urgent' ? `<span class="overview-urgency-badge urgent">Urgent</span>` : ''}
                     <span class="overview-email-date">${_formatDate(em.timestamp)}</span>
                   </div>
                   <div class="overview-email-subject">${_escape(em.subject)}</div>
-                  ${em.snippet ? `<div class="overview-email-snippet">${_escape(em.snippet)}</div>` : ''}
+                  ${em.snippet && em.snippet !== em.subject ? `<div class="overview-email-snippet">${_escape(em.snippet)}</div>` : ''}
                   ${em.ai_comment ? `<div class="overview-ai-pill">${ICONS.sparkle} <span>${_escape(em.ai_comment)}</span></div>` : ''}
+                  ${(em.triage_reason || (em.tags || []).length) ? `
+                    <div class="overview-email-meta">
+                      ${(em.tags || []).map(t => `<span class="overview-tag-chip ${_escape(String(t))}">${_escape(String(t))}</span>`).join('')}
+                      ${em.triage_reason ? `<span class="overview-triage-chip">${_escape(em.triage_reason)}</span>` : ''}
+                    </div>
+                  ` : ''}
                 </div>
               `).join('')}
             </div>
+            <div class="overview-panel-resize" data-panel-resize role="separator"
+                 aria-orientation="horizontal" tabindex="0"
+                 aria-label="Resize email list"></div>
           </div>
         </div>
 
         <!-- Operations Radar Panel -->
-        <div class="overview-panel">
-          <div class="overview-panel-header">
+        <div class="overview-panel" data-panel-id="operations">
+          <div class="overview-panel-header" data-panel-handle>
             ${ICONS.operations}
             <span>Operations &amp; Inquiries Radar</span>
           </div>
@@ -747,9 +1304,12 @@ function _render(container) {
                 <option value="curated" ${state.opsFilterSource === 'curated' ? 'selected' : ''}>Curated</option>
                 <option value="queue" ${state.opsFilterSource === 'queue' ? 'selected' : ''}>WhatsApp Queue</option>
               </select>
+              <button class="overview-btn ${state.opsDaysFilter === 7 ? 'active' : ''}" data-ops-days="7">7d</button>
+              <button class="overview-btn ${state.opsDaysFilter === 30 ? 'active' : ''}" data-ops-days="30">30d</button>
+              <button class="overview-btn ${state.opsDaysFilter === 'all' ? 'active' : ''}" data-ops-days="all">All</button>
             </div>
 
-            <div style="display:flex;flex-direction:column;gap:8px;max-height:300px;overflow-y:auto;">
+            <div class="overview-panel-scroll" data-panel-scroll style="max-height:300px;">
               ${filteredOps.length === 0 ? '<div class="overview-empty">No recent operations inquiries.</div>' : ''}
               ${filteredOps.map(op => `
                 <div class="overview-inquiry-item ${op.is_overdue ? 'overdue' : ''}">
@@ -775,13 +1335,20 @@ function _render(container) {
                 </div>
               `).join('')}
             </div>
+            <div class="overview-panel-resize" data-panel-resize role="separator"
+                 aria-orientation="horizontal" tabindex="0"
+                 aria-label="Resize operations list"></div>
           </div>
         </div>
       </div>
 
-      <!-- RIGHT COLUMN: Responsive Active Projects Matrix -->
-      <div class="overview-panel" style="flex:1;">
-        <div class="overview-panel-header">
+      <div class="overview-col-gutter" data-col-gutter role="separator"
+           aria-orientation="vertical" tabindex="0"
+           aria-label="Resize columns"></div>
+
+      <div class="overview-column" data-column="1">
+        <div class="overview-panel" data-panel-id="projects" style="flex:1;">
+        <div class="overview-panel-header" data-panel-handle>
           ${ICONS.folder}
           <span>Active Projects &amp; Tasks Matrix</span>
         </div>
@@ -830,11 +1397,18 @@ function _render(container) {
             }).join('')}
           </div>
         </div>
+        </div>
       </div>
     </div>
   `;
 
+  // Layout is applied after the markup lands, because it moves rendered panels
+  // between columns rather than choosing where to emit them.
+  _applyLayout(body, state);
   _bindEventListeners(container, body, state);
+  _bindColumnResize(body, state);
+  _bindPanelResize(body, state);
+  _bindPanelReorder(body, state);
 }
 
 function _bindEventListeners(container, body, state) {
@@ -862,7 +1436,36 @@ function _bindEventListeners(container, body, state) {
       const days = parseInt(btn.dataset.days, 10) || 7;
       if (state.emailDaysFilter === days) return;
       state.emailDaysFilter = days;
-      _fetchOverviewData(container, false);
+      // Re-render, never refetch: the rows are already held, and refetching
+      // rebuilt the operations and projects panels for no reason.
+      _render(container);
+    });
+  });
+
+  const organiserSel = body.querySelector('[data-email-organiser-select]');
+  if (organiserSel) {
+    organiserSel.addEventListener('change', (e) => {
+      state.emailOrganiserFilter = e.target.value;
+      _render(container);
+    });
+  }
+
+  const tagSel = body.querySelector('[data-email-tag-select]');
+  if (tagSel) {
+    tagSel.addEventListener('change', (e) => {
+      state.emailTagFilter = e.target.value;
+      _render(container);
+    });
+  }
+
+  body.querySelectorAll('[data-ops-days]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const raw = btn.dataset.opsDays;
+      const days = raw === 'all' ? 'all' : parseInt(raw, 10);
+      if (state.opsDaysFilter === days) return;
+      state.opsDaysFilter = days;
+      _render(container);
     });
   });
 

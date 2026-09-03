@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from core.database import (
     SessionLocal,
     get_db,
+    EmailOrganiserOverride,
     WorkOrganiser,
     Project,
     ProjectTask,
@@ -75,6 +76,19 @@ class OrganiserUpdate(BaseModel):
     memory_lane: Optional[str] = None
     is_active: Optional[bool] = None
     sort_order: Optional[int] = None
+
+
+class ReassignEmailRequest(BaseModel):
+    """One human correction to an email's organiser.
+
+    Exactly one of organiser_id / excluded_from_id is set: the first files the
+    message under an organiser, the second removes it from one whose rules keep
+    claiming it.
+    """
+    account_key: str = ""
+    uid: str
+    organiser_id: Optional[str] = None
+    excluded_from_id: Optional[str] = None
 
 
 class PreviewRulesRequest(BaseModel):
@@ -247,14 +261,26 @@ def _matches_rule(
     subject = (email.get("subject") or "").lower()
     body_snippet = (email.get("snippet") or "").lower()
 
+    # Recipients count too, but only for mail the user sent. On a received
+    # message the sender is the correspondent and the recipient is the user, so
+    # matching recipients there would make a rule naming someone also claim
+    # every message addressed to them. On a sent message the relationship is
+    # reversed: the correspondent is in To/Cc, and the sender is the user.
+    is_outbound = str(email.get("folder") or "").lower().startswith(("sent", "inbox/sent", "[gmail]/sent"))
+    recipients = ""
+    if is_outbound:
+        recipients = f"{email.get('to_text') or ''} {email.get('cc_text') or ''}".lower()
+
     # Senders Match
     for s in senders:
-        if s in from_name or s in from_addr:
+        if s in from_name or s in from_addr or (recipients and s in recipients):
             return True
 
     # Domains Match
     for d in domains:
         if f"@{d}" in from_addr or from_addr.endswith(f".{d}"):
+            return True
+        if recipients and f"@{d}" in recipients:
             return True
 
     # Keywords Match (in Subject or Snippet)
@@ -265,8 +291,27 @@ def _matches_rule(
     return False
 
 
+# How much cached body text a keyword rule may search. Enough to carry the
+# substance of a message without loading whole threads into memory for every
+# organiser on every request.
+_SNIPPET_CHARS = 2000
+
+
 def _get_recent_emails(days: int = 14) -> List[Dict[str, Any]]:
-    """Retrieve raw email rows from SCHEDULED_EMAILS_DB."""
+    """Retrieve raw email rows from SCHEDULED_EMAILS_DB, with body text where cached.
+
+    Pre:  none.
+    Post: each row carries the indexed header fields, plus ``snippet`` holding
+          up to _SNIPPET_CHARS of body text when the preview cache has it and
+          "" when it does not. Never raises: an unreadable store yields [].
+    Inv:  the snippet is read, never fetched. Bodies reach the preview cache
+          through the email module's own background warming; matching does not
+          open IMAP connections of its own.
+
+    Keyword rules search this. Before the join they searched a ``snippet`` key
+    that nothing ever set, so every keyword rule silently matched on the subject
+    line alone.
+    """
     db_file = Path(SCHEDULED_EMAILS_DB)
     if not db_file.exists():
         return []
@@ -277,15 +322,46 @@ def _get_recent_emails(days: int = 14) -> List[Dict[str, Any]]:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         rows = cur.execute("""
-            SELECT account_key, folder, uid, message_id, subject, from_name, from_address,
-                   to_text, cc_text, date_iso, date_display, date_epoch, size, flags, has_attachments
-            FROM email_message_index
-            WHERE date_epoch >= ?
-            ORDER BY date_epoch DESC
-        """, (cutoff_ts,)).fetchall()
+            SELECT i.account_key, i.folder, i.uid, i.message_id, i.subject,
+                   i.from_name, i.from_address, i.to_text, i.cc_text,
+                   i.date_iso, i.date_display, i.date_epoch, i.size, i.flags,
+                   i.has_attachments,
+                   substr(json_extract(p.payload_json, '$.body'), 1, ?) AS snippet
+            FROM email_message_index AS i
+            LEFT JOIN email_body_preview_cache AS p
+                   ON p.owner = i.owner
+                  AND p.account_key = i.account_key
+                  AND p.folder = i.folder
+                  AND p.uid = i.uid
+            WHERE i.date_epoch >= ?
+            ORDER BY i.date_epoch DESC
+        """, (_SNIPPET_CHARS, cutoff_ts)).fetchall()
         emails = [dict(r) for r in rows]
+        for email in emails:
+            email["snippet"] = email.get("snippet") or ""
         conn.close()
         return emails
+    except sqlite3.OperationalError as e:
+        # json_extract needs SQLite's JSON1 extension, and the preview cache
+        # postdates some databases. Fall back to headers alone rather than
+        # leaving the organisers panel empty — keyword rules then match on the
+        # subject, which is what they did before the join existed.
+        logger.debug("Body-text join unavailable, using headers only: %s", e)
+        try:
+            rows = cur.execute("""
+                SELECT account_key, folder, uid, message_id, subject, from_name,
+                       from_address, to_text, cc_text, date_iso, date_display,
+                       date_epoch, size, flags, has_attachments
+                FROM email_message_index
+                WHERE date_epoch >= ?
+                ORDER BY date_epoch DESC
+            """, (cutoff_ts,)).fetchall()
+            emails = [{**dict(r), "snippet": ""} for r in rows]
+            conn.close()
+            return emails
+        except Exception:
+            logger.debug("Failed querying scheduled_emails.db for organisers", exc_info=True)
+            return []
     except Exception as e:
         logger.debug("Failed querying scheduled_emails.db for organisers: %s", e)
         return []
@@ -300,55 +376,194 @@ def _get_memory_manager():
         return None
 
 
-def _organiser_memories(org, owner, limit: int = 20) -> List[Dict[str, Any]]:
-    """The memories bound to one organiser's lane.
+def email_key(email: Dict[str, Any]) -> tuple[str, str]:
+    """The (account, uid) pair that identifies one indexed message.
+
+    Overrides are stored against this pair because it is what
+    ``email_message_index`` keys on and what the UI can pass back. Message-ids
+    are absent on some indexed rows, so they cannot serve as the identity.
+    """
+    account = str(email.get("account_key") or email.get("account_id") or "")
+    return account, str(email.get("uid") or "")
+
+
+def load_organiser_overrides(db: Session, owner: Optional[str]) -> Dict[tuple[str, str], Dict[str, Any]]:
+    """Every human correction this owner has made, indexed by message.
+
+    Pre:  db is an open session.
+    Post: {(account_key, uid): {"assigned": org_id|None, "excluded": {org_id}}}.
+          Loaded once per request rather than queried per email -- the caller
+          iterates hundreds of messages against a handful of organisers.
+    """
+    overrides: Dict[tuple[str, str], Dict[str, Any]] = {}
+    try:
+        rows = db.query(EmailOrganiserOverride).filter(
+            or_(EmailOrganiserOverride.owner == owner, EmailOrganiserOverride.owner == None),
+        ).all()
+    except Exception:
+        # The table postdates some databases; absent it, rules alone decide.
+        return overrides
+
+    for row in rows:
+        entry = overrides.setdefault(
+            (row.account_key or "", row.uid or ""), {"assigned": None, "excluded": set()}
+        )
+        if row.excluded_from_id:
+            entry["excluded"].add(row.excluded_from_id)
+        elif row.organiser_id:
+            entry["assigned"] = row.organiser_id
+    return overrides
+
+
+def email_belongs_to_organiser(
+    email: Dict[str, Any],
+    org,
+    accounts_list: List[str],
+    rules: Dict[str, Any],
+    overrides: Dict[tuple[str, str], Dict[str, Any]],
+) -> bool:
+    """Whether one email belongs to one organiser, overrides included.
+
+    Precedence: an explicit assignment wins outright, then an explicit
+    exclusion, then the rules. A human correction therefore survives any later
+    edit to the rules -- which is the whole point of recording it.
+
+    Pre:  rules and accounts_list come from the same organiser as `org`;
+          overrides is the map from load_organiser_overrides.
+    Post: True iff this email should appear under this organiser.
+    Inv:  the only definition of email membership. The HTTP route, the MCP
+          server and the overview payload all call it, so they cannot answer
+          the same question differently.
+    """
+    entry = overrides.get(email_key(email))
+    if entry:
+        if entry["assigned"]:
+            return entry["assigned"] == org.id
+        if org.id in entry["excluded"]:
+            return False
+    return _matches_rule(email, accounts_list, rules)
+
+
+def organiser_lane(org) -> str:
+    """The memory category this organiser owns.
+
+    Every memory written *for* an organiser carries this as its category, which
+    is what makes the lane fill up over time. Seeded organisers already store a
+    namespaced ``memory_lane``; one created without it falls back to its slug,
+    so the lane is always well-defined rather than sometimes absent.
+
+    Pre:  org is a WorkOrganiser with a slug.
+    Post: a non-empty category string, stable for the life of the organiser.
+    """
+    lane = (getattr(org, "memory_lane", None) or "").strip()
+    return lane or f"organisers:{(org.slug or '').strip().lower()}"
+
+
+def _memory_matches_organiser(memory: Dict[str, Any], org, rules: Dict[str, Any]) -> bool:
+    """Whether a general memory is worth showing beside this organiser.
+
+    General memories carry categories like ``fact`` and ``preference`` and were
+    never written with an organiser in mind, so they are matched on the
+    organiser's own sender/keyword/domain vocabulary -- the same words the user
+    already maintains for email. That keeps the reason a memory appears visible
+    and editable, rather than hidden behind a similarity score.
+    """
+    text = (memory.get("text") or "").lower()
+    if not text:
+        return False
+
+    if (org.slug or "").lower() in text:
+        return True
+
+    terms = [
+        str(t).strip().lower().lstrip("@")
+        for group in ("senders", "keywords", "domains")
+        for t in (rules.get(group) or [])
+    ]
+    # A one- or two-character rule term would match almost any text; requiring
+    # three keeps a stray rule from dragging every memory into every organiser.
+    return any(term in text for term in terms if len(term) > 2)
+
+
+def organiser_memory_sections(org, owner, limit: int = 20) -> Dict[str, List[Dict[str, Any]]]:
+    """The organiser's own memories, and the general ones worth showing with them.
+
+    Two sections, because they are two different things: ``lane`` holds what was
+    recorded *for* this organiser, ``referenced`` holds pre-existing general
+    memories the organiser's rules select. Keeping them apart is what lets the
+    lane fill up without pretending the general pool belongs to any one lane.
 
     Pre:  org is a persisted WorkOrganiser; owner is the caller's username, or
           None for an unscoped read.
-    Post: at most `limit` entries the caller owns, each either carrying the
-          organiser's memory lane or category group as its category, or naming
-          the organiser's slug in its text.
-    Inv:  reads the JSON store through MemoryManager, which is where memories
-          actually live — the SQLAlchemy Memory table is a separate store that
-          nothing in this system writes or reads. Never raises: an unreadable
-          store yields [].
+    Post: {"lane": [...], "referenced": [...]}, each at most `limit` entries the
+          caller owns, disjoint from one another. Never raises: an unreadable
+          store yields empty sections.
+    Inv:  this is the only definition of organiser membership for memories.
+          The badge count and the tab both derive from it, so they cannot
+          disagree -- they previously used different scoping and different
+          predicates, and did.
 
     Shared with mcp_servers/organisers_server.py so the MCP tool and the HTTP
     route cannot drift into answering the same question differently.
     """
+    empty: Dict[str, List[Dict[str, Any]]] = {"lane": [], "referenced": []}
     mem_mgr = _get_memory_manager()
     if not mem_mgr or not org.slug:
-        return []
+        return empty
+
+    def _view(memory: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": memory.get("id"),
+            "content": memory.get("text"),
+            "category": memory.get("category"),
+            "timestamp": memory.get("timestamp"),
+        }
+
     try:
         # Scope to the caller. load_all() is unfiltered and returned every
         # user's memories on a multi-user deploy.
         own_mems = mem_mgr.load(owner) if owner else mem_mgr.load_all()
-        target_slug = org.slug.lower()
-        categories = {
-            c for c in (org.memory_lane, org.category_group)
-            if c and c.strip()
-        }
-        return [
-            {
-                "id": m.get("id"),
-                "content": m.get("text"),
-                "category": m.get("category"),
-                "timestamp": m.get("timestamp"),
-            }
-            for m in own_mems
-            if m.get("category") in categories
-            or target_slug in (m.get("text") or "").lower()
-        ][:limit]
     except Exception:
-        return []
+        return empty
+
+    try:
+        rules = json.loads(org.rules_json) if org.rules_json else {}
+    except Exception:
+        rules = {}
+
+    lane_category = organiser_lane(org)
+    lane, referenced = [], []
+    for memory in own_mems:
+        if memory.get("category") == lane_category:
+            lane.append(_view(memory))
+        elif _memory_matches_organiser(memory, org, rules):
+            referenced.append(_view(memory))
+
+    return {"lane": lane[:limit], "referenced": referenced[:limit]}
+
+
+def count_organiser_memories(org, owner) -> int:
+    """How many memories the organiser's tab will show.
+
+    Derived from organiser_memory_sections so the card badge and the tab are
+    the same number by construction.
+    """
+    sections = organiser_memory_sections(org, owner)
+    return len(sections["lane"]) + len(sections["referenced"])
 
 
 def _format_organiser_summary(
     org: WorkOrganiser,
     all_emails: List[Dict[str, Any]],
     db: Session,
+    owner: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Compile complete metadata and stats for an organiser."""
+    """Compile complete metadata and stats for an organiser.
+
+    Pre:  owner is the caller's username. It is optional only so existing
+          callers keep working; passing None widens the memory count to
+          every user's memories, which is why every route here passes it.
+    """
     try:
         accounts_list = json.loads(org.target_accounts) if org.target_accounts else []
     except Exception:
@@ -364,8 +579,14 @@ def _format_organiser_summary(
     except Exception:
         project_ids = []
 
-    # Calculate email match count
-    matching_emails = [e for e in all_emails if _matches_rule(e, accounts_list, rules_dict)]
+    # Email match count, human corrections included. Counting raw rule hits
+    # here while the tab listed corrected membership would put a different
+    # number on the card than in the list.
+    overrides = load_organiser_overrides(db, owner)
+    matching_emails = [
+        e for e in all_emails
+        if email_belongs_to_organiser(e, org, accounts_list, rules_dict, overrides)
+    ]
     match_count = len(matching_emails)
 
     # Calculate linked tasks count
@@ -376,19 +597,11 @@ def _format_organiser_summary(
             ProjectTask.completed == False,
         ).count()
 
-    # Calculate linked memories count
-    memory_count = 0
-    mem_mgr = _get_memory_manager()
-    if mem_mgr and org.slug:
-        try:
-            all_mems = mem_mgr.load_all()
-            target_slug = org.slug.lower()
-            memory_count = sum(
-                1 for m in all_mems
-                if target_slug in (m.get("text") or "").lower() or m.get("category") == org.category_group
-            )
-        except Exception:
-            memory_count = 0
+    # Linked memories: the same count the Memories tab will show, from the same
+    # predicate. This used to load every user's memories and match on
+    # category_group, while the tab loaded the caller's and matched on the lane
+    # — so the badge and the tab reported different numbers for one organiser.
+    memory_count = count_organiser_memories(org, owner)
 
     return {
         "id": org.id,
@@ -463,7 +676,7 @@ def setup_organisers_routes() -> APIRouter:
             db.commit()
             organisers = query.order_by(WorkOrganiser.sort_order.asc()).all()
 
-        results = [_format_organiser_summary(o, all_emails, db) for o in organisers]
+        results = [_format_organiser_summary(o, all_emails, db, owner) for o in organisers]
         return {
             "ok": True,
             "total": len(results),
@@ -487,7 +700,8 @@ def setup_organisers_routes() -> APIRouter:
             raise HTTPException(404, f"Work organiser '{id_or_slug}' not found")
 
         all_emails = _get_recent_emails(days=14)
-        summary = _format_organiser_summary(org, all_emails, db)
+        summary = _format_organiser_summary(org, all_emails, db, owner)
+        detail_overrides = load_organiser_overrides(db, owner)
 
         # 1. Matching Emails
         accounts_list = summary["target_accounts"]
@@ -505,7 +719,8 @@ def setup_organisers_routes() -> APIRouter:
                 "date_display": e.get("date_display"),
                 "has_attachments": bool(e.get("has_attachments")),
             }
-            for e in all_emails if _matches_rule(e, accounts_list, rules_dict)
+            for e in all_emails
+            if email_belongs_to_organiser(e, org, accounts_list, rules_dict, detail_overrides)
         ][:50]
 
         # 2. Linked Tasks
@@ -530,22 +745,23 @@ def setup_organisers_routes() -> APIRouter:
         # 3. Linked Memories
         #
         # Memory entries carry (id, text, category, timestamp, owner) — there
-        # is no separate lane field, so `category` is what memory_lane can bind
-        # to. The column was written on create/update (seeds use namespaced
-        # values like "organisers:bilweekend_ops") and never read.
+        # is no separate lane field, so `category` is what the lane binds to.
         #
-        # The lane is an *additional* selector, not a replacement for
-        # category_group: no existing memory carries a namespaced category, so
-        # letting the lane displace category_group would empty this tab for
-        # every seeded organiser. Match either, plus the slug-in-text heuristic.
-        memories_list = _organiser_memories(org, owner)
+        # Two sections, not one. The lane holds what was recorded for this
+        # organiser; "referenced" holds pre-existing general memories its rules
+        # select. Before this split the tab matched on category_group and the
+        # lane together, and since no memory carried either, it was empty for
+        # every organiser despite the store having entries.
+        memory_sections = organiser_memory_sections(org, owner)
 
         return {
             "ok": True,
             "organiser": summary,
             "matching_emails": matched_emails,
             "tasks": tasks_list,
-            "memories": memories_list,
+            "memories": memory_sections["lane"],
+            "referenced_memories": memory_sections["referenced"],
+            "memory_lane": organiser_lane(org),
         }
 
     @router.post("")
@@ -592,7 +808,7 @@ def setup_organisers_routes() -> APIRouter:
         all_emails = _get_recent_emails(days=14)
         return {
             "ok": True,
-            "organiser": _format_organiser_summary(new_org, all_emails, db),
+            "organiser": _format_organiser_summary(new_org, all_emails, db, owner),
         }
 
     @router.put("/{id_or_slug}")
@@ -647,7 +863,7 @@ def setup_organisers_routes() -> APIRouter:
         all_emails = _get_recent_emails(days=14)
         return {
             "ok": True,
-            "organiser": _format_organiser_summary(org, all_emails, db),
+            "organiser": _format_organiser_summary(org, all_emails, db, owner),
         }
 
     @router.delete("/{id_or_slug}")
@@ -717,7 +933,73 @@ def setup_organisers_routes() -> APIRouter:
             "ok": True,
             "seeded": seeded,
             "total": len(organisers),
-            "organisers": [_format_organiser_summary(o, all_emails, db) for o in organisers],
+            "organisers": [_format_organiser_summary(o, all_emails, db, owner) for o in organisers],
+        }
+
+    @router.post("/reassign-email")
+    def reassign_email(
+        payload: ReassignEmailRequest,
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        """File one email under an organiser by hand, or remove it from one.
+
+        Pre:  account_key and uid identify a message; exactly one of
+              organiser_id (file here) or excluded_from_id (remove from here).
+        Post: the correction is stored and outranks the rules from here on. A
+              second correction for the same message replaces the first rather
+              than stacking, so a message has one filed home at a time.
+        """
+        owner = require_user(request)
+
+        if bool(payload.organiser_id) == bool(payload.excluded_from_id):
+            raise HTTPException(
+                400,
+                "Pass exactly one of organiser_id (to file) or excluded_from_id (to remove).",
+            )
+
+        target_id = payload.organiser_id or payload.excluded_from_id
+        target = db.query(WorkOrganiser).filter(
+            WorkOrganiser.id == target_id,
+            or_(WorkOrganiser.owner == owner, WorkOrganiser.owner == None),
+        ).first()
+        if not target:
+            raise HTTPException(404, f"Work organiser '{target_id}' not found")
+
+        account_key = (payload.account_key or "").strip()
+        uid = (payload.uid or "").strip()
+        if not uid:
+            raise HTTPException(400, "uid is required to identify the message")
+
+        # An assignment supersedes any previous assignment for this message; an
+        # exclusion is per-organiser, so it replaces only its own row.
+        existing = db.query(EmailOrganiserOverride).filter(
+            EmailOrganiserOverride.owner == owner,
+            EmailOrganiserOverride.account_key == account_key,
+            EmailOrganiserOverride.uid == uid,
+            EmailOrganiserOverride.excluded_from_id == payload.excluded_from_id,
+        ).first()
+
+        if existing:
+            existing.organiser_id = payload.organiser_id
+            existing.updated_at = utcnow_naive()
+        else:
+            db.add(EmailOrganiserOverride(
+                id=uuid.uuid4().hex,
+                owner=owner,
+                account_key=account_key,
+                uid=uid,
+                organiser_id=payload.organiser_id,
+                excluded_from_id=payload.excluded_from_id,
+            ))
+        db.commit()
+
+        all_emails = _get_recent_emails(days=14)
+        return {
+            "ok": True,
+            "filed_under": payload.organiser_id,
+            "removed_from": payload.excluded_from_id,
+            "organiser": _format_organiser_summary(target, all_emails, db, owner),
         }
 
     @router.post("/preview-matches")

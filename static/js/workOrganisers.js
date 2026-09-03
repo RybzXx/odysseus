@@ -28,6 +28,7 @@ let _loading = false;
 let _stylesInjected = false;
 let _searchQuery = '';
 let _availableAccounts = [];
+let _allProjects = [];
 
 // Inline Feather/Lucide SVG Icons (Zero Emojis)
 const ICONS = {
@@ -47,7 +48,27 @@ const ICONS = {
   refresh: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
   search: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
   close: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
+  // Added so an organiser can be told apart at a glance. The six above are one
+  // per seeded organiser, so a seventh was identical to the first.
+  calendar: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+  receipt: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2.5-1.5L9 22l2.5-1.5L14 22l2.5-1.5L19 22V2l-2.5 1.5L14 2l-2.5 1.5L9 2 6.5 3.5Z"/><line x1="8" y1="8" x2="15" y2="8"/><line x1="8" y1="12" x2="15" y2="12"/></svg>`,
+  plane: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5a2.1 2.1 0 0 0-3-3L13 8 4.8 6.2a1 1 0 0 0-.9 1.7l5.3 3.4-2.6 2.6-2.2-.5a1 1 0 0 0-.9 1.7L6 18l2.9 1.5a1 1 0 0 0 1.7-.9l-.5-2.2 2.6-2.6 3.4 5.3a1 1 0 0 0 1.7-.9Z"/></svg>`,
+  building: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="9" y1="7" x2="9" y2="7"/><line x1="15" y1="7" x2="15" y2="7"/><line x1="9" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="15" y2="12"/><path d="M10 22v-4h4v4"/></svg>`,
+  tag: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.6 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.2 8.2a2 2 0 0 0 2.8 0l7.2-7.2a2 2 0 0 0 0-2.8Z"/><line x1="7" y1="7" x2="7" y2="7"/></svg>`,
+  megaphone: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 13Z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>`,
 };
+
+/**
+ * The icons an organiser may carry, in picker order.
+ *
+ * Inv: every name here resolves in _getIconSvg. A name stored by an older
+ *      version that is not in this list still renders — as the briefcase
+ *      fallback — rather than leaving the card blank.
+ */
+const ICON_CHOICES = [
+  'briefcase', 'users', 'globe', 'trending-up', 'shield', 'coffee',
+  'calendar', 'receipt', 'plane', 'building', 'tag', 'megaphone',
+];
 
 function _getIconSvg(name) {
   switch (name) {
@@ -56,6 +77,12 @@ function _getIconSvg(name) {
     case 'trending-up': return ICONS.trendingUp;
     case 'shield': return ICONS.shield;
     case 'coffee': return ICONS.coffee;
+    case 'calendar': return ICONS.calendar;
+    case 'receipt': return ICONS.receipt;
+    case 'plane': return ICONS.plane;
+    case 'building': return ICONS.building;
+    case 'tag': return ICONS.tag;
+    case 'megaphone': return ICONS.megaphone;
     case 'briefcase':
     default: return ICONS.briefcase;
   }
@@ -325,6 +352,16 @@ function _injectStyles() {
       border-bottom: 1px solid rgba(255,255,255,0.04);
       vertical-align: middle;
     }
+    .org-reassign-select {
+      font-size: 11px;
+      max-width: 150px;
+      padding: 2px 4px;
+      color: var(--fg, #abb2bf);
+      background: rgba(0,0,0,0.24);
+      border: 1px solid var(--border, rgba(255,255,255,0.10));
+      border-radius: 4px;
+      cursor: pointer;
+    }
     .org-email-row {
       cursor: pointer;
     }
@@ -342,6 +379,79 @@ function _injectStyles() {
       gap: 10px;
       font-size: 13px;
     }
+    .org-memory-section-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--fg, #fff);
+      margin-bottom: 8px;
+    }
+    .org-memory-section-head code {
+      font-size: 10px;
+      opacity: 0.6;
+      font-weight: 400;
+    }
+    .org-empty-inline {
+      font-size: 12px;
+      opacity: 0.6;
+      text-align: center;
+    }
+    .org-icon-picker {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .org-icon-choice {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      cursor: pointer;
+      color: var(--fg, #abb2bf);
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border, rgba(255,255,255,0.10));
+      border-radius: 5px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .org-icon-choice:hover { color: var(--fg, #fff); }
+    .org-icon-choice.selected {
+      color: var(--brand-color, #61afef);
+      border-color: var(--brand-color, #61afef);
+      background: color-mix(in srgb, var(--brand-color, #61afef) 12%, transparent);
+    }
+    .org-color-input {
+      width: 100%;
+      height: 30px;
+      padding: 2px;
+      cursor: pointer;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border, rgba(255,255,255,0.10));
+      border-radius: 5px;
+    }
+    .org-project-picker {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 140px;
+      overflow-y: auto;
+      padding: 6px 8px;
+      background: rgba(0,0,0,0.16);
+      border: 1px solid var(--border, rgba(255,255,255,0.08));
+      border-radius: 6px;
+    }
+    .org-project-choice {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      padding: 2px 0;
+      cursor: pointer;
+    }
+    .org-project-choice input { cursor: pointer; }
     .org-memory-item {
       padding: 10px 12px;
       background: rgba(255,255,255,0.02);
@@ -438,9 +548,12 @@ function _getModal() {
 async function _fetchOrganisers() {
   _loading = true;
   try {
-    const [orgRes, accRes] = await Promise.all([
+    const [orgRes, accRes, projRes] = await Promise.all([
       fetch('/api/organisers', { credentials: 'same-origin' }),
       fetch('/api/email/accounts', { credentials: 'same-origin' }).catch(() => null),
+      // Populates the Linked Projects picker. Optional: a failure here costs
+      // the picker its options, not the whole panel.
+      fetch('/api/projects', { credentials: 'same-origin' }).catch(() => null),
     ]);
     if (!orgRes.ok) throw new Error(`HTTP ${orgRes.status}`);
     const data = await orgRes.json();
@@ -449,6 +562,11 @@ async function _fetchOrganisers() {
     if (accRes && accRes.ok) {
       const accData = await accRes.json();
       _availableAccounts = accData.accounts || [];
+    }
+
+    if (projRes && projRes.ok) {
+      const projData = await projRes.json();
+      _allProjects = (projData.projects || []).map(p => ({ id: p.id, name: p.name }));
     }
 
     if (_organisers.length > 0 && (!_selectedId || !_organisers.find(o => o.id === _selectedId))) {
@@ -686,6 +804,45 @@ function _renderTabContent(org, detail) {
         </div>
       </div>
 
+      <div class="org-grid-2col" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;margin-top:10px;">
+        <div class="org-field-group">
+          <label class="org-field-label">Icon</label>
+          <div class="org-field-sub">Shown on the card and in the list.</div>
+          <div class="org-icon-picker" id="org-edit-icon" data-icon="${_esc(org.icon || 'briefcase')}">
+            ${ICON_CHOICES.map(name => `
+              <button type="button" class="org-icon-choice ${(org.icon || 'briefcase') === name ? 'selected' : ''}"
+                      data-icon-choice="${name}" title="${name}" aria-label="${name}"
+                      aria-pressed="${(org.icon || 'briefcase') === name ? 'true' : 'false'}">
+                ${_getIconSvg(name)}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+        <div class="org-field-group">
+          <label class="org-field-label">Accent Colour</label>
+          <div class="org-field-sub">Used for this organiser's badge and card edge.</div>
+          <input type="color" id="org-edit-color" class="org-color-input" value="${_esc(org.color || '#61afef')}">
+        </div>
+      </div>
+
+      <div class="org-field-group" style="margin-top:10px;">
+        <label class="org-field-label">${ICONS.checkSquare} Linked Projects</label>
+        <div class="org-field-sub">
+          Their open tasks appear in the Tasks tab. Nothing appears there until a project is linked.
+        </div>
+        <div class="org-project-picker" id="org-edit-projects">
+          ${(_allProjects || []).length === 0
+            ? '<div class="org-empty-inline">No projects available to link.</div>'
+            : _allProjects.map(p => `
+                <label class="org-project-choice">
+                  <input type="checkbox" data-project-id="${_esc(p.id)}"
+                         ${(org.linked_project_ids || []).includes(p.id) ? 'checked' : ''}>
+                  <span>${_esc(p.name)}</span>
+                </label>
+              `).join('')}
+        </div>
+      </div>
+
       <div class="org-field-group" style="margin-top:10px;">
         <label class="org-field-label">${ICONS.mail} Sender Matching Patterns</label>
         <div class="org-field-sub">Comma-separated sender names or emails (e.g. <code>Adrian Matache, Mustafa Nabil, @rs.iq</code>).</div>
@@ -721,6 +878,7 @@ function _renderTabContent(org, detail) {
               <th>Sender</th>
               <th>Subject</th>
               <th>Date</th>
+              <th>Filed under</th>
             </tr>
           </thead>
           <tbody>
@@ -729,6 +887,16 @@ function _renderTabContent(org, detail) {
                 <td style="font-weight:600;color:#fff;">${_esc(em.sender_name)}</td>
                 <td>${_esc(em.subject)}</td>
                 <td style="opacity:0.6;font-size:11px;">${_esc(em.date_display || em.date_iso?.substring(0,10))}</td>
+                <td>
+                  <select class="org-reassign-select" data-reassign-uid="${_esc(em.uid)}"
+                          data-reassign-account="${_esc(em.account_id || '')}"
+                          title="Move this email to another organiser">
+                    ${_organisers.map(o => `
+                      <option value="${_esc(o.id)}" ${o.id === org.id ? 'selected' : ''}>${_esc(o.name)}</option>
+                    `).join('')}
+                    <option value="__remove__">Remove from this organiser</option>
+                  </select>
+                </td>
               </tr>
             `).join('')}
           </tbody>
@@ -761,25 +929,51 @@ function _renderTabContent(org, detail) {
       `}
     `;
   } else if (_activeTab === 'memories') {
-    const mems = detail?.memories || [];
-    return `
-      <div style="margin-bottom:12px;font-size:12px;opacity:0.8;">
-        Contextual facts and learned preferences preserved in lane <code>${org.memory_lane || 'default'}</code>.
+    // Two sections, because they are two different things: the lane holds what
+    // was recorded for this organiser, referenced holds pre-existing general
+    // memories its rules select. Showing them as one list made every memory
+    // look like it belonged to this workstream.
+    const laneMems = detail?.memories || [];
+    const referencedMems = detail?.referenced_memories || [];
+    const lane = detail?.memory_lane || org.memory_lane || `organisers:${org.slug}`;
+
+    const memoryList = (items) => `
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${items.map(m => `
+          <div class="org-memory-item">
+            <div style="color:#fff;">${_esc(m.content)}</div>
+            ${m.category ? `<div style="font-size:10px;opacity:0.5;margin-top:4px;">${_esc(m.category)}</div>` : ''}
+          </div>
+        `).join('')}
       </div>
-      ${mems.length === 0 ? `
-        <div style="padding:40px;text-align:center;font-size:12px;opacity:0.6;">
-          No memory notes stored in this lane yet. As the assistant interacts with you, it will record category insights here.
+    `;
+
+    return `
+      <div class="org-memory-section-head">
+        ${ICONS.brain}
+        <span>This organiser's notes</span>
+        <code>${_esc(lane)}</code>
+      </div>
+      ${laneMems.length === 0 ? `
+        <div class="org-empty-inline" style="padding:20px;">
+          Nothing recorded here yet. Notes the assistant records against this
+          organiser are filed in this lane.
         </div>
-      ` : `
-        <div style="display:flex;flex-direction:column;gap:8px;">
-          ${mems.map(m => `
-            <div class="org-memory-item">
-              <div style="color:#fff;">${_esc(m.content)}</div>
-              ${m.tags ? `<div style="font-size:10px;opacity:0.5;margin-top:4px;">Tags: ${_esc(m.tags)}</div>` : ''}
-            </div>
-          `).join('')}
+      ` : memoryList(laneMems)}
+
+      <div class="org-memory-section-head" style="margin-top:18px;">
+        ${ICONS.sparkle}
+        <span>Referenced context</span>
+      </div>
+      <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">
+        General memories selected by this organiser's sender and keyword rules.
+        They stay in the shared pool — edit the rules to change what appears here.
+      </div>
+      ${referencedMems.length === 0 ? `
+        <div class="org-empty-inline" style="padding:20px;">
+          No general memories match this organiser's rules.
         </div>
-      `}
+      ` : memoryList(referencedMems)}
     `;
   }
   return '';
@@ -815,6 +1009,22 @@ function _bindEvents(layout, selectedOrg) {
     });
   });
 
+  // Icon choice. Held on the picker's dataset rather than in module state so a
+  // re-render driven by another control cannot lose an unsaved pick.
+  const iconPicker = layout.querySelector('#org-edit-icon');
+  if (iconPicker) {
+    iconPicker.querySelectorAll('[data-icon-choice]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        iconPicker.dataset.icon = btn.dataset.iconChoice;
+        iconPicker.querySelectorAll('[data-icon-choice]').forEach(other => {
+          const isChosen = other === btn;
+          other.classList.toggle('selected', isChosen);
+          other.setAttribute('aria-pressed', isChosen ? 'true' : 'false');
+        });
+      });
+    });
+  }
+
   // Save changes
   const saveBtn = layout.querySelector('#org-save-btn');
   if (saveBtn && selectedOrg) {
@@ -826,12 +1036,24 @@ function _bindEvents(layout, selectedOrg) {
       const sendersInput = layout.querySelector('#org-edit-senders');
       const keywordsInput = layout.querySelector('#org-edit-keywords');
       const domainsInput = layout.querySelector('#org-edit-domains');
+      const iconPicker = layout.querySelector('#org-edit-icon');
+      const colorInput = layout.querySelector('#org-edit-color');
+      const projectPicker = layout.querySelector('#org-edit-projects');
 
+      // The update route has always accepted icon, color and
+      // linked_project_ids; this payload simply never sent them, which is why
+      // icons could not be changed and the Tasks tab was permanently empty.
       const payload = {
         name: nameInput ? nameInput.value.trim() : selectedOrg.name,
         ai_instructions: aiInput ? aiInput.value.trim() : selectedOrg.ai_instructions,
         category_group: groupInput ? groupInput.value : selectedOrg.category_group,
         priority: priorityInput ? priorityInput.value : selectedOrg.priority,
+        icon: iconPicker ? iconPicker.dataset.icon : selectedOrg.icon,
+        color: colorInput ? colorInput.value : selectedOrg.color,
+        linked_project_ids: projectPicker
+          ? Array.from(projectPicker.querySelectorAll('input[data-project-id]:checked'))
+              .map(cb => cb.dataset.projectId)
+          : (selectedOrg.linked_project_ids || []),
         rules: {
           senders: sendersInput ? sendersInput.value.split(',').map(s => s.trim()).filter(Boolean) : (selectedOrg.rules?.senders || []),
           keywords: keywordsInput ? keywordsInput.value.split(',').map(k => k.trim()).filter(Boolean) : (selectedOrg.rules?.keywords || []),
@@ -858,6 +1080,42 @@ function _bindEvents(layout, selectedOrg) {
       const folder = row.getAttribute('data-email-folder') || 'INBOX';
       if (window.openEmailLibrary) {
         window.openEmailLibrary({ folder, uid, accountId });
+      }
+    });
+  });
+
+  // Refiling an email. The click is stopped here so choosing an organiser does
+  // not also open the message in the email reader.
+  layout.querySelectorAll('.org-reassign-select').forEach(select => {
+    select.addEventListener('click', (e) => e.stopPropagation());
+    select.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const choice = select.value;
+      const body = {
+        uid: select.dataset.reassignUid,
+        account_key: select.dataset.reassignAccount || '',
+      };
+      if (choice === '__remove__') {
+        body.excluded_from_id = _selectedId;
+      } else {
+        body.organiser_id = choice;
+      }
+
+      select.disabled = true;
+      try {
+        const res = await fetch('/api/organisers/reassign-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Counts on every organiser can shift, so reload the list, not just
+        // this organiser's detail.
+        await _fetchOrganisers();
+      } catch (err) {
+        console.error('Failed to refile email:', err);
+        select.disabled = false;
       }
     });
   });

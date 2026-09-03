@@ -17,7 +17,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import core.database as db
-from routes.overview.overview_routes import setup_overview_routes, _build_overview_payload, _OVERVIEW_MEMORY_CACHE
+from routes.overview.overview_routes import (
+    setup_overview_routes,
+    _build_overview_payload,
+    _BRIEFING_WINDOW_DAYS,
+    _OVERVIEW_MEMORY_CACHE,
+)
 
 
 @pytest.fixture
@@ -190,8 +195,13 @@ def test_overview_swr_stale_revalidation(test_db, monkeypatch):
     # Keyed to the authenticated owner. Before /api/overview required auth,
     # the caller resolved to owner=None and this row was seeded under the
     # shared "__global__" bucket.
+    #
+    # The window suffix is now the fixed _BRIEFING_WINDOW_DAYS rather than the
+    # requested email_days: the endpoint serves and caches one window per owner,
+    # and the email panel narrows by date client-side. This id changed with that
+    # policy — it is not a stale expectation being papered over.
     session.add(db.OverviewCache(
-        id="admin:overview:7",
+        id=f"admin:overview:{_BRIEFING_WINDOW_DAYS}",
         owner="admin",
         payload_json=json.dumps(stale_payload),
         cached_at=stale_time,
@@ -208,6 +218,33 @@ def test_overview_swr_stale_revalidation(test_db, monkeypatch):
     data = res.json()
     assert data["kpis"]["active_projects"] == 99
     assert data["is_stale"] is True
+
+
+def test_requested_window_does_not_fork_the_cache(test_db, monkeypatch):
+    """Every duration shares one bucket per owner.
+
+    The email panel's duration buttons used to drive ``email_days``, so each
+    press produced a separate full-payload cache row carrying its own copy of
+    the projects and operations panels.
+    """
+    engine, Session = test_db
+    monkeypatch.setattr("core.database.SessionLocal", Session)
+    monkeypatch.setattr("core.database.engine", engine)
+    _OVERVIEW_MEMORY_CACHE.clear()
+
+    client = TestClient(_build_app(Session))
+    for days in (1, 3, 7, 30):
+        assert client.get(f"/api/overview?email_days={days}").status_code == 200
+
+    session = Session()
+    try:
+        ids = [row.id for row in session.query(db.OverviewCache).all()]
+    finally:
+        session.close()
+
+    assert ids == [f"admin:overview:{_BRIEFING_WINDOW_DAYS}"], (
+        f"four durations produced {len(ids)} cache rows: {ids}"
+    )
 
 
 @pytest.mark.asyncio

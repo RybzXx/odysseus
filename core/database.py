@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlparse
-from sqlalchemy import DDL, event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, inspect, text
+from sqlalchemy import DDL, event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, UniqueConstraint, func, inspect, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -2134,6 +2134,44 @@ class WorkOrganiser(TimestampMixin, Base):
 
     __table_args__ = (
         Index("ix_work_organisers_owner_slug", "owner", "slug"),
+    )
+
+
+class EmailOrganiserOverride(TimestampMixin, Base):
+    """A human correction to which organiser one email belongs to.
+
+    Organiser membership is otherwise recomputed from rules on every request and
+    stored nowhere, so a misfiled email could not be corrected -- there was no
+    record to edit. This is that record, and only that: rules still decide every
+    email nobody has touched.
+
+    A row says one of two things about (owner, account_key, uid): it belongs to
+    the organiser named by ``organiser_id``, or -- when ``excluded_from_id`` is
+    set -- it must not appear under that organiser however the rules read. The
+    exclusion exists because a rule would otherwise keep re-asserting a match
+    the human has already rejected.
+
+    Inv: at most one row per (owner, account_key, uid, excluded_from_id), so a
+         correction replaces its predecessor rather than accumulating.
+    """
+    __tablename__ = "email_organiser_overrides"
+
+    id               = Column(String(64), primary_key=True, index=True)
+    owner            = Column(String(64), nullable=True, index=True)
+
+    # Identifies the message the way email_message_index does.
+    account_key      = Column(String(64), nullable=False, default="")
+    uid              = Column(String(64), nullable=False)
+
+    organiser_id     = Column(String(64), nullable=True, index=True)
+    excluded_from_id = Column(String(64), nullable=True, index=True)
+
+    __table_args__ = (
+        Index("ix_email_organiser_overrides_message", "owner", "account_key", "uid"),
+        UniqueConstraint(
+            "owner", "account_key", "uid", "excluded_from_id",
+            name="uq_email_organiser_override",
+        ),
     )
 
 

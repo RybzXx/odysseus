@@ -23,7 +23,8 @@ from core.database import SessionLocal, WorkOrganiser, ProjectTask
 from routes.organisers.organisers_routes import (
     _get_recent_emails,
     _matches_rule,
-    _organiser_memories,
+    organiser_lane,
+    organiser_memory_sections,
 )
 
 server = Server("organisers")
@@ -75,7 +76,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="record_work_insight",
-            description="UNAVAILABLE — recording under an organiser memory lane is not implemented; this tool refuses every call. Use the memory server to record an ordinary memory instead.",
+            description="Record a note in one organiser's memory lane. The note is stored with the organiser's lane as its category, so it appears under that organiser's Lane memories. Use the memory server instead for a general memory that is not about a single workstream.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -153,7 +154,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             # SQLAlchemy Memory model: that model has no `lane` column, so
             # `Memory.lane` raised AttributeError for every organiser that has
             # a lane set — which is all of them.
-            mems = _organiser_memories(org, owner)
+            mem_sections = organiser_memory_sections(org, owner)
 
             out = {
                 "name": org.name,
@@ -169,9 +170,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     {"title": t.title, "completed": bool(t.completed), "due": t.due_date}
                     for t in tasks
                 ],
+                "memory_lane": organiser_lane(org),
                 "memory_notes": [
                     {"content": m.get("content"), "lane": m.get("category")}
-                    for m in mems
+                    for m in mem_sections["lane"]
+                ],
+                # General memories this organiser's rules select. Separated
+                # from its own lane so the model can tell what was recorded
+                # for this workstream from what merely relates to it.
+                "referenced_memories": [
+                    {"content": m.get("content"), "category": m.get("category")}
+                    for m in mem_sections["referenced"]
                 ],
             }
             return _text_result(json.dumps(out, indent=2))
@@ -189,20 +198,31 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if not org:
                 return _text_result(f"Error: Work organiser '{slug}' not found.")
 
-            # Deliberately not implemented. This wrote Memory(content=…,
-            # lane=…, tags=…) — three columns the Memory model does not have,
-            # so every call raised TypeError — and it wrote to the SQLAlchemy
-            # `memories` table, which is not the store the organiser detail
-            # view reads. Repairing the write is not enough on its own: how a
-            # memory legitimately acquires an organiser lane is an open design
-            # question, deferred with the WorkBench decision. Refusing plainly
-            # beats writing somewhere nothing reads.
-            lane = org.memory_lane or f"organisers:{org.slug}"
+            # Writes into the JSON memory store — the same one the organiser
+            # detail view reads. The earlier version wrote Memory(content=…,
+            # lane=…, tags=…) to the SQLAlchemy `memories` table: three columns
+            # that model does not have, and a table nothing here reads. It was
+            # then left refusing outright while the lane's semantics were an
+            # open question. Those are settled: the memory takes the organiser's
+            # lane as its category, which is what files it under the Lane
+            # section rather than the referenced-context one.
+            lane = organiser_lane(org)
+            try:
+                from src.constants import DATA_DIR
+                from src.memory import MemoryManager
+
+                manager = MemoryManager(DATA_DIR)
+                entries = manager.load_all_for_update()
+                entry = manager.add_entry(
+                    note, source="organisers_mcp", category=lane, owner=owner
+                )
+                entries.append(entry)
+                manager.save(entries)
+            except Exception as exc:
+                return _text_result(f"Error: could not record the insight: {exc}")
+
             return _text_result(
-                f"Unavailable: recording insights under an organiser lane is not "
-                f"implemented. '{org.name}' ({lane}) was found, but there is no "
-                f"supported path that writes a memory tagged with an organiser "
-                f"lane. Do not retry; record this as an ordinary memory instead."
+                f"Recorded against '{org.name}' in lane {lane} (id: {entry['id'][:8]})."
             )
 
         else:

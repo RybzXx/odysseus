@@ -42,6 +42,8 @@ def _map():
 
 # Selectors (kept in one place so the tests read as plain assertions).
 EMAIL = "#email-section, #rail-email"
+DAILY_WORK = "#daily-work-section"
+PLANNING_FOCUS = "#planning-focus-section"
 TOOLS = "#tools-section"
 CAL = "#tool-calendar-btn, #rail-calendar"
 COMPARE = "#tool-compare-btn, #rail-compare"
@@ -84,10 +86,24 @@ def test_every_customizable_tab_pairs_its_rail_button():
 def test_defaults_everything_visible_except_default_off():
     m = _resolve({})
     assert m[EMAIL] is True
+    assert m[DAILY_WORK] is True
+    assert m[PLANNING_FOCUS] is True
     assert m[TOOLS] is True
     assert m[CAL] is True
     assert m[NEWCHAT] is True
     assert m[RAG] is False  # rag-toggle-btn is default-off
+
+
+def test_daily_work_and_planning_sections_toggle_independently():
+    m1 = _resolve({"daily-work-section": False})
+    assert m1[DAILY_WORK] is False
+    assert m1[PLANNING_FOCUS] is True
+    assert m1[TOOLS] is True
+
+    m2 = _resolve({"planning-focus-section": False})
+    assert m2[DAILY_WORK] is True
+    assert m2[PLANNING_FOCUS] is False
+    assert m2[TOOLS] is True
 
 
 def test_email_off_hides_email_and_its_rail_only():

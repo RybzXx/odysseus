@@ -16,6 +16,8 @@ export const UI_VIS_MAP = {
   'sidebar-search':      '#sidebar-search-btn',
   'sessions-section':   '#sessions-section',
   'email-section':       '#email-section, #rail-email',
+  'daily-work-section':  '#daily-work-section',
+  'planning-focus-section':'#planning-focus-section',
   'tools-section':       '#tools-section',
   // Per-tool entries pair the sidebar button with its rail launcher.
   'tool-calendar':       '#tool-calendar-btn, #rail-calendar',

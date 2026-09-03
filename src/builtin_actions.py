@@ -1137,6 +1137,72 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
+
+async def action_index_sent_mail(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Index the Sent folder so replies the user wrote become visible to the system.
+
+    The message index is otherwise filled as a side effect of browsing, and
+    nobody browses Sent -- so nothing could learn from the user's own replies.
+
+    Pre:  owner is the scheduling user. `days_back` may be supplied in the task
+          prompt as JSON; it defaults to 1, which is what a daily schedule wants.
+          A larger value backfills.
+    Post: returns (report, did_work). Raises TaskNoop when the window held no
+          sent mail, so a quiet day is not recorded as a run that did something.
+    """
+    try:
+        from routes.email_pollers import index_sent_mail
+        from src.system_logger import log_system_query
+
+        days_back = 1
+        prompt = (kwargs.get("prompt") or "").strip()
+        if prompt:
+            try:
+                parsed = json.loads(prompt)
+                if isinstance(parsed, dict):
+                    days_back = max(1, int(parsed.get("days_back", 1)))
+            except Exception:
+                # A non-JSON prompt is a human note, not configuration.
+                pass
+
+        result = await index_sent_mail(
+            days_back=days_back,
+            account_id=_email_task_account_id(kwargs),
+        )
+        indexed_nothing = "0 total" in result or "no enabled accounts" in result
+
+        log_system_query(
+            module="email",
+            action="index_sent_mail",
+            target_name="Sent Mail Index",
+            query_type="imap",
+            status="completed",
+            result_preview=str(result),
+            owner=owner,
+        )
+        if indexed_nothing:
+            raise TaskNoop(f"index_sent_mail: {result}")
+        return result, True
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"index_sent_mail action failed: {e}")
+        try:
+            from src.system_logger import log_system_query
+            log_system_query(
+                module="email",
+                action="index_sent_mail",
+                target_name="Sent Mail Index",
+                query_type="imap",
+                status="error",
+                error=str(e),
+                owner=owner,
+            )
+        except Exception:
+            pass
+        return f"Sent indexing failed: {e}", False
+
+
 async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of AI reply drafting."""
     try:
@@ -3580,6 +3646,7 @@ BUILTIN_ACTIONS = {
     "consolidate_memory": action_consolidate_memory,
     "tidy_research": action_tidy_research,
     "summarize_emails": action_summarize_emails,
+    "index_sent_mail": action_index_sent_mail,
     "draft_email_replies": action_draft_email_replies,
     "email_auto_translate": action_email_auto_translate,
     "extract_email_events": action_extract_email_events,

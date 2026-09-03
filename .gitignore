@@ -120,3 +120,7 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Unscrubbed briefing captures. scripts/capture_briefing_fixture.py --raw-out
+# writes real correspondence; only the pseudonymised fixture is committed.
+*.raw.json

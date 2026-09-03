@@ -739,6 +739,11 @@ def _parse_email_list_record(meta_b: bytes, raw_header: bytes | None) -> dict | 
         sender = _decode_header(msg.get("From", "unknown"))
         date_str = msg.get("Date", "")
         message_id = (msg.get("Message-ID", "") or "").strip()
+        # Threading keys. The full RFC822 header is already fetched, so
+        # these cost nothing extra and are what lets a sent reply be tied
+        # to the message it answers.
+        in_reply_to = (msg.get("In-Reply-To", "") or "").strip()
+        references = " ".join((msg.get("References", "") or "").split())
         sender_name, sender_addr = email.utils.parseaddr(sender)
         to_str = _decode_header(msg.get("To", ""))
         cc_str = _decode_header(msg.get("Cc", ""))
@@ -753,6 +758,8 @@ def _parse_email_list_record(meta_b: bytes, raw_header: bytes | None) -> dict | 
         return {
             "uid": uid_num,
             "message_id": message_id,
+            "in_reply_to": in_reply_to,
+            "references": references,
             "subject": subject,
             "from_name": sender_name or sender_addr,
             "from_address": sender_addr,
@@ -1070,6 +1077,8 @@ def _email_index_upsert(owner: str, account_id: str | None, folder: str, emails:
             int(e.get("size") or 0),
             e.get("flags") or "",
             1 if e.get("has_attachments") else 0,
+            (e.get("in_reply_to") or "").strip(),
+            (e.get("references") or e.get("references_hdr") or "").strip(),
             now,
         ))
     if not rows:
@@ -1082,8 +1091,8 @@ def _email_index_upsert(owner: str, account_id: str | None, folder: str, emails:
                 INSERT INTO email_message_index
                 (owner, account_key, folder, uid, message_id, subject, from_name,
                  from_address, to_text, cc_text, date_iso, date_display, date_epoch,
-                 size, flags, has_attachments, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 size, flags, has_attachments, in_reply_to, references_hdr, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner, account_key, folder, uid) DO UPDATE SET
                     message_id=excluded.message_id,
                     subject=excluded.subject,
@@ -1096,6 +1105,8 @@ def _email_index_upsert(owner: str, account_id: str | None, folder: str, emails:
                     date_epoch=excluded.date_epoch,
                     size=excluded.size,
                     flags=excluded.flags,
+                    in_reply_to=excluded.in_reply_to,
+                    references_hdr=excluded.references_hdr,
                     has_attachments=excluded.has_attachments,
                     updated_at=excluded.updated_at
                 """,
