@@ -2175,6 +2175,17 @@ class EmailOrganiserOverride(TimestampMixin, Base):
     )
 
 
+class CalibrationDraft(TimestampMixin, Base):
+    """Working draft state for taxonomy and rule calibration studio."""
+    __tablename__ = "calibration_drafts"
+
+    id            = Column(String(64), primary_key=True, index=True)  # "{owner}:calibration_draft"
+    owner         = Column(String(64), nullable=False, index=True)
+    stage         = Column(String(32), nullable=False, default="draft")  # draft, agent_evaluated, applied
+    taxonomy_json = Column(Text, nullable=False, default="[]")
+    emails_json   = Column(Text, nullable=False, default="[]")
+
+
 
 
 

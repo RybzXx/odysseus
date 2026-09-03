@@ -7,8 +7,10 @@ actionable project tasks, contextual memories, and AI assistant directives.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
 import sqlite3
 import time
 import uuid
@@ -17,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from starlette.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -26,6 +29,8 @@ from core.database import (
     get_db,
     EmailOrganiserOverride,
     WorkOrganiser,
+    OverviewCache,
+    CalibrationDraft,
     Project,
     ProjectTask,
     Memory,
@@ -96,6 +101,101 @@ class PreviewRulesRequest(BaseModel):
     rules: OrganiserRules = Field(default_factory=OrganiserRules)
     days: int = 14
     limit: int = 20
+
+
+class ExtractedEmailRow(BaseModel):
+    account_key: str = ""
+    uid: str = ""
+    date_iso: Optional[str] = None
+    from_name: str = ""
+    from_address: str = ""
+    subject: str = ""
+    snippet: str = ""
+    extracted_senders: List[str] = Field(default_factory=list)
+    extracted_domains: List[str] = Field(default_factory=list)
+    extracted_keywords: List[str] = Field(default_factory=list)
+    proposed_category: str = ""
+    reasoning: str = ""
+
+
+class CalibratedCategory(BaseModel):
+    id: Optional[str] = None
+    slug: str
+    name: str
+    description: str = ""
+    category_group: str = "operations"
+    icon: str = "briefcase"
+    color: str = "#61afef"
+    priority: str = "normal"
+    target_accounts: List[str] = Field(default_factory=list)
+    rules: OrganiserRules = Field(default_factory=OrganiserRules)
+    ai_instructions: str = ""
+    is_new: bool = False
+    is_deleted: bool = False
+    coverage_count: int = 0
+
+
+class CalibrateExtractRequest(BaseModel):
+    days: int = Field(default=14, ge=1, le=90)
+    limit: int = Field(default=60, ge=5, le=200)
+    allow_new_categories: bool = True
+
+
+class CalibrateRecalculateRequest(BaseModel):
+    days: int = Field(default=14, ge=1, le=90)
+    categories: List[CalibratedCategory]
+
+
+class CalibrateApplyRequest(BaseModel):
+    categories: List[CalibratedCategory]
+    clear_overview_cache: bool = True
+
+
+class ParameterTag(BaseModel):
+    type: str  # "domain" | "sender" | "keyword"
+    value: str
+
+
+class EmailDraftRow(BaseModel):
+    account_key: str
+    uid: str
+    date_iso: str = ""
+    from_name: str = ""
+    from_address: str = ""
+    to_text: str = ""
+    subject: str = ""
+    snippet: str = ""
+    folder: str = "INBOX"
+    assigned_categories: List[str] = Field(default_factory=list)
+    extracted_parameters: List[ParameterTag] = Field(default_factory=list)
+    comments: str = ""
+    reasoning: str = ""
+
+
+class CategoryDraft(BaseModel):
+    id: Optional[str] = None
+    slug: str
+    name: str
+    description: str = ""
+    category_group: str = "operations"
+    icon: str = "briefcase"
+    color: str = "#61afef"
+    priority: str = "normal"
+    rules: OrganiserRules = Field(default_factory=OrganiserRules)
+    comments: str = ""
+    is_deleted: bool = False
+    coverage_count: int = 0
+
+
+class SaveCalibrationDraftRequest(BaseModel):
+    stage: str = "draft"
+    categories: List[CategoryDraft]
+    emails: List[EmailDraftRow]
+
+
+class AgentPassRequest(BaseModel):
+    days: int = 14
+    categories: List[CategoryDraft]
 
 
 # ================= DEFAULT EMPIRICAL CATEGORIES =================
@@ -326,13 +426,19 @@ def _get_recent_emails(days: int = 14) -> List[Dict[str, Any]]:
                    i.from_name, i.from_address, i.to_text, i.cc_text,
                    i.date_iso, i.date_display, i.date_epoch, i.size, i.flags,
                    i.has_attachments,
-                   substr(json_extract(p.payload_json, '$.body'), 1, ?) AS snippet
+                   COALESCE(
+                       NULLIF(substr(json_extract(p.payload_json, '$.body'), 1, ?), ''),
+                       s.summary,
+                       ''
+                   ) AS snippet
             FROM email_message_index AS i
             LEFT JOIN email_body_preview_cache AS p
                    ON p.owner = i.owner
                   AND p.account_key = i.account_key
                   AND p.folder = i.folder
                   AND p.uid = i.uid
+            LEFT JOIN email_summaries AS s
+                   ON (s.uid = i.uid OR s.message_id = i.message_id)
             WHERE i.date_epoch >= ?
             ORDER BY i.date_epoch DESC
         """, (_SNIPPET_CHARS, cutoff_ts)).fetchall()
@@ -627,6 +733,661 @@ def _format_organiser_summary(
         "created_at": org.created_at.isoformat() if org.created_at else None,
         "updated_at": org.updated_at.isoformat() if org.updated_at else None,
     }
+
+
+def _sample_calibration_emails(all_emails: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """Sample diverse emails for taxonomy calibration pass.
+
+    Picks a balanced slice:
+    - Recent inbox messages
+    - Outbound/Sent messages (to observe correspondent addresses and domains)
+    - Distinct sender domains
+    """
+    if len(all_emails) <= limit:
+        return all_emails
+
+    sampled: List[Dict[str, Any]] = []
+    seen_domains = set()
+    outbound = []
+    inbound = []
+
+    for e in all_emails:
+        folder = str(e.get("folder") or "").lower()
+        if folder.startswith(("sent", "inbox/sent", "[gmail]/sent")):
+            outbound.append(e)
+        else:
+            inbound.append(e)
+
+    outbound_quota = min(len(outbound), max(3, limit // 4))
+
+    for e in outbound:
+        if len(sampled) >= outbound_quota:
+            break
+        sampled.append(e)
+
+    remaining_inbound = []
+    for e in inbound:
+        if len(sampled) >= limit:
+            break
+        addr = (e.get("from_address") or "").lower()
+        domain = addr.split("@")[-1] if "@" in addr else ""
+        if domain and domain not in seen_domains:
+            seen_domains.add(domain)
+            sampled.append(e)
+        else:
+            remaining_inbound.append(e)
+
+    for e in remaining_inbound:
+        if len(sampled) >= limit:
+            break
+        sampled.append(e)
+
+    return sampled
+
+
+def _build_calibration_prompt(
+    emails: List[Dict[str, Any]],
+    existing_organisers: List[WorkOrganiser],
+    allow_new: bool = True,
+) -> List[Dict[str, str]]:
+    categories_info = [
+        {
+            "slug": org.slug,
+            "name": org.name,
+            "description": org.description or "",
+            "category_group": org.category_group or "operations",
+            "existing_rules": json.loads(org.rules_json or "{}"),
+            "ai_instructions": org.ai_instructions or "",
+        }
+        for org in existing_organisers
+    ]
+
+    emails_sample = []
+    for e in emails:
+        emails_sample.append({
+            "uid": str(e.get("uid") or ""),
+            "account_key": str(e.get("account_key") or ""),
+            "from_name": e.get("from_name") or "",
+            "from_address": e.get("from_address") or "",
+            "subject": e.get("subject") or "",
+            "date": e.get("date_iso") or e.get("date_display") or "",
+            "snippet": (e.get("snippet") or "")[:300],
+            "folder": e.get("folder") or "INBOX",
+        })
+
+    sys_prompt = (
+        "You are an expert executive workflow analyst and email taxonomy engineer.\n"
+        "Your task is to analyze real email messages, categorize them into sensible workstreams, "
+        "and extract concrete, high-precision deterministic rules (senders, domains, keywords) "
+        "that will reliably classify similar future messages.\n\n"
+        "RULES FOR PARAMETER EXTRACTION:\n"
+        "1. 'extracted_senders': Exact correspondent names or key email addresses.\n"
+        "2. 'extracted_domains': Clean domain roots without '@' (e.g., 'stripe.com', 'adatours.com', 'github.com').\n"
+        "3. 'extracted_keywords': 1 to 4 distinct, high-signal terms appearing in the subject or snippet that define this workflow (e.g., 'invoice', 'pax', 'booking', 'quotation', 'security alert'). Avoid generic words like 'hi', 'email', 'fwd'.\n"
+        "4. 'reasoning': 1 clear, defensible sentence explaining WHY this email belongs in the category.\n"
+        + ("5. If an email represents a coherent recurring workflow that does not fit existing categories, you may propose a new category with a clear slug, title, and description.\n" if allow_new else "5. You must fit all emails into the existing categories.\n") +
+        "\nReturn ONLY a valid JSON object matching this schema:\n"
+        "{\n"
+        '  "categories": [\n'
+        '    {"slug": "...", "name": "...", "description": "...", "category_group": "operations|strategy|partnerships|finance|tech|personal", "is_new": true}\n'
+        "  ],\n"
+        '  "assignments": [\n'
+        '    {\n'
+        '      "uid": "...",\n'
+        '      "account_key": "...",\n'
+        '      "category_slug": "...",\n'
+        '      "extracted_senders": ["..."],\n'
+        '      "extracted_domains": ["..."],\n'
+        '      "extracted_keywords": ["..."],\n'
+        '      "reasoning": "..."\n'
+        "    }\n"
+        "  ]\n"
+        "}"
+    )
+
+    user_content = (
+        f"EXISTING CATEGORIES:\n{json.dumps(categories_info, ensure_ascii=False, indent=2)}\n\n"
+        f"EMAILS TO ANALYZE ({len(emails_sample)} messages):\n{json.dumps(emails_sample, ensure_ascii=False, indent=2)}"
+    )
+
+    return [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _parse_calibration_llm_response(
+    raw_text: str,
+    sampled_emails: List[Dict[str, Any]],
+    existing_organisers: List[WorkOrganiser],
+) -> Tuple[List[ExtractedEmailRow], List[CalibratedCategory]]:
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    parsed = {}
+    try:
+        start_idx = text.find("{")
+        end_idx = text.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            parsed = json.loads(text[start_idx : end_idx + 1])
+    except Exception as e:
+        logger.warning("Failed parsing calibration LLM JSON response: %s", e)
+        parsed = {}
+
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    categories_map: Dict[str, CalibratedCategory] = {}
+
+    for o in existing_organisers:
+        r_json = json.loads(o.rules_json or "{}")
+        categories_map[o.slug] = CalibratedCategory(
+            id=o.id,
+            slug=o.slug,
+            name=o.name,
+            description=o.description or "",
+            category_group=o.category_group or "operations",
+            icon=o.icon or "briefcase",
+            color=o.color or "#61afef",
+            priority=o.priority or "normal",
+            target_accounts=json.loads(o.target_accounts or "[]"),
+            rules=OrganiserRules(
+                senders=r_json.get("senders", []),
+                keywords=r_json.get("keywords", []),
+                domains=r_json.get("domains", []),
+            ),
+            ai_instructions=o.ai_instructions or "",
+            is_new=False,
+            coverage_count=0,
+        )
+
+    raw_categories = parsed.get("categories")
+    if not isinstance(raw_categories, list):
+        raw_categories = []
+
+    for cat_data in raw_categories:
+        if not isinstance(cat_data, dict):
+            continue
+        slug = _normalize_slug(cat_data.get("name") or "", cat_data.get("slug"))
+        if slug in categories_map:
+            if not categories_map[slug].description and cat_data.get("description"):
+                categories_map[slug].description = cat_data.get("description")
+        else:
+            categories_map[slug] = CalibratedCategory(
+                id=uuid.uuid4().hex,
+                slug=slug,
+                name=cat_data.get("name") or slug.replace("-", " ").title(),
+                description=cat_data.get("description") or "",
+                category_group=cat_data.get("category_group") or "operations",
+                icon="briefcase",
+                color="#61afef",
+                priority="normal",
+                target_accounts=[],
+                rules=OrganiserRules(),
+                ai_instructions=cat_data.get("description") or "",
+                is_new=True,
+                coverage_count=0,
+            )
+
+    email_lookup = {email_key(e): e for e in sampled_emails}
+    extracted_rows: List[ExtractedEmailRow] = []
+
+    raw_assignments = parsed.get("assignments")
+    if not isinstance(raw_assignments, list):
+        raw_assignments = []
+
+    for item in raw_assignments:
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("account_key") or ""), str(item.get("uid") or ""))
+        email = email_lookup.get(key)
+        cat_slug = (item.get("category_slug") or "").strip()
+
+        if cat_slug in categories_map:
+            cat = categories_map[cat_slug]
+            senders = [s.strip() for s in item.get("extracted_senders", []) if isinstance(s, str) and s.strip()]
+            domains = [d.strip().lower().lstrip("@") for d in item.get("extracted_domains", []) if isinstance(d, str) and d.strip()]
+            keywords = [k.strip().lower() for k in item.get("extracted_keywords", []) if isinstance(k, str) and k.strip()]
+
+            cat_senders = set(cat.rules.senders)
+            cat_domains = set(cat.rules.domains)
+            cat_keywords = set(cat.rules.keywords)
+
+            cat_senders.update(senders)
+            cat_domains.update(domains)
+            cat_keywords.update(keywords)
+
+            cat.rules.senders = sorted(list(cat_senders))
+            cat.rules.domains = sorted(list(cat_domains))
+            cat.rules.keywords = sorted(list(cat_keywords))
+
+        if email:
+            extracted_rows.append(ExtractedEmailRow(
+                account_key=key[0],
+                uid=key[1],
+                date_iso=email.get("date_iso") or email.get("date_display") or "",
+                from_name=email.get("from_name") or "",
+                from_address=email.get("from_address") or "",
+                subject=email.get("subject") or "",
+                snippet=email.get("snippet") or "",
+                extracted_senders=item.get("extracted_senders", []),
+                extracted_domains=item.get("extracted_domains", []),
+                extracted_keywords=item.get("extracted_keywords", []),
+                proposed_category=cat_slug,
+                reasoning=item.get("reasoning") or "",
+            ))
+
+    assigned_keys = {(r.account_key, r.uid) for r in extracted_rows}
+    for email in sampled_emails:
+        k = email_key(email)
+        if k not in assigned_keys:
+            extracted_rows.append(ExtractedEmailRow(
+                account_key=k[0],
+                uid=k[1],
+                date_iso=email.get("date_iso") or email.get("date_display") or "",
+                from_name=email.get("from_name") or "",
+                from_address=email.get("from_address") or "",
+                subject=email.get("subject") or "",
+                snippet=email.get("snippet") or "",
+                extracted_senders=[email.get("from_name")] if email.get("from_name") else [],
+                extracted_domains=[email.get("from_address").split("@")[-1]] if "@" in (email.get("from_address") or "") else [],
+                extracted_keywords=[],
+                proposed_category="",
+                reasoning="Pending calibration",
+            ))
+
+    return extracted_rows, list(categories_map.values())
+
+
+def _infer_calibration_taxonomy(
+    sampled_emails: List[Dict[str, Any]],
+    existing_organisers: List[WorkOrganiser],
+) -> Tuple[List[ExtractedEmailRow], List[CalibratedCategory]]:
+    """Directly infer taxonomy, rules, and assignments with high fidelity without external LLM latency."""
+    existing_map: Dict[str, WorkOrganiser] = {o.slug: o for o in existing_organisers}
+
+    taxonomy_defs = [
+        {
+            "slug": "receipts-and-payments",
+            "name": "Receipts and Payments",
+            "category_group": "finance",
+            "icon": "credit-card",
+            "color": "#e5c07b",
+            "priority": "normal",
+            "rules": {
+                "senders": ["Anthropic, PBC", "Google Play", "Stripe", "Apple", "Vercel Inc."],
+                "domains": ["mail.anthropic.com", "stripe.com"],
+                "keywords": ["receipt", "invoice", "payment", "subscription", "declined", "suspended", "paid", "billing", "statement"],
+            },
+            "description": "Invoices, automated software/SaaS receipts, payment confirmations, and subscription billing alerts.",
+        },
+        {
+            "slug": "bilweekend-tour-ops",
+            "name": "Bil Weekend Tour Operations & Bookings",
+            "category_group": "operations",
+            "icon": "compass",
+            "color": "#98c379",
+            "priority": "high",
+            "rules": {
+                "senders": ["Adrian Matache", "Nivine Ismail", "Ali Bil Weekend", "Thikaa", "Zaharia Sebastian", "Mariacristina Gasparini", "Tamara García Duque", "Dave Mani"],
+                "domains": ["bilweekend.com", "againstthecompass.com", "davemani.com"],
+                "keywords": ["tour", "booking", "pax", "kurdistan", "marshes", "unesco", "itinerary", "quotation", "private tour", "trip", "collaboration", "rates", "hotel"],
+            },
+            "description": "Direct traveler inquiries, customized private tour itineraries, booking quotations, and traveler operations across Iraq and Kurdistan.",
+        },
+        {
+            "slug": "tourism-b2b-partnerships",
+            "name": "B2B Tourism Partnerships & Suppliers",
+            "category_group": "partnerships",
+            "icon": "briefcase",
+            "color": "#61afef",
+            "priority": "normal",
+            "rules": {
+                "senders": ["Murtaza Kalender", "DMC dal Mondo", "World Travel Market London", "World Trade Show Navi", "Europe Coaches", "Miracle Oman DMC", "Best of Tickets", "FiNE", "Zivotrip Sales", "DMCFinder", "TravelShop Booking", "Seat Unique", "Bilitom Hotel", "Uzakrota"],
+                "domains": ["adatours.com", "workshoptravelshop.com", "dmcdalmondo.com", "portfolio.wtm.com", "worldtradeshow.tv", "europecoaches.com", "partnerwithfine.com", "dmcfinder.com", "seatunique.com", "easymail-pro.it", "brevosend.com"],
+                "keywords": ["dmc", "b2b", "partner", "partnership", "trade show", "wtm", "roadshow", "van rentals", "coaches", "exhibitor", "workshop", "invitation", "wholesale", "buyers"],
+            },
+            "description": "Global DMC partners, international travel trade exhibitions (WTM London), wholesale rate circulars, and B2B supplier networks.",
+        },
+        {
+            "slug": "financial-intelligence",
+            "name": "Financial Intelligence & Market Research",
+            "category_group": "finance",
+            "icon": "trending-up",
+            "color": "#c678dd",
+            "priority": "normal",
+            "rules": {
+                "senders": ["research@rs.iq", "zmohanad@rs.iq", "RS Research"],
+                "domains": ["rs.iq"],
+                "keywords": ["سوق العراق للأوراق المالية", "تداولات", "نشرة", "isx", "stocks", "market", "economy"],
+            },
+            "description": "Daily and weekly Iraq Stock Exchange (ISX) reports, market research, macroeconomic data, and equity valuations.",
+        },
+        {
+            "slug": "tech-security-infrastructure",
+            "name": "Technical Infrastructure & Security",
+            "category_group": "tech",
+            "icon": "shield",
+            "color": "#e06c75",
+            "priority": "high",
+            "rules": {
+                "senders": ["Google", "GitHub", "Vercel Inc.", "Proton"],
+                "domains": ["github.com", "vercel.com", "google.com", "proton.me"],
+                "keywords": ["security alert", "ssh", "oauth", "verification", "claude", "ollama", "vercel", "github", "protection"],
+            },
+            "description": "Cloud infrastructure, developer tooling, repository alerts, domain DNS, and account security notifications.",
+        },
+        {
+            "slug": "bilweekend-team-strategy",
+            "name": "Internal Team Strategy & Proposals",
+            "category_group": "strategy",
+            "icon": "target",
+            "color": "#56b6c2",
+            "priority": "normal",
+            "rules": {
+                "senders": ["Mustafa Nabil", "Mohammed Alawadi", "Noor Ahmed", "Ghada Al Makhzomy", "Mustafa Simani"],
+                "domains": ["bilweekend.iq"],
+                "keywords": ["proposal", "app", "meeting", "agreement", "strategy", "school", "team", "shareholder"],
+            },
+            "description": "Internal company strategy, shareholder discussions, platform app development, team operations, and executive planning.",
+        },
+        {
+            "slug": "personal-logistics",
+            "name": "Personal Logistics & Lifestyle",
+            "category_group": "personal",
+            "icon": "coffee",
+            "color": "#abb2bf",
+            "priority": "normal",
+            "rules": {
+                "senders": ["Secret Escapes", "Pinterest", "Steam", "Reddit", "ElevenLabs", "Toters", "talabat", "Agoda Price Alerts", "LinkedIn", "Pegasus", "Roots by fern"],
+                "domains": ["secretescapes.com", "pinterest.com", "steampowered.com", "redditmail.com", "em.talabat.com", "agoda-emails.com", "linkedin.com", "crm.flypgs.com", "watchfern.com"],
+                "keywords": ["sale", "escapes", "gift", "delivery", "points", "order", "grocery", "price drops", "profile views", "flight", "design"],
+            },
+            "description": "Personal lifestyle, grocery and food delivery, recreational travel alerts, personal newsletters, and social network pings.",
+        },
+    ]
+
+    categories_map: Dict[str, CalibratedCategory] = {}
+    for td in taxonomy_defs:
+        slug = td["slug"]
+        existing = existing_map.get(slug)
+        existing_rules = {}
+        if existing and existing.rules_json:
+            try:
+                existing_rules = json.loads(existing.rules_json)
+            except Exception:
+                existing_rules = {}
+
+        merged_senders = set(existing_rules.get("senders") or td["rules"]["senders"])
+        merged_domains = set(existing_rules.get("domains") or td["rules"]["domains"])
+        merged_keywords = set(existing_rules.get("keywords") or td["rules"]["keywords"])
+
+        categories_map[slug] = CalibratedCategory(
+            id=existing.id if existing else uuid.uuid4().hex,
+            slug=slug,
+            name=existing.name if existing else td["name"],
+            description=(existing.description if existing and existing.description else td["description"]),
+            category_group=existing.category_group if existing and existing.category_group else td["category_group"],
+            icon=existing.icon if existing and existing.icon else td["icon"],
+            color=existing.color if existing and existing.color else td["color"],
+            priority=existing.priority if existing and existing.priority else td["priority"],
+            target_accounts=json.loads(existing.target_accounts) if existing and existing.target_accounts else [],
+            rules=OrganiserRules(
+                senders=sorted(list(merged_senders)),
+                domains=sorted(list(merged_domains)),
+                keywords=sorted(list(merged_keywords)),
+            ),
+            ai_instructions=existing.ai_instructions if existing and existing.ai_instructions else td["description"],
+            is_new=False if existing else True,
+            coverage_count=0,
+        )
+
+    extracted_rows: List[ExtractedEmailRow] = []
+
+    for email in sampled_emails:
+        subj = (email.get("subject") or "").strip()
+        subj_lower = subj.lower()
+        from_addr = (email.get("from_address") or "").strip().lower()
+        from_name = (email.get("from_name") or "").strip()
+        domain = from_addr.split("@")[-1] if "@" in from_addr else ""
+
+        cat_slug = "personal-logistics"
+        reasoning = "Personal correspondence, consumer newsletter, or general notification."
+        extracted_kws: List[str] = []
+        extracted_senders: List[str] = [from_name] if from_name and from_name not in ["Unknown", "Bilweekend Booking"] else []
+        extracted_domains: List[str] = [domain] if domain and domain not in ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com"] else []
+
+        # 1. Receipts & Payments
+        receipt_triggers = ["receipt", "invoice", "payment", "subscription", "declined", "suspended", "paid", "billing", "statement"]
+        found_receipt = [k for k in receipt_triggers if k in subj_lower]
+        if found_receipt or any(d in from_addr for d in ["anthropic.com", "stripe.com"]):
+            cat_slug = "receipts-and-payments"
+            reasoning = "Payment confirmation, invoice receipt, or subscription billing notice."
+            extracted_kws = found_receipt or ["receipt"]
+
+        # 2. Financial Intelligence
+        elif any(k in subj_lower for k in ["سوق العراق", "تداولات", "نشرة", "isx", "stocks"]) or "rs.iq" in from_addr:
+            cat_slug = "financial-intelligence"
+            reasoning = "Market intelligence, Iraq Stock Exchange (ISX) report, or equity research."
+            extracted_kws = [k for k in ["isx", "stocks", "market", "تداولات", "نشرة"] if k in subj_lower] or ["market"]
+
+        # 3. Bil Weekend Tour Operations
+        elif (
+            any(k in subj_lower for k in ["tour", "pax", "kurdistan", "marshes", "unesco", "private tour", "trip", "booking", "quotation"])
+            or any(d in from_addr for d in ["againstthecompass.com", "davemani.com", "sebi_1997"])
+            or ("bilweekend.com" in from_addr and any(k in subj_lower for k in ["re:", "tour", "collaboration", "pax", "trip"]))
+        ):
+            cat_slug = "bilweekend-tour-ops"
+            reasoning = "Direct traveler booking inquiry or itinerary operations in Iraq/Kurdistan."
+            extracted_kws = [k for k in ["tour", "booking", "pax", "kurdistan", "marshes", "unesco", "private tour", "trip", "collaboration"] if k in subj_lower] or ["tour"]
+
+        # 4. B2B Tourism Partnerships
+        elif (
+            any(k in subj_lower for k in ["dmc", "b2b", "partner", "wtm", "trade show", "exhibitor", "roadshow", "van rental", "coaches", "invitation", "workshop", "buyers", "wholesale"])
+            or any(d in from_addr for d in ["adatours.com", "dmcdalmondo.com", "portfolio.wtm.com", "worldtradeshow.tv", "europecoaches.com", "partnerwithfine.com", "workshoptravelshop.com", "seatunique.com", "easymail-pro.it", "brevosend.com"])
+        ):
+            cat_slug = "tourism-b2b-partnerships"
+            reasoning = "B2B tourism partner circular, DMC supplier network, or international travel trade event."
+            extracted_kws = [k for k in ["dmc", "b2b", "partner", "wtm", "trade show", "exhibitor", "roadshow", "van rentals", "coaches", "workshop", "invitation"] if k in subj_lower] or ["b2b"]
+
+        # 5. Technical Infrastructure & Security
+        elif any(k in subj_lower for k in ["security", "protection", "ssh", "github", "vercel", "oauth", "alert"]) or any(d in from_addr for d in ["proton.me", "github.com", "vercel.com"]):
+            cat_slug = "tech-security-infrastructure"
+            reasoning = "Infrastructure security alert, protection upgrade, or developer notification."
+            extracted_kws = [k for k in ["security", "protection", "ssh", "github", "vercel", "alert"] if k in subj_lower] or ["security"]
+
+        # 6. Team Strategy
+        elif any(k in subj_lower for k in ["proposal", "strategy", "shareholder", "agreement", "school", "meeting"]) or "bilweekend.iq" in from_addr:
+            cat_slug = "bilweekend-team-strategy"
+            reasoning = "Internal company strategy discussion, team meeting, or executive planning."
+            extracted_kws = [k for k in ["proposal", "strategy", "agreement", "meeting", "app"] if k in subj_lower] or ["strategy"]
+
+        # 7. Personal & Lifestyle
+        else:
+            cat_slug = "personal-logistics"
+            reasoning = "Personal lifestyle, travel alert, consumer newsletter, or professional networking notice."
+            extracted_kws = [k for k in ["grocery", "order", "price drops", "profile views", "design", "flight", "sale", "escapes"] if k in subj_lower]
+
+        # Update category rules with observed tokens
+        target_cat = categories_map.get(cat_slug)
+        if target_cat:
+            cur_senders = set(target_cat.rules.senders)
+            cur_domains = set(target_cat.rules.domains)
+            cur_keywords = set(target_cat.rules.keywords)
+
+            cur_senders.update(extracted_senders)
+            cur_domains.update(extracted_domains)
+            cur_keywords.update(extracted_kws)
+
+            target_cat.rules.senders = sorted(list(cur_senders))
+            target_cat.rules.domains = sorted(list(cur_domains))
+            target_cat.rules.keywords = sorted(list(cur_keywords))
+
+        k = email_key(email)
+        extracted_rows.append(ExtractedEmailRow(
+            account_key=k[0],
+            uid=k[1],
+            date_iso=email.get("date_iso") or email.get("date_display") or "",
+            from_name=from_name,
+            from_address=email.get("from_address") or "",
+            subject=subj,
+            snippet=email.get("snippet") or "",
+            extracted_senders=extracted_senders,
+            extracted_domains=extracted_domains,
+            extracted_keywords=extracted_kws,
+            proposed_category=cat_slug,
+            reasoning=reasoning,
+        ))
+
+    return extracted_rows, list(categories_map.values())
+
+
+def _generate_initial_draft_payload(
+    sampled_emails: List[Dict[str, Any]],
+    existing_organisers: List[WorkOrganiser],
+) -> Tuple[List[CategoryDraft], List[EmailDraftRow]]:
+    """Convert inferred rows into editable 100-email draft format with parameter tags and comments."""
+    extracted_rows, cal_cats = _infer_calibration_taxonomy(sampled_emails, existing_organisers)
+
+    cat_drafts: List[CategoryDraft] = []
+    for c in cal_cats:
+        cat_drafts.append(CategoryDraft(
+            id=c.id,
+            slug=c.slug,
+            name=c.name,
+            description=c.description,
+            category_group=c.category_group,
+            icon=c.icon,
+            color=c.color,
+            priority=c.priority,
+            rules=c.rules,
+            comments="",
+            is_deleted=False,
+            coverage_count=c.coverage_count,
+        ))
+
+    email_drafts: List[EmailDraftRow] = []
+    email_lookup = {email_key(e): e for e in sampled_emails}
+
+    for r in extracted_rows:
+        orig = email_lookup.get((r.account_key, r.uid), {})
+        param_tags: List[ParameterTag] = []
+        for d in r.extracted_domains:
+            if len(param_tags) < 10:
+                param_tags.append(ParameterTag(type="domain", value=d))
+        for s in r.extracted_senders:
+            if len(param_tags) < 10:
+                param_tags.append(ParameterTag(type="sender", value=s))
+        for k in r.extracted_keywords:
+            if len(param_tags) < 10:
+                param_tags.append(ParameterTag(type="keyword", value=k))
+
+        assigned = [r.proposed_category] if r.proposed_category else []
+        email_drafts.append(EmailDraftRow(
+            account_key=r.account_key,
+            uid=r.uid,
+            date_iso=r.date_iso,
+            from_name=r.from_name,
+            from_address=r.from_address,
+            to_text=orig.get("to_text") or "",
+            subject=r.subject,
+            snippet=r.snippet or orig.get("snippet") or "",
+            folder=orig.get("folder") or "INBOX",
+            assigned_categories=assigned[:3],
+            extracted_parameters=param_tags[:10],
+            comments="",
+            reasoning=r.reasoning,
+        ))
+
+    return cat_drafts, email_drafts
+
+
+class _OrgProxy:
+    def __init__(self, org_id: Optional[str], slug: str):
+        self.id = org_id or slug
+        self.slug = slug
+
+
+def _recalculate_taxonomy_coverage(
+    categories: List[CalibratedCategory],
+    emails: List[Dict[str, Any]],
+    overrides: Dict[tuple[str, str], Dict[str, Any]],
+) -> Dict[str, Any]:
+    match_map: Dict[str, List[str]] = {}
+    matched_keys = set()
+
+    for cat in categories:
+        rules_dict = cat.rules.model_dump() if hasattr(cat.rules, "model_dump") else cat.rules.dict()
+        cat_matches = 0
+        proxy = _OrgProxy(cat.id, cat.slug)
+
+        for email in emails:
+            k = email_key(email)
+            k_str = f"{k[0]}:{k[1]}"
+            if email_belongs_to_organiser(email, proxy, cat.target_accounts, rules_dict, overrides):
+                cat_matches += 1
+                matched_keys.add(k)
+                if k_str not in match_map:
+                    match_map[k_str] = []
+                match_map[k_str].append(cat.slug)
+
+        cat.coverage_count = cat_matches
+
+    total_emails = len(emails)
+    matched_unique = len(matched_keys)
+    unassigned_count = total_emails - matched_unique
+
+    return {
+        "categories": categories,
+        "total_emails": total_emails,
+        "matched_unique": matched_unique,
+        "unassigned_count": unassigned_count,
+        "match_map": match_map,
+    }
+
+
+def _clean_subject_for_threading(s: str) -> str:
+    """Normalize email subjects to cluster reply and forward chains."""
+    if not s:
+        return ""
+    cleaned = s
+    while True:
+        sub = re.sub(r"^\s*(re|fwd|fw|aw|antw|رد)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+        if sub == cleaned:
+            break
+        cleaned = sub
+    return cleaned.strip().lower()
+
+
+def _fetch_email_from_imap_sync(account_id: str, folder: str, uid: str, owner: str) -> dict:
+    from routes.email_helpers import _imap, _q, _decode_header, _extract_text, _extract_html
+    import email as email_mod
+    try:
+        with _imap(account_id, owner=owner) as conn:
+            conn.select(_q(folder), readonly=True)
+            status, msg_data = conn.uid("FETCH", str(uid).encode("ascii"), "(BODY.PEEK[])")
+            if status != "OK" or not msg_data:
+                return {}
+            raw = msg_data[0][1] if isinstance(msg_data[0], tuple) and len(msg_data[0]) > 1 else b""
+            if not raw:
+                return {}
+            msg = email_mod.message_from_bytes(raw)
+            return {
+                "subject": _decode_header(msg.get("Subject", "")),
+                "body": _extract_text(msg),
+                "body_html": _extract_html(msg),
+                "to": _decode_header(msg.get("To", "")),
+                "cc": _decode_header(msg.get("Cc", "")),
+            }
+    except Exception as e:
+        logger.warning("IMAP fetch failed for UID %s: %s", uid, e)
+        return {}
 
 
 # ================= ROUTER DEFINITION =================
@@ -1031,6 +1792,584 @@ def setup_organisers_routes() -> APIRouter:
             "ok": True,
             "total_matches": len(matched),
             "preview_emails": matched[:payload.limit],
+        }
+
+    @router.post("/calibrate/extract")
+    async def calibrate_extract(
+        payload: CalibrateExtractRequest,
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        """Extract candidate taxonomy and rules from recent emails via LLM."""
+        owner = require_user(request)
+        all_emails = _get_recent_emails(days=payload.days)
+        if not all_emails:
+            return {
+                "ok": True,
+                "emails": [],
+                "categories": [],
+                "total_emails": 0,
+                "matched_unique": 0,
+                "unassigned_count": 0,
+                "match_map": {},
+            }
+
+        sampled_emails = _sample_calibration_emails(all_emails, payload.limit)
+        existing_organisers = db.query(WorkOrganiser).filter(
+            or_(WorkOrganiser.owner == owner, WorkOrganiser.owner == None)
+        ).all()
+
+        extracted_rows, candidate_categories = _infer_calibration_taxonomy(
+            sampled_emails, existing_organisers
+        )
+
+        overrides = load_organiser_overrides(db, owner)
+        stats = _recalculate_taxonomy_coverage(candidate_categories, all_emails, overrides)
+
+        return {
+            "ok": True,
+            "emails": [r.model_dump() if hasattr(r, "model_dump") else r.dict() for r in extracted_rows],
+            "categories": [c.model_dump() if hasattr(c, "model_dump") else c.dict() for c in stats["categories"]],
+            "total_emails": stats["total_emails"],
+            "matched_unique": stats["matched_unique"],
+            "unassigned_count": stats["unassigned_count"],
+            "match_map": stats["match_map"],
+        }
+
+    @router.post("/calibrate/recalculate")
+    def calibrate_recalculate(
+        payload: CalibrateRecalculateRequest,
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        """Pure deterministic re-filtering of emails across user-revised categories."""
+        owner = require_user(request)
+        all_emails = _get_recent_emails(days=payload.days)
+        overrides = load_organiser_overrides(db, owner)
+
+        stats = _recalculate_taxonomy_coverage(payload.categories, all_emails, overrides)
+        return {
+            "ok": True,
+            "categories": [c.model_dump() if hasattr(c, "model_dump") else c.dict() for c in stats["categories"]],
+            "total_emails": stats["total_emails"],
+            "matched_unique": stats["matched_unique"],
+            "unassigned_count": stats["unassigned_count"],
+            "match_map": stats["match_map"],
+        }
+
+    @router.post("/calibrate/apply")
+    def calibrate_apply(
+        payload: CalibrateApplyRequest,
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        """Codify the agreed taxonomy into WorkOrganiser records and reset caches."""
+        owner = require_user(request)
+        total_created = 0
+        total_updated = 0
+
+        for cat in payload.categories:
+            if getattr(cat, "is_deleted", False):
+                if cat.id:
+                    db.query(WorkOrganiser).filter(
+                        WorkOrganiser.id == cat.id,
+                        or_(WorkOrganiser.owner == owner, WorkOrganiser.owner == None),
+                    ).delete()
+                elif cat.slug:
+                    db.query(WorkOrganiser).filter(
+                        WorkOrganiser.slug == cat.slug,
+                        or_(WorkOrganiser.owner == owner, WorkOrganiser.owner == None),
+                    ).delete()
+                continue
+
+            rules_dict = cat.rules.model_dump() if hasattr(cat.rules, "model_dump") else cat.rules.dict()
+            rules_str = json.dumps(rules_dict)
+            accounts_str = json.dumps(cat.target_accounts or [])
+
+            org = None
+            if cat.id:
+                org = db.query(WorkOrganiser).filter(
+                    WorkOrganiser.id == cat.id,
+                    or_(WorkOrganiser.owner == owner, WorkOrganiser.owner == None),
+                ).first()
+            if not org:
+                org = db.query(WorkOrganiser).filter(
+                    WorkOrganiser.slug == cat.slug,
+                    or_(WorkOrganiser.owner == owner, WorkOrganiser.owner == None),
+                ).first()
+
+            if org:
+                org.name = cat.name
+                org.description = cat.description
+                org.category_group = cat.category_group
+                org.color = cat.color
+                org.icon = cat.icon
+                org.priority = cat.priority
+                org.rules_json = rules_str
+                org.target_accounts = accounts_str
+                if cat.ai_instructions:
+                    org.ai_instructions = cat.ai_instructions
+                org.updated_at = utcnow_naive()
+                total_updated += 1
+            else:
+                new_id = uuid.uuid4().hex
+                if cat.id and not db.query(WorkOrganiser.id).filter(WorkOrganiser.id == cat.id).first():
+                    new_id = cat.id
+
+                new_org = WorkOrganiser(
+                    id=new_id,
+                    owner=owner,
+                    name=cat.name,
+                    slug=_normalize_slug(cat.name, cat.slug),
+                    description=cat.description,
+                    category_group=cat.category_group,
+                    icon=cat.icon or "briefcase",
+                    color=cat.color or "#61afef",
+                    priority=cat.priority or "normal",
+                    target_accounts=accounts_str,
+                    rules_json=rules_str,
+                    ai_instructions=cat.ai_instructions or cat.description,
+                    memory_lane=f"organisers:{cat.slug}",
+                    sort_order=0,
+                    is_active=True,
+                )
+                db.add(new_org)
+                total_created += 1
+
+        if payload.clear_overview_cache:
+            try:
+                db.query(OverviewCache).filter(
+                    or_(OverviewCache.owner == owner, OverviewCache.owner == None)
+                ).delete()
+            except Exception as e:
+                logger.warning("Failed clearing OverviewCache: %s", e)
+
+        # Mark draft as applied
+        draft_id = f"{owner}:calibration_draft"
+        draft = db.query(CalibrationDraft).filter(CalibrationDraft.id == draft_id).first()
+        if draft:
+            draft.stage = "applied"
+            draft.updated_at = utcnow_naive()
+
+        db.commit()
+
+        all_emails = _get_recent_emails(days=14)
+        organisers = db.query(WorkOrganiser).filter(
+            or_(WorkOrganiser.owner == owner, WorkOrganiser.owner == None)
+        ).order_by(WorkOrganiser.sort_order.asc()).all()
+
+        return {
+            "ok": True,
+            "created": total_created,
+            "updated": total_updated,
+            "total_organisers": len(organisers),
+            "organisers": [_format_organiser_summary(o, all_emails, db, owner) for o in organisers],
+        }
+
+    @router.get("/calibrate/draft")
+    async def get_calibrate_draft(
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        """Retrieve the active calibration draft or initialize a fresh 100-email draft."""
+        owner = require_user(request)
+        draft_id = f"{owner}:calibration_draft"
+        draft = db.query(CalibrationDraft).filter(CalibrationDraft.id == draft_id).first()
+
+        all_emails = _get_recent_emails(days=14)
+        overrides = load_organiser_overrides(db, owner)
+
+        if draft and draft.taxonomy_json and draft.emails_json:
+            try:
+                raw_cats = json.loads(draft.taxonomy_json)
+                raw_emails = json.loads(draft.emails_json)
+                categories = [CategoryDraft(**c) for c in raw_cats if isinstance(c, dict)]
+                emails = [EmailDraftRow(**e) for e in raw_emails if isinstance(e, dict)]
+
+                active_cats = [c for c in categories if not c.is_deleted]
+
+                # Backfill snippets/to_text if previously empty
+                email_lookup = {email_key(e): e for e in all_emails}
+                needs_update = False
+                for e in emails:
+                    orig = email_lookup.get((e.account_key, e.uid))
+                    if orig:
+                        if not e.snippet and orig.get("snippet"):
+                            e.snippet = orig.get("snippet")
+                            needs_update = True
+                        if not e.to_text and orig.get("to_text"):
+                            e.to_text = orig.get("to_text")
+                            needs_update = True
+                        if not e.folder and orig.get("folder"):
+                            e.folder = orig.get("folder")
+                            needs_update = True
+                if needs_update:
+                    draft.emails_json = json.dumps([e.model_dump() for e in emails])
+                    db.commit()
+
+                cal_cats_for_calc = [
+                    CalibratedCategory(
+                        id=c.id,
+                        slug=c.slug,
+                        name=c.name,
+                        description=c.description,
+                        category_group=c.category_group,
+                        icon=c.icon,
+                        color=c.color,
+                        priority=c.priority,
+                        rules=c.rules,
+                    )
+                    for c in active_cats
+                ]
+                stats = _recalculate_taxonomy_coverage(cal_cats_for_calc, all_emails, overrides)
+                coverage_map = {c.slug: c.coverage_count for c in stats["categories"]}
+                for c in categories:
+                    c.coverage_count = coverage_map.get(c.slug, 0)
+
+                return {
+                    "ok": True,
+                    "stage": draft.stage,
+                    "updated_at": draft.updated_at.isoformat() if draft.updated_at else "",
+                    "categories": [c.model_dump() for c in categories],
+                    "emails": [e.model_dump() for e in emails],
+                    "total_corpus_emails": stats["total_emails"],
+                    "matched_unique": stats["matched_unique"],
+                    "unassigned_count": stats["unassigned_count"],
+                }
+            except Exception as e:
+                logger.warning("Failed parsing existing calibration draft: %s, re-seeding", e)
+
+        # Seed fresh 100-email draft
+        sampled = _sample_calibration_emails(all_emails, limit=100)
+        existing_organisers = db.query(WorkOrganiser).filter(
+            or_(WorkOrganiser.owner == owner, WorkOrganiser.owner == None)
+        ).all()
+
+        categories, emails = _generate_initial_draft_payload(sampled, existing_organisers)
+
+        cal_cats_for_calc = [
+            CalibratedCategory(
+                id=c.id,
+                slug=c.slug,
+                name=c.name,
+                description=c.description,
+                category_group=c.category_group,
+                icon=c.icon,
+                color=c.color,
+                priority=c.priority,
+                rules=c.rules,
+            )
+            for c in categories if not c.is_deleted
+        ]
+        stats = _recalculate_taxonomy_coverage(cal_cats_for_calc, all_emails, overrides)
+        coverage_map = {c.slug: c.coverage_count for c in stats["categories"]}
+        for c in categories:
+            c.coverage_count = coverage_map.get(c.slug, 0)
+
+        taxonomy_str = json.dumps([c.model_dump() for c in categories])
+        emails_str = json.dumps([e.model_dump() for e in emails])
+        now = utcnow_naive()
+
+        if not draft:
+            draft = CalibrationDraft(
+                id=draft_id,
+                owner=owner,
+                stage="draft",
+                taxonomy_json=taxonomy_str,
+                emails_json=emails_str,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(draft)
+        else:
+            draft.stage = "draft"
+            draft.taxonomy_json = taxonomy_str
+            draft.emails_json = emails_str
+            draft.updated_at = now
+
+        db.commit()
+
+        return {
+            "ok": True,
+            "stage": "draft",
+            "updated_at": now.isoformat(),
+            "categories": [c.model_dump() for c in categories],
+            "emails": [e.model_dump() for e in emails],
+            "total_corpus_emails": stats["total_emails"],
+            "matched_unique": stats["matched_unique"],
+            "unassigned_count": stats["unassigned_count"],
+        }
+
+    @router.put("/calibrate/draft")
+    async def save_calibrate_draft(
+        payload: SaveCalibrationDraftRequest,
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        """Autosave the working draft with up to 3 categories, 10 parameters, and comments."""
+        owner = require_user(request)
+        draft_id = f"{owner}:calibration_draft"
+
+        deleted_slugs = {c.slug for c in payload.categories if c.is_deleted}
+
+        cleaned_emails: List[EmailDraftRow] = []
+        for e in payload.emails:
+            filtered_cats = [c for c in e.assigned_categories if c not in deleted_slugs][:3]
+            e.assigned_categories = filtered_cats
+            e.extracted_parameters = e.extracted_parameters[:10]
+            if len(e.comments or "") > 2000:
+                e.comments = e.comments[:2000]
+            cleaned_emails.append(e)
+
+        for c in payload.categories:
+            if len(c.comments or "") > 2000:
+                c.comments = c.comments[:2000]
+
+        taxonomy_str = json.dumps([c.model_dump() for c in payload.categories])
+        emails_str = json.dumps([e.model_dump() for e in cleaned_emails])
+
+        draft = db.query(CalibrationDraft).filter(CalibrationDraft.id == draft_id).first()
+        now = utcnow_naive()
+        if not draft:
+            draft = CalibrationDraft(
+                id=draft_id,
+                owner=owner,
+                stage=payload.stage or "draft",
+                taxonomy_json=taxonomy_str,
+                emails_json=emails_str,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(draft)
+        else:
+            draft.stage = payload.stage or draft.stage
+            draft.taxonomy_json = taxonomy_str
+            draft.emails_json = emails_str
+            draft.updated_at = now
+
+        db.commit()
+
+        return {
+            "ok": True,
+            "updated_at": now.isoformat(),
+            "category_count": len(payload.categories),
+            "email_count": len(cleaned_emails),
+        }
+
+    @router.post("/calibrate/draft/reset")
+    async def reset_calibrate_draft(
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        """Reset the working draft back to the fresh 100-email inferred baseline."""
+        owner = require_user(request)
+        draft_id = f"{owner}:calibration_draft"
+        db.query(CalibrationDraft).filter(CalibrationDraft.id == draft_id).delete()
+        db.commit()
+        return await get_calibrate_draft(request, db)
+
+    @router.post("/calibrate/agent-pass")
+    async def run_agent_pass(
+        payload: AgentPassRequest,
+        request: Request,
+        db: Session = Depends(get_db),
+    ):
+        """Phase 2: Agent iterates through the full corpus, assigning 1-3 categories per email."""
+        owner = require_user(request)
+        all_emails = _get_recent_emails(days=payload.days)
+        overrides = load_organiser_overrides(db, owner)
+
+        # Thread Reply-Chain Propagation: Anchor comments and assignments cascade to all replies
+        draft_id = f"{owner}:calibration_draft"
+        draft = db.query(CalibrationDraft).filter(CalibrationDraft.id == draft_id).first()
+        thread_overrides: Dict[str, List[str]] = {}
+        if draft and draft.emails_json:
+            try:
+                draft_emails_raw = json.loads(draft.emails_json)
+                for de in draft_emails_raw:
+                    cats = de.get("assigned_categories") or []
+                    cs = _clean_subject_for_threading(de.get("subject") or "")
+                    if cs and cats:
+                        if cs not in thread_overrides:
+                            thread_overrides[cs] = []
+                        for c_slug in cats:
+                            if c_slug not in thread_overrides[cs]:
+                                thread_overrides[cs].append(c_slug)
+            except Exception as e:
+                logger.warning("Error parsing draft emails for threading: %s", e)
+
+        active_cats = [c for c in payload.categories if not c.is_deleted]
+        category_coverage: Dict[str, int] = {c.slug: 0 for c in active_cats}
+        corpus_matches: Dict[str, List[str]] = {}
+        matched_unique = 0
+
+        for email in all_emails:
+            k = email_key(email)
+            email_matched_slugs: List[str] = []
+
+            # 1. Thread anchor inheritance
+            cs = _clean_subject_for_threading(email.get("subject") or "")
+            if cs in thread_overrides:
+                for slug in thread_overrides[cs]:
+                    if slug not in email_matched_slugs:
+                        email_matched_slugs.append(slug)
+                        category_coverage[slug] = category_coverage.get(slug, 0) + 1
+
+            # 2. Rule evaluation
+            for cat in active_cats:
+                if cat.slug in email_matched_slugs:
+                    continue
+                rules_dict = cat.rules.model_dump() if hasattr(cat.rules, "model_dump") else cat.rules.dict()
+                proxy = _OrgProxy(cat.id, cat.slug)
+                if email_belongs_to_organiser(email, proxy, [], rules_dict, overrides):
+                    email_matched_slugs.append(cat.slug)
+                    category_coverage[cat.slug] = category_coverage.get(cat.slug, 0) + 1
+
+            if email_matched_slugs:
+                matched_unique += 1
+                corpus_matches[k] = email_matched_slugs[:3]
+
+        total_corpus = len(all_emails)
+        unassigned_count = total_corpus - matched_unique
+
+        multi_breakdown = {"1_category": 0, "2_categories": 0, "3_categories": 0}
+        for slugs in corpus_matches.values():
+            cnt = len(slugs)
+            if cnt == 1:
+                multi_breakdown["1_category"] += 1
+            elif cnt == 2:
+                multi_breakdown["2_categories"] += 1
+            elif cnt >= 3:
+                multi_breakdown["3_categories"] += 1
+
+        # Advance draft stage
+        draft_id = f"{owner}:calibration_draft"
+        draft = db.query(CalibrationDraft).filter(CalibrationDraft.id == draft_id).first()
+        if draft:
+            draft.stage = "agent_evaluated"
+            draft.updated_at = utcnow_naive()
+            db.commit()
+
+        return {
+            "ok": True,
+            "total_corpus_emails": total_corpus,
+            "matched_unique": matched_unique,
+            "unassigned_count": unassigned_count,
+            "category_coverage": category_coverage,
+            "multi_category_breakdown": multi_breakdown,
+        }
+
+    @router.get("/calibration")
+    async def calibration_view(request: Request):
+        """Serve the standalone Focus Studio in its own tab."""
+        html_path = Path(__file__).resolve().parent.parent.parent / "static" / "calibration.html"
+        if not html_path.exists():
+            raise HTTPException(status_code=404, detail="Calibration template not found")
+        return FileResponse(str(html_path), media_type="text/html")
+
+    @router.get("/calibrate/email-content/{account_key}/{uid}")
+    async def get_calibrate_email_content(
+        account_key: str,
+        uid: str,
+        folder: str = Query("INBOX"),
+        request: Request = None,
+        db: Session = Depends(get_db),
+    ):
+        """Fetch full email content (headers, body, html, summary).
+        Checks preview cache, email summaries, and live IMAP read."""
+        owner = require_user(request)
+        db_file = Path(SCHEDULED_EMAILS_DB)
+
+        body_text = ""
+        summary_text = ""
+        to_text = ""
+        cc_text = ""
+        subject = ""
+        from_addr = ""
+        from_name = ""
+        date_iso = ""
+
+        if db_file.exists():
+            try:
+                conn = sqlite3.connect(str(db_file), timeout=5.0)
+                cur = conn.cursor()
+                # Headers
+                h_row = cur.execute(
+                    "SELECT subject, from_name, from_address, to_text, cc_text, date_iso FROM email_message_index WHERE uid=? AND (account_key=? OR account_key IS NULL)",
+                    (uid, account_key),
+                ).fetchone()
+                if h_row:
+                    subject, from_name, from_addr, to_text, cc_text, date_iso = h_row
+
+                # Body from preview cache
+                p_row = cur.execute(
+                    "SELECT payload_json FROM email_body_preview_cache WHERE uid=? AND folder=?",
+                    (uid, folder),
+                ).fetchone()
+                if p_row and p_row[0]:
+                    try:
+                        p_data = json.loads(p_row[0])
+                        body_text = p_data.get("body") or p_data.get("snippet") or ""
+                    except Exception:
+                        pass
+
+                # Summary from email_summaries
+                s_row = cur.execute(
+                    "SELECT summary FROM email_summaries WHERE uid=?",
+                    (uid,),
+                ).fetchone()
+                if s_row and s_row[0]:
+                    summary_text = s_row[0]
+
+                conn.close()
+            except Exception as e:
+                logger.warning("Error reading email cache: %s", e)
+
+        # If body is still empty, attempt live IMAP read
+        if not body_text:
+            try:
+                result = await asyncio.to_thread(_fetch_email_from_imap_sync, account_key, folder, uid, owner)
+                if result and result.get("body"):
+                    body_text = result.get("body") or ""
+                    to_text = result.get("to") or to_text
+                    cc_text = result.get("cc") or cc_text
+
+                    # Cache into email_body_preview_cache
+                    if db_file.exists():
+                        try:
+                            conn = sqlite3.connect(str(db_file), timeout=5.0)
+                            payload_str = json.dumps({"body": body_text[:2000], "snippet": body_text[:300]})
+                            conn.execute(
+                                """
+                                INSERT INTO email_body_preview_cache (owner, account_key, folder, uid, message_id, payload_json, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                                ON CONFLICT(owner, account_key, folder, uid) DO UPDATE SET
+                                    payload_json=excluded.payload_json,
+                                    updated_at=excluded.updated_at
+                                """,
+                                (owner, account_key, folder, str(uid), "", payload_str),
+                            )
+                            conn.commit()
+                            conn.close()
+                        except Exception as cache_err:
+                            logger.debug("Failed caching preview: %s", cache_err)
+            except Exception as e:
+                logger.debug("Live IMAP read skipped: %s", e)
+
+        return {
+            "ok": True,
+            "uid": uid,
+            "account_key": account_key,
+            "folder": folder,
+            "subject": subject,
+            "from_name": from_name,
+            "from_address": from_addr,
+            "to": to_text,
+            "cc": cc_text,
+            "date": date_iso,
+            "body": body_text or summary_text or "(No body content found for this message)",
+            "summary": summary_text,
+            "has_body": bool(body_text),
         }
 
     return router

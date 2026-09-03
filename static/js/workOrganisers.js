@@ -29,6 +29,18 @@ let _stylesInjected = false;
 let _searchQuery = '';
 let _availableAccounts = [];
 let _allProjects = [];
+let _activeView = 'organisers'; // 'organisers' | 'calibrate'
+let _calLoading = false;
+let _calState = {
+  emails: [],
+  categories: [],
+  matchMap: {},
+  totalEmails: 0,
+  matchedUnique: 0,
+  unassignedCount: 0,
+  filterCat: 'all',
+  searchQuery: '',
+};
 
 // Inline Feather/Lucide SVG Icons (Zero Emojis)
 const ICONS = {
@@ -493,6 +505,158 @@ function _injectStyles() {
         display: none !important;
       }
     }
+
+    /* Calibration Studio Styles */
+    .calibrate-container {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      overflow: hidden;
+      background: var(--panel, #1e2227);
+    }
+    .calibrate-header-bar {
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+      background: rgba(0,0,0,0.2);
+    }
+    .calibrate-stats-badge {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background: rgba(97, 175, 239, 0.12);
+      color: #abb2bf;
+      border: 1px solid rgba(97, 175, 239, 0.25);
+    }
+    .calibrate-categories-bar {
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+      background: rgba(255,255,255,0.01);
+      flex-shrink: 0;
+    }
+    .calibrate-cat-chip {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border, rgba(255,255,255,0.1));
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.1s;
+    }
+    .calibrate-cat-chip:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.2);
+    }
+    .calibrate-cat-chip.active {
+      background: rgba(97, 175, 239, 0.18);
+      border-color: #61afef;
+      color: #fff;
+    }
+    .calibrate-cat-chip .count {
+      padding: 1px 5px;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.3);
+      font-size: 9.5px;
+      font-weight: 600;
+    }
+    .calibrate-filter-row {
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.04));
+      background: rgba(0,0,0,0.1);
+      flex-shrink: 0;
+    }
+    .calibrate-table-wrap {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+    }
+    .calibrate-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .calibrate-table th {
+      position: sticky;
+      top: 0;
+      background: #21252b;
+      padding: 8px 12px;
+      text-align: left;
+      font-size: 10.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      opacity: 0.7;
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.1));
+      z-index: 2;
+    }
+    .calibrate-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      vertical-align: top;
+    }
+    .calibrate-table tr:hover td {
+      background: rgba(255,255,255,0.02);
+    }
+    .calibrate-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 10.5px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      margin: 2px 3px 2px 0;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .calibrate-tag.sender {
+      border-color: rgba(97, 175, 239, 0.4);
+      color: #61afef;
+    }
+    .calibrate-tag.domain {
+      border-color: rgba(152, 195, 121, 0.4);
+      color: #98c379;
+    }
+    .calibrate-tag.keyword {
+      border-color: rgba(229, 192, 123, 0.4);
+      color: #e5c07b;
+    }
+    .calibrate-tag .tag-del {
+      cursor: pointer;
+      opacity: 0.5;
+      font-size: 11px;
+      line-height: 1;
+      margin-left: 2px;
+    }
+    .calibrate-tag .tag-del:hover {
+      opacity: 1;
+      color: #e06c75;
+    }
+    .calibrate-add-tag-btn {
+      background: transparent;
+      border: 1px dashed rgba(255,255,255,0.2);
+      border-radius: 3px;
+      color: rgba(255,255,255,0.5);
+      font-size: 10px;
+      padding: 1px 5px;
+      cursor: pointer;
+      margin: 2px 3px 2px 0;
+    }
+    .calibrate-add-tag-btn:hover {
+      border-color: #61afef;
+      color: #61afef;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -516,6 +680,9 @@ function _getModal() {
           <span>AI Work Organisers</span>
         </div>
         <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+          <button class="overview-btn" id="org-calibrate-btn" title="Calibrate taxonomy and rules using AI against real emails" style="border-color:rgba(97,175,239,0.4);color:#61afef;">
+            ${ICONS.sparkle} <span class="org-btn-text">Calibrate Taxonomy</span>
+          </button>
           <button class="overview-btn" id="org-seed-btn" title="Seed empirical categories from 14d email analysis">
             ${ICONS.refresh} <span class="org-btn-text">Seed Defaults</span>
           </button>
@@ -537,6 +704,9 @@ function _getModal() {
     if (!_hostContainer) makeWindowDraggable(_modal, { header });
 
     _modal.querySelector('#org-modal-close').addEventListener('click', () => _doClose());
+    _modal.querySelector('#org-calibrate-btn').addEventListener('click', () => {
+      window.open('/calibration', '_blank');
+    });
     _modal.querySelector('#org-seed-btn').addEventListener('click', () => _seedDefaults());
     _modal.querySelector('#org-new-btn').addEventListener('click', () => _createNewOrganiser());
   }
@@ -664,12 +834,419 @@ async function _createNewOrganiser() {
   }
 }
 
+// ================= TAXONOMY CALIBRATION STUDIO =================
+
+async function _startCalibration() {
+  _activeView = 'calibrate';
+  _calLoading = true;
+  _render();
+
+  try {
+    const res = await fetch('/api/organisers/calibrate/extract', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days: 14, limit: 60, allow_new_categories: true }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    _calState = {
+      emails: data.emails || [],
+      categories: data.categories || [],
+      matchMap: data.match_map || {},
+      totalEmails: data.total_emails || 0,
+      matchedUnique: data.matched_unique || 0,
+      unassignedCount: data.unassigned_count || 0,
+      filterCat: 'all',
+      searchQuery: '',
+    };
+  } catch (err) {
+    alert(`Calibration extraction failed: ${err.message}`);
+    _activeView = 'organisers';
+  } finally {
+    _calLoading = false;
+    _render();
+  }
+}
+
+async function _recalculateCoverage(layout) {
+  try {
+    const res = await fetch('/api/organisers/calibrate/recalculate', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        days: 14,
+        categories: _calState.categories,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    _calState.categories = data.categories || [];
+    _calState.matchMap = data.match_map || {};
+    _calState.totalEmails = data.total_emails || 0;
+    _calState.matchedUnique = data.matched_unique || 0;
+    _calState.unassignedCount = data.unassigned_count || 0;
+    _renderCalibrationStudio(layout);
+  } catch (err) {
+    alert(`Recalculation failed: ${err.message}`);
+  }
+}
+
+async function _applyCalibration(layout) {
+  if (!confirm('Codify this calibrated taxonomy into your AI Work Organisers and reset system overview caches?')) return;
+  try {
+    const res = await fetch('/api/organisers/calibrate/apply', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        categories: _calState.categories,
+        clear_overview_cache: true,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    alert(`Taxonomy applied successfully! Updated ${data.updated} categories, created ${data.created} categories.`);
+    _activeView = 'organisers';
+    await _fetchOrganisers();
+  } catch (err) {
+    alert(`Failed to apply taxonomy: ${err.message}`);
+  }
+}
+
+function _renderCalibrationStudio(layout) {
+  if (!layout) return;
+
+  if (_calLoading) {
+    layout.innerHTML = `
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;text-align:center;">
+        <div style="width:36px;height:36px;margin-bottom:16px;color:#61afef;animation:spin 1s linear infinite;">
+          ${ICONS.refresh}
+        </div>
+        <div style="font-size:15px;font-weight:600;color:#fff;margin-bottom:6px;">
+          Calibrating Email Taxonomy with AI...
+        </div>
+        <div style="font-size:12px;opacity:0.6;max-width:440px;line-height:1.5;">
+          Extracting candidate workstreams, senders, domains, and keywords across your recent email correspondence. This takes ~15-30 seconds.
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const emails = _calState.emails || [];
+  const categories = _calState.categories || [];
+  const matchMap = _calState.matchMap || {};
+
+  const filteredEmails = emails.filter(e => {
+    if (_calState.filterCat === '__unassigned__') {
+      const key = `${e.account_key}:${e.uid}`;
+      return !(matchMap[key] && matchMap[key].length > 0);
+    }
+    if (_calState.filterCat !== 'all') {
+      const key = `${e.account_key}:${e.uid}`;
+      const matched = matchMap[key] || [];
+      return matched.includes(_calState.filterCat) || e.proposed_category === _calState.filterCat;
+    }
+    if (_calState.searchQuery) {
+      const q = _calState.searchQuery.toLowerCase();
+      const text = [
+        e.from_name, e.from_address, e.subject, e.snippet,
+        ...(e.extracted_keywords || []), ...(e.extracted_senders || []), ...(e.extracted_domains || [])
+      ].join(' ').toLowerCase();
+      return text.includes(q);
+    }
+    return true;
+  });
+
+  layout.innerHTML = `
+    <div class="calibrate-container">
+      <div class="calibrate-header-bar">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button class="overview-btn" id="cal-back-btn" title="Back to Organisers">
+            &larr; <span class="org-btn-text">Back</span>
+          </button>
+          <div style="font-weight:600;font-size:13px;color:#fff;display:flex;align-items:center;gap:6px;">
+            ${ICONS.sparkle} AI Taxonomy Calibration Studio
+          </div>
+          <div class="calibrate-stats-badge">
+            ${_calState.totalEmails} total &bull; <strong style="color:#98c379;">${_calState.matchedUnique} matched</strong> &bull; <strong style="color:#e5c07b;">${_calState.unassignedCount} unassigned</strong>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="overview-btn" id="cal-recalc-btn" title="Recalculate coverage using deterministic rules">
+            ${ICONS.refresh} <span class="org-btn-text">Re-calculate (0ms)</span>
+          </button>
+          <button class="overview-btn" id="cal-apply-btn" style="background:#22c55e;color:#fff;border:none;font-weight:600;">
+            ${ICONS.checkSquare} <span class="org-btn-text">Apply Taxonomy &amp; Reset</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Categories bar -->
+      <div class="calibrate-categories-bar">
+        <span style="font-size:10.5px;font-weight:600;opacity:0.6;margin-right:4px;">TAXONOMY:</span>
+        <div class="calibrate-cat-chip ${_calState.filterCat === 'all' ? 'active' : ''}" data-cat="all">
+          All Emails <span class="count">${_calState.totalEmails}</span>
+        </div>
+        <div class="calibrate-cat-chip ${_calState.filterCat === '__unassigned__' ? 'active' : ''}" data-cat="__unassigned__" style="color:#e5c07b;">
+          Unassigned <span class="count" style="color:#e5c07b;">${_calState.unassignedCount}</span>
+        </div>
+        ${categories.map(c => `
+          <div class="calibrate-cat-chip ${_calState.filterCat === c.slug ? 'active' : ''}" data-cat="${_esc(c.slug)}">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${_esc(c.color || '#61afef')}"></span>
+            ${_esc(c.name)}
+            <span class="count">${c.coverage_count || 0}</span>
+          </div>
+        `).join('')}
+      </div>
+
+      <!-- Filter bar -->
+      <div class="calibrate-filter-row">
+        <select id="cal-filter-select" class="org-input" style="padding:4px 8px;font-size:11.5px;border-radius:4px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#fff;">
+          <option value="all" ${_calState.filterCat === 'all' ? 'selected' : ''}>All Categories</option>
+          <option value="__unassigned__" ${_calState.filterCat === '__unassigned__' ? 'selected' : ''}>Unassigned Only (${_calState.unassignedCount})</option>
+          ${categories.map(c => `
+            <option value="${_esc(c.slug)}" ${_calState.filterCat === c.slug ? 'selected' : ''}>${_esc(c.name)} (${c.coverage_count || 0})</option>
+          `).join('')}
+        </select>
+        <input type="text" id="cal-search-input" class="org-input" placeholder="Search sender, subject, keywords..." value="${_esc(_calState.searchQuery)}" style="margin-left:8px;padding:4px 8px;font-size:11.5px;border-radius:4px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#fff;width:260px;">
+        <span style="margin-left:auto;font-size:11px;opacity:0.6;">Showing ${filteredEmails.length} of ${emails.length} sampled emails</span>
+      </div>
+
+      <!-- Table of emails and parameters -->
+      <div class="calibrate-table-wrap">
+        <table class="calibrate-table">
+          <thead>
+            <tr>
+              <th style="width:75px;">Date</th>
+              <th style="width:240px;">Sender / Subject</th>
+              <th>Extracted Rule Parameters (Senders / Domains / Keywords)</th>
+              <th style="width:190px;">Assigned Category</th>
+              <th style="width:200px;">Reasoning</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredEmails.length === 0 ? `
+              <tr><td colspan="5" style="text-align:center;padding:30px;opacity:0.6;">No emails match filter.</td></tr>
+            ` : filteredEmails.map(e => {
+              const emailKey = `${e.account_key}:${e.uid}`;
+              const matchedCats = matchMap[emailKey] || [];
+              const isMatched = matchedCats.length > 0;
+              const dateStr = e.date_iso ? e.date_iso.slice(5, 10) : '';
+
+              return `
+                <tr data-email-key="${_esc(emailKey)}" style="${!isMatched ? 'background:rgba(229,192,123,0.04);' : ''}">
+                  <td style="font-size:11px;opacity:0.7;white-space:nowrap;">${_esc(dateStr)}</td>
+                  <td>
+                    <div style="font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px;" title="${_esc(e.from_name || e.from_address)}">
+                      ${_esc(e.from_name || e.from_address || 'Unknown')}
+                    </div>
+                    <div style="font-size:11px;color:rgba(255,255,255,0.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px;margin-top:2px;" title="${_esc(e.subject)}">
+                      ${_esc(e.subject || '(No subject)')}
+                    </div>
+                    ${e.from_address ? `<div style="font-size:10px;opacity:0.5;margin-top:1px;">${_esc(e.from_address)}</div>` : ''}
+                  </td>
+                  <td>
+                    <div class="calibrate-tags-group">
+                      ${(e.extracted_senders || []).map(s => `
+                        <span class="calibrate-tag sender" title="Sender rule">
+                          ${_esc(s)}
+                          <span class="tag-del" data-action="del-sender" data-val="${_esc(s)}" data-cat="${_esc(e.proposed_category)}" data-email-key="${_esc(emailKey)}">&times;</span>
+                        </span>
+                      `).join('')}
+                      ${(e.extracted_domains || []).map(d => `
+                        <span class="calibrate-tag domain" title="Domain rule">
+                          @${_esc(d)}
+                          <span class="tag-del" data-action="del-domain" data-val="${_esc(d)}" data-cat="${_esc(e.proposed_category)}" data-email-key="${_esc(emailKey)}">&times;</span>
+                        </span>
+                      `).join('')}
+                      ${(e.extracted_keywords || []).map(k => `
+                        <span class="calibrate-tag keyword" title="Keyword rule">
+                          ${_esc(k)}
+                          <span class="tag-del" data-action="del-keyword" data-val="${_esc(k)}" data-cat="${_esc(e.proposed_category)}" data-email-key="${_esc(emailKey)}">&times;</span>
+                        </span>
+                      `).join('')}
+                      <button class="calibrate-add-tag-btn" data-email-key="${_esc(emailKey)}" data-cat="${_esc(e.proposed_category)}" title="Add a keyword or domain parameter">+ rule</button>
+                    </div>
+                  </td>
+                  <td>
+                    <select class="calibrate-row-cat-select org-input" data-email-key="${_esc(emailKey)}" style="width:100%;font-size:11.5px;padding:3px 6px;border-radius:4px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#fff;">
+                      <option value="" ${!e.proposed_category ? 'selected' : ''}>-- Unassigned --</option>
+                      ${categories.map(c => `
+                        <option value="${_esc(c.slug)}" ${e.proposed_category === c.slug ? 'selected' : ''}>${_esc(c.name)}</option>
+                      `).join('')}
+                    </select>
+                    <div style="font-size:10px;margin-top:3px;">
+                      ${isMatched ? `
+                        <span style="color:#98c379;">&check; Matches (${_esc(matchedCats.join(', '))})</span>
+                      ` : `
+                        <span style="color:#e5c07b;">&bull; No rule match</span>
+                      `}
+                    </div>
+                  </td>
+                  <td>
+                    <div style="font-size:11px;line-height:1.4;color:rgba(255,255,255,0.75);">
+                      ${_esc(e.reasoning || 'No justification provided.')}
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  _wireCalibrationEvents(layout);
+}
+
+function _wireCalibrationEvents(layout) {
+  const backBtn = layout.querySelector('#cal-back-btn');
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      _activeView = 'organisers';
+      _render();
+    });
+  }
+
+  const recalcBtn = layout.querySelector('#cal-recalc-btn');
+  if (recalcBtn) {
+    recalcBtn.addEventListener('click', () => _recalculateCoverage(layout));
+  }
+
+  const applyBtn = layout.querySelector('#cal-apply-btn');
+  if (applyBtn) {
+    applyBtn.addEventListener('click', () => _applyCalibration(layout));
+  }
+
+  layout.querySelectorAll('.calibrate-cat-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      _calState.filterCat = chip.getAttribute('data-cat');
+      _renderCalibrationStudio(layout);
+    });
+  });
+
+  const filterSelect = layout.querySelector('#cal-filter-select');
+  if (filterSelect) {
+    filterSelect.addEventListener('change', (e) => {
+      _calState.filterCat = e.target.value;
+      _renderCalibrationStudio(layout);
+    });
+  }
+
+  const searchInput = layout.querySelector('#cal-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      _calState.searchQuery = e.target.value;
+      _renderCalibrationStudio(layout);
+    });
+  }
+
+  layout.querySelectorAll('.tag-del').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const action = btn.getAttribute('data-action');
+      const val = btn.getAttribute('data-val');
+      const catSlug = btn.getAttribute('data-cat');
+      const emailKey = btn.getAttribute('data-email-key');
+
+      const cat = _calState.categories.find(c => c.slug === catSlug);
+      if (cat && cat.rules) {
+        if (action === 'del-sender' && cat.rules.senders) {
+          cat.rules.senders = cat.rules.senders.filter(s => s !== val);
+        } else if (action === 'del-domain' && cat.rules.domains) {
+          cat.rules.domains = cat.rules.domains.filter(d => d !== val);
+        } else if (action === 'del-keyword' && cat.rules.keywords) {
+          cat.rules.keywords = cat.rules.keywords.filter(k => k !== val);
+        }
+      }
+
+      const email = _calState.emails.find(e => `${e.account_key}:${e.uid}` === emailKey);
+      if (email) {
+        if (action === 'del-sender' && email.extracted_senders) {
+          email.extracted_senders = email.extracted_senders.filter(s => s !== val);
+        } else if (action === 'del-domain' && email.extracted_domains) {
+          email.extracted_domains = email.extracted_domains.filter(d => d !== val);
+        } else if (action === 'del-keyword' && email.extracted_keywords) {
+          email.extracted_keywords = email.extracted_keywords.filter(k => k !== val);
+        }
+      }
+
+      _recalculateCoverage(layout);
+    });
+  });
+
+  layout.querySelectorAll('.calibrate-add-tag-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const emailKey = btn.getAttribute('data-email-key');
+      const catSlug = btn.getAttribute('data-cat');
+      const term = prompt('Enter new keyword or domain rule:');
+      if (!term || !term.trim()) return;
+
+      const clean = term.trim().toLowerCase();
+      const cat = _calState.categories.find(c => c.slug === catSlug);
+      const email = _calState.emails.find(e => `${e.account_key}:${e.uid}` === emailKey);
+
+      if (clean.includes('@') || clean.includes('.')) {
+        const domain = clean.replace(/^@/, '');
+        if (cat && cat.rules) {
+          cat.rules.domains = Array.from(new Set([...(cat.rules.domains || []), domain]));
+        }
+        if (email) {
+          email.extracted_domains = Array.from(new Set([...(email.extracted_domains || []), domain]));
+        }
+      } else {
+        if (cat && cat.rules) {
+          cat.rules.keywords = Array.from(new Set([...(cat.rules.keywords || []), clean]));
+        }
+        if (email) {
+          email.extracted_keywords = Array.from(new Set([...(email.extracted_keywords || []), clean]));
+        }
+      }
+
+      _recalculateCoverage(layout);
+    });
+  });
+
+  layout.querySelectorAll('.calibrate-row-cat-select').forEach(sel => {
+    sel.addEventListener('change', (e) => {
+      const emailKey = sel.getAttribute('data-email-key');
+      const newCat = e.target.value;
+      const email = _calState.emails.find(em => `${em.account_key}:${em.uid}` === emailKey);
+      if (email) {
+        email.proposed_category = newCat;
+        if (newCat) {
+          const cat = _calState.categories.find(c => c.slug === newCat);
+          if (cat && cat.rules) {
+            if (email.from_name) {
+              cat.rules.senders = Array.from(new Set([...(cat.rules.senders || []), email.from_name]));
+            }
+            if (email.from_address && email.from_address.includes('@')) {
+              const dom = email.from_address.split('@').pop().toLowerCase();
+              cat.rules.domains = Array.from(new Set([...(cat.rules.domains || []), dom]));
+            }
+          }
+        }
+      }
+      _recalculateCoverage(layout);
+    });
+  });
+}
+
 // ================= RENDERING =================
 
 function _render() {
   if (!_modal) return;
   const layout = _modal.querySelector('#org-layout-container');
   if (!layout) return;
+
+  if (_activeView === 'calibrate') {
+    _renderCalibrationStudio(layout);
+    return;
+  }
 
   const filteredOrgs = _organisers.filter(o => {
     if (!_searchQuery) return true;

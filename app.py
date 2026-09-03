@@ -188,6 +188,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
     "/api/memory/audit",    # retains own 120s LLM inactivity timeout
+    "/api/organisers/calibrate", # taxonomy calibration LLM pass
 )
 
 
@@ -930,6 +931,11 @@ async def serve_notes(request: Request):
 @app.get("/calendar")
 async def serve_calendar(request: Request):
     return await serve_index(request)
+
+@app.get("/calibration")
+async def serve_calibration(request: Request):
+    static_path = abs_join(BASE_DIR, "static/calibration.html")
+    return serve_html_with_nonce(request, static_path)
 
 # Per-tool deep-link routes — all serve the same SPA, the JS auto-opens
 # the matching modal based on window.location.pathname. Each route also

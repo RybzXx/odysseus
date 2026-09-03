@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Odysseus — Taxonomy Calibration Studio</title>
+  <link rel="stylesheet" href="/static/css/calibrationStudio.css?v=20260903focus1">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="studio-header">
+    <div class="studio-brand">
+      <span class="studio-logo">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+        </svg>
+        Taxonomy Calibration Studio
+      </span>
+      <span class="studio-badge">100-Email Focus Workbench</span>
+    </div>
+
+    <div class="studio-sync-status" id="sync-status-box">
+      <span class="sync-dot" id="sync-dot"></span>
+      <span id="sync-text">Draft Synced</span>
+    </div>
+
+    <div class="studio-nav-links">
+      <button class="btn-secondary" id="btn-reset-draft" title="Reset all edits back to 100-email baseline">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+        Reset Draft
+      </button>
+      <a href="/" target="_blank" class="btn-secondary" title="Return to Odysseus Dashboard">
+        Odysseus Dashboard ↗
+      </a>
+    </div>
+  </header>
+
+  <!-- Split Main Body -->
+  <main class="studio-main">
+    <!-- Left Column: Category Manager -->
+    <aside class="category-manager-col">
+      <div class="panel-header">
+        <span class="panel-title" id="cat-panel-count">Categories (7)</span>
+        <button class="btn-secondary" id="btn-add-category" style="padding: 4px 8px; font-size: 11px;">
+          + New Category
+        </button>
+      </div>
+
+      <div class="category-list" id="category-list-container">
+        <!-- Rendered reactively via JS -->
+      </div>
+    </aside>
+
+    <!-- Right Column: 100-Email Workbench -->
+    <section class="workbench-col">
+      <!-- Search & Filters Toolbar -->
+      <div class="workbench-toolbar">
+        <input type="text" id="email-search-input" class="search-input" placeholder="Search emails, senders, rules...">
+
+        <div class="toolbar-filters">
+          <select id="cat-filter-select" class="select-filter">
+            <option value="">All Categories</option>
+          </select>
+          <label style="font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input type="checkbox" id="unassigned-filter-toggle">
+            Unassigned Only
+          </label>
+        </div>
+
+        <div id="filter-counter" style="font-size: 12px; color: var(--text-muted);">
+          Showing 100 of 100 emails
+        </div>
+      </div>
+
+      <!-- Scrollable Email Feed -->
+      <div class="email-feed" id="email-feed-container">
+        <!-- Rendered reactively via JS -->
+      </div>
+    </section>
+  </main>
+
+  <!-- Sticky Footer -->
+  <footer class="studio-footer">
+    <div class="footer-summary" id="footer-summary-stats">
+      <span><strong>Corpus Scope:</strong> 14 Days</span>
+      <span><strong>Draft Batch:</strong> 100 Emails</span>
+      <span><strong>Rules Bound:</strong> <span id="footer-matched-count">0</span> matched</span>
+    </div>
+
+    <div class="footer-actions">
+      <button class="btn-secondary" id="btn-save-draft">Save Draft Now</button>
+      <button class="btn-primary" id="btn-agent-pass" style="background: #1f6feb;">
+        ✓ All Categories Look Correct (Run Agent Pass)
+      </button>
+      <button class="btn-primary" id="btn-apply-taxonomy" style="display: none;">
+        Apply Taxonomy to Live System & Reset
+      </button>
+    </div>
+  </footer>
+
+  <!-- Modal Container for Agent Pass Preview -->
+  <div id="modal-container"></div>
+
+  <script src="/static/js/calibrationStudio.js?v=20260903focus1"></script>
+</body>
+</html>
