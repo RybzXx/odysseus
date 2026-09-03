@@ -456,7 +456,7 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
                     WHERE (owner = ? OR owner IS NULL OR owner = '')
                       AND date_epoch >= ?
                     ORDER BY date_epoch DESC
-                    LIMIT 80
+                    LIMIT 400
                     """,
                     (owner or "", cutoff_epoch),
                 ).fetchall()
@@ -578,7 +578,7 @@ def _fetch_email_digest_data(db: Session, owner: Optional[str], days: int = 7) -
         "total_unread": total_unread,
         "total_urgent": total_urgent,
         "days": days,
-        "emails": raw_emails[:50],
+        "emails": raw_emails[:250],
     }
 
 
