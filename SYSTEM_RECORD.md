@@ -2324,7 +2324,7 @@ All were read from the code this session.
 - **`app.py` registers exact-path SPA handlers with no catch-all** (`:958`–`:976`). `/projects/abc123` would 404 on a hard reload, so drill identity must travel in query parameters rather than path segments. This settled the URL scheme.
 - **`modalManager` is a minimize/restore registry, not a modal factory.** Its surface is `register/unregister/minimize/restore/toggle/close/injectMinimizeButton`. Rev X's note that `projects.js` alone does not use it remains accurate, but the gap is narrower than "a different modal system" — each module builds its own DOM regardless.
 - **Overview's filter state is module-level**, not per-instance: `_emailDaysFilter`, `_emailAccountFilter`, `_emailUnreadOnly`, `_opsFilterSource`. Making Overview a view means moving these into instance state.
-- **`registerWidget` still has zero callers.** Under C2 it folds into the view registry's descriptor rather than staying dormant.
+- ~~**`registerWidget` still has zero callers.**~~ Under C2 it folds into the view registry's descriptor rather than staying dormant. *(Done in Rev Z: deleted, folded into `registerView`.)*
 
 **A consequence forced by S2:** the home is itself a layer, so `overview.js` stops owning a modal and becomes a registered view like the other four. The shell above it owns only the header, back control and layer stack.
 
@@ -2336,7 +2336,229 @@ Two verification items carry real risk. The memory gate is unmeasured: Operation
 
 ## Open
 
-- **Two spec clarifications are unanswered.** Whether `/overview` should open the WorkBench-with-home or keep a standalone Overview modal in parallel; and whether D7's lane-writer belongs inside the WorkBench work, where an organiser view could own a "record insight" action, or stays a separate decision.
+- ~~**Two spec clarifications are unanswered.**~~ Whether `/overview` should open the WorkBench-with-home or keep a standalone Overview modal in parallel; and whether D7's lane-writer belongs inside the WorkBench work, where an organiser view could own a "record insight" action, or stays a separate decision. *(Resolved in Rev Z for the first: `/overview` opens the WorkBench, and `openOverview()` survives as chrome around the same mount, so there is one renderer. The second stands.)*
 - **D7's design question is now unblocked** but still undecided. It was tied to this choice, which has been made.
 - **The 15 Linux test failures remain uncharacterised** beyond their names.
 - **Five branches exist only locally** — `feature/agent-dev` and four `local-agent1-ops-*`. All are identical to `daily-driver` and carry no unique work; publishing or deleting them is undecided.
+
+# Rev Z (2026-09-02/03) — WorkBench built, the Activity Log repaired, colour made themeable
+
+Three deliveries. The first two are live on the phone; the third is built and
+verified locally but not deployed.
+
+## Corrections to Rev Y and to this session's own research
+
+Rev Y's record of the decision stands. Several factual claims made while
+executing it did not, and all were overturned by measurement rather than review.
+
+- **The theme system writes 29 CSS variables, not five.** Five base, ten
+  `--hl-*`, and fourteen "advanced" slots applied by looping `ADV_KEYS`
+  (`theme.js:182`). The last fourteen are set indirectly — `setProperty(css, …)`
+  over a table — which is why grepping for literal names missed them.
+- **`--brand-color` is set at runtime.** It is `ADV_KEYS[4]`, defaulting to the
+  accent. "Not defined anywhere" was true of the stylesheet and false of the
+  running app.
+- **The phone runs the `claude` theme, not `dark`.** `--bg #262624`,
+  `--fg #f5f4f0`, `--panel #30302e`, `--red #c6613f`. The cyan `#9cdef2` quoted
+  earlier is `style.css`'s `:root` default, measured on a local dev server with
+  no stored theme.
+- **There are 16 built-in themes, not 17.**
+- **`#e8a33d` is not activityLog's invention.** It is the fallback of 54
+  `var(--accent, #e8a33d)` usages across the app.
+
+## The WorkBench, built — `f44d802`
+
+Nine work packages from the Rev Y spec, in 630 lines of `static/js/workbench.js`
+plus adapters in the four view modules. The shell owns header, back control and
+layer stack; it owns no view content.
+
+**Back preserves state because a covered layer is hidden, never destroyed.**
+Verified live on the phone: home scrolled to 300 with the ops filter on
+`curated`, drilled into Operations on a real record, and back restored **both**.
+That is the property S2 was chosen for, and it is now measured rather than
+argued.
+
+Also verified live: three layers deep with `hidden` reading `[true,true,false]`;
+a cold load of `/operations` synthesising the home layer beneath so one back
+press lands on the cockpit; back at depth 1 tearing the surface down with no
+empty shell; and all four `openX()` still opening standalone on `document.body`.
+
+**Record identity travels in query params** — `/projects?project=…`,
+`/operations?q=…` — because `app.py` registers exact-path SPA handlers with no
+catch-all and `/projects/<id>` would 404 on reload.
+
+**Two CSS overrides carry ids on purpose.** `style.css` and each module inset
+their windows through id-scoped rules; a class-only selector cannot outrank
+them, and without the overrides a layer rendered one sidebar-width narrow. Found
+in the browser, not in review.
+
+**`overview.js` stopped owning a modal.** Its four filter variables moved from
+module scope into per-instance state, since two instances can now exist.
+`openOverview()` survives as chrome around the same `mount()`, so there is one
+renderer rather than two that can drift. `registerWidget` was deleted and folded
+into `registerView` — it had no callers, and one registry beats two.
+
+**Deployed with zero downtime.** Static files serve from disk under `no-cache`,
+so the pull alone sufficed; pid 15394 never restarted.
+
+**Two done-conditions were not met and are recorded as such.** The phone-width
+layout (spec 1.4/8.3) was never visually confirmed — the browser window refused
+to resize below 1874px, so only the media rule's presence on the device was
+verified. The memory gate (8.2) was measured off-device: four resident layers
+cost 2,773 DOM nodes with heap flat at ~14 MB, but not in the phone's own
+browser. The eviction fallback (3.5) is therefore unimplemented, its trigger
+unmeasured.
+
+## The Activity Log, repaired — `210b62e`
+
+The panel was both unreadable and untruthful. Both are fixed; the diagnosis of
+each was wrong on the first attempt.
+
+**Unreadable: a column flex container inheriting `align-items: center`.**
+`#activity-log-modal` carried the `modal` class while setting its own
+`flex-direction: column`. The base `.modal` rule's `align-items: center`
+shrink-wraps every child to max-content in a column container, and
+`.act-preview-text` is `white-space: nowrap` — so one long result string
+stretched the list to **29,531px inside a 918px panel** and every row rendered
+blank. The `text-overflow: ellipsis` already written was inert because the
+element was never narrower than its own text.
+
+**My first hypothesis was wrong and a probe caught it.** `min-width: 0` alone
+changed nothing. Only `align-items: stretch` collapsed the list to 903px. The
+panel already positioned and sized itself — it was always the
+`.overview-modal` shape — so it now carries its own class and the base rule
+cannot reach it.
+
+**Untruthful: 18 of 57 rows recorded a total failure as a success**, with the
+header reading `Errors: 0` throughout. `_result_is_config_error` matches three
+phrases about missing model config, so a DNS failure fell through it, and
+`_result_has_work` then answered "this run did work" for a report of nothing but
+errors. A third predicate, `_pass_report_status`, reads what an account error
+line actually looks like; the two existing predicates keep their names honest
+rather than being widened into lies.
+
+**Separately, 29 of 57 rows carried a status the log has no vocabulary for.**
+`task_scheduler` mirrored `TaskRun`'s words — success, aborted, skipped — into a
+log whose vocabulary is completed/running/error/fallback/halted. `success` had
+no badge style, no filter option and no place in any count. `normalise_status`
+is now a precondition of the logger itself, so no future writer can reintroduce
+the leak; a caller-side fix would have needed repeating at every call site.
+
+**Assets.** The module bound to `--bg-elev`, `--accent` and `--fg-muted`, none
+of which are ever set, so every rule ran on a hardcoded Tailwind fallback and
+the panel was theme-blind. It now uses the real variables, and a module-local
+`ICONS` const of Feather SVG replaced five emoji — `checkCircle`, `alertCircle`
+and `clock` copied byte-identically from `overview.js`.
+
+**A migration was run beyond the spec's default.** Spec 7.1 chose to leave
+history alone; on the device that meant 51% of visible rows would still render
+the unstyled badge, which is the defect itself. Spec 7.2 sanctioned the
+alternative as MAY, `app.db` was backed up minutes earlier, and 29 rows were
+mapped `success → completed`. Zero illegal statuses remain.
+
+**This deploy cost 6–8 minutes of downtime.** Unlike the WorkBench change it
+touched Python. The probe loop read 300s of HTTP 000 while a process existed —
+the Rev X trap again: this device's uvicorn boot outlasts an impatient wait, and
+the supervisor cycled it once more before it listened. Pid went 15394 → 14363 →
+15566, self-healed.
+
+**Historical rows still read `COMPLETED` over pure error text.** The classifier
+applies to new runs only. Re-classifying stored `result_preview` values was
+deliberately not done: retroactively rewriting what an audit log *said* is a
+heavier act than repairing an illegal vocabulary.
+
+## Colour made themeable — `ecafbcd`, not yet deployed
+
+**How themes actually work.** A theme is five colours; everything else derives
+from them in HSL. `deriveSyntaxColors` sets the rule the codebase follows: hue
+carries the meaning and is fixed (40 amber, 210 blue, 180 cyan, 20 orange),
+saturation adapts to the theme clamped, lightness flips on `isDark = bgL < 50`.
+A second layer, `generateHarmonyColors`, builds all five base colours from one
+accent. Consumption is a cascade: `var(--slot, var(--theme-var, literal))`.
+
+**`--red` is not red — it is the accent.** `terminal`'s is `#00ff41` green,
+`ocean`'s `#4facfe` blue, `gpt`'s `#949494` grey. `computeAdvancedDefaults`
+spends it on `brandColor`, `sendBtnBg`, `toggleActive` and the favicon.
+
+**`deriveStatusColors` applies that rule to operation status**, emitting
+`--status-error/warn/busy/ok/idle` from `applyColors` and from `index.html`'s
+head script so the first paint is themed. Five modules consume them:
+activityLog, overview, operations, workOrganisers, tasks — 29 usages.
+
+**The spec's own `busy` design was overturned by its verification step.**
+Passing the accent through failed twice: 2.24:1 against the panel on `paper`,
+below the 3.0 gate; and on `terminal`, whose accent is green, `busy` and `ok`
+landed **0.4° apart**, indistinguishable. A fifth fixed hue removed both
+problems and deleted the one exception to the fixed-hue rule. Measured across
+all 16 themes: worst contrast **3.61** (`cute`/ok), closest hue pair **33.2°**
+(`paper`, error/warn).
+
+Verified live by switching themes in the browser: `paper` yields dark tokens on
+a white panel, `terminal` light tokens on black, and every badge tracks its
+token exactly. Organiser priority badges and Overview urgency badges follow;
+the urgency pair was proved with a mounted probe, the dev dataset having no
+urgent mail.
+
+**Suite across all three deliveries: 122 failed, 5816 passed, 2 errors** — the
+same 122 as the Rev X baseline throughout, with 54 new tests added across the
+three commits and no failure in any module touched.
+
+## Measurements worth keeping
+
+- **1,338 variable usages run permanently on their fallbacks**, across 20 names.
+  `--accent` alone accounts for 1,073 and is never defined or set. It is not
+  broken — 701 of those read `var(--accent, var(--red…))` and cascade correctly
+  — it is an override slot nobody populates.
+- **196 usages in `style.css` have no fallback at all.** Bare `var(--accent)` on
+  `background` (62), `border-color` (36), `color` (27) and others. With the
+  variable unset the declaration is invalid at computed-value time. How many are
+  visibly wrong is unmeasured; CSSOM cannot enumerate them because shorthands
+  expand to longhands that drop the `var()` token.
+- **A documented semantic palette already exists and nothing themes it.**
+  `style.css:14` names `--color-error --color-success --color-warning
+  --color-danger`, defined as fixed hexes in `:root`: 259 usages between them.
+  They were left alone — aliasing them onto the new tokens would theme 259 call
+  sites in one move.
+- **The two derivation copies have drifted.** `index.html`'s `advMap` carries
+  `--accent-primary`, `--accent-error`, `--section-accent` and `--toggle-bg`;
+  `theme.js`'s `ADV_KEYS` carries none of them. A stored custom theme setting
+  `accentPrimary` would have it applied on first paint and never again.
+- **`style.css:13` is factually wrong.** It claims `--accent-primary` and
+  `--accent-error` are "set by theme.js". Neither ever is.
+- **`--green` is themed by nobody.** `#50fa7b` in every theme including the four
+  light ones, while its sibling `--red` is fully themed.
+
+## Decisions taken
+
+- **WorkBench ships with `openX()` intact.** Deleting the standalone openers is
+  the S3 end state and stays a later step.
+- **Status is normalised at the logger, not at its callers.** One precondition
+  beats four call sites that can each drift.
+- **`--status-*` sits alongside `--color-*` rather than replacing it.** The
+  right end state is one family; converting 259 call sites was outside the
+  approved scope.
+- **Status hues are fixed, not accent-derived.** An error must read as an error
+  on a green-accented theme.
+- **Audit history is not retroactively re-classified.** An illegal vocabulary
+  was repaired; a past judgement was not rewritten.
+
+## Open
+
+- **The theme work is committed but not deployed.** `ecafbcd` is verified
+  locally across four themes; the phone still renders status colour from
+  literals until it is pulled.
+- **Phone-width layout is unverified** for the WorkBench, and the memory gate
+  was measured off-device.
+- **259 `--color-*` usages remain unthemed**, and 196 bare `var(--accent)`
+  usages remain fallback-less.
+- **Two literals stay in activityLog** — a model pill and a latency badge.
+  Neither is an operation status and no token means them.
+- **Two defects found while reading, unfixed:** `activityLog.js` calls
+  `makeWindowDraggable(_modal, dragHandle)` where `{content, header}` is
+  required, so the drag handle has never worked; and `_render()` replaces the
+  whole `innerHTML` every 3s, so the search box loses focus on each keystroke.
+- **`extract_email_events` cannot report a partial failure.** It has no direct
+  log call, so its status reaches the log only through the scheduler's
+  success/error boolean.
+- **The 15 Linux test failures remain uncharacterised** beyond their names.
+- **Five branches exist only locally**, all identical to `daily-driver`.
