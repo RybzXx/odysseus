@@ -5,14 +5,33 @@
 
 /* ── Variables ──
  *
- * Theme-public variables (override via theme.js or custom themes):
+ * Written by theme.js applyColors() on every theme change, and by the
+ * first-paint script in index.html before any module loads:
  *   Core:     --bg, --fg, --panel, --border, --red
+ *             (--red is the ACCENT, not a hue: terminal's is #00ff41,
+ *              ocean's #4facfe, gpt's #949494)
  *   Syntax:   --hl-keyword, --hl-string, --hl-comment, --hl-function,
  *             --hl-number, --hl-builtin, --hl-variable, --hl-params,
- *             --hl-bg, --hl-fg
- *   Accents:  --accent-primary, --accent-error (set by theme.js)
+ *             --hl-bg, --hl-fg          (derived by deriveSyntaxColors)
+ *   Status:   --status-error, --status-warn, --status-busy, --status-ok,
+ *             --status-idle             (derived by deriveStatusColors)
+ *   Advanced: the 14 ADV_KEYS in theme.js — --brand-color, --sidebar-bg,
+ *             --input-bg, --send-btn-bg, --toggle-active, --code-bg,
+ *             --user-bubble-bg, --ai-bubble-bg, and the rest.
+ *
+ * Defined below as fixed hex and NOT themed — every theme sees these values:
  *   Semantic: --color-error, --color-success, --color-warning, --color-danger,
  *             --color-accent, --color-muted, --color-muted-alt
+ *   Also:     --green (#50fa7b in all 16 themes, unlike its sibling --red)
+ *
+ * Override slots — declared by no one, so every use falls to its own
+ * fallback. Only a stored custom theme carrying the matching `advanced` key
+ * ever fills them, and index.html's map lists four that ADV_KEYS does not:
+ *   --accent, --accent-primary, --accent-error, --section-accent,
+ *   --toggle-bg, --bg-elev, --fg-muted
+ *
+ * The line above previously claimed --accent-primary and --accent-error were
+ * "set by theme.js". Neither ever is; applyColors does not mention them.
  */
 
 :root {
