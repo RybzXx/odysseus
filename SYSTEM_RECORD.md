@@ -1645,7 +1645,14 @@ does not.
 
 **Round one is written up in `research/benchmark/ROUND1.md`** — steps, results, the blocked A3 step, and the three conditions that must hold before the worker laptop is started.
 
-# Rev Q (2026-08-30) — HANDOFF.md pushed for phone-side agent
+# Rev P2 (2026-08-30) — HANDOFF.md pushed for phone-side agent
+
+> Relettered. This entry and the one that follows were both written as
+> Rev Q on the same day. The three later references to "Rev Q" — the
+> correction about context ceilings, and the undiagnosed supervisor kill —
+> all describe the *next* entry, so that one keeps the letter and this
+> interstitial one takes P2. Renumbering forward instead would have
+> cascaded through R to AD.
 
 ## Behavioral re-verification pass, read-only
 
