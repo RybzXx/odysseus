@@ -464,24 +464,164 @@ function _updateSidebarIndicator() {
   }
 }
 
+const MODULE_CHIPS = [
+  { key: 'all', label: 'All' },
+  { key: 'projects', label: 'Projects' },
+  { key: 'tasks', label: 'Tasks' },
+  { key: 'email', label: 'Email' },
+  { key: 'operations', label: 'Operations' },
+];
+
+/**
+ * Build the panel chrome once and wire it once.
+ *
+ * Pre:  `_modal` exists and is empty.
+ * Post: header, stats bar, toolbar and an empty list container are in place,
+ *       with every listener attached to an element that now outlives every
+ *       render.
+ * Inv:  nothing in here is rebuilt by _render. That is the whole point — the
+ *       search box used to be destroyed and recreated on every keystroke and
+ *       every 3s poll, which stole focus and the caret with it.
+ */
+function _buildChrome() {
+  _modal.innerHTML = `
+    <div class="act-header" id="act-header-drag">
+      <div class="act-title">
+        <span style="color:var(--red,#e06c75);display:inline-flex;">${ICONS.bolt}</span>
+        System Activity &amp; Query Audit Log
+      </div>
+      <div class="act-controls">
+        <button class="act-btn" id="act-refresh-btn" title="Refresh logs">
+          ${ICONS.refresh}
+          Refresh
+        </button>
+        <button class="act-btn danger" id="act-clear-btn" title="Clear logs older than 7 days">
+          ${ICONS.trash}
+          Prune
+        </button>
+        <button class="act-btn" id="act-close-btn" title="Close" style="padding:4px 8px;">${ICONS.close}</button>
+      </div>
+    </div>
+
+    <div class="act-stats-bar">
+      <div class="act-stat-item">Total Queries: <span class="act-stat-val" data-stat="total">0</span></div>
+      <div class="act-stat-item">Running: <span class="act-stat-val" data-stat="running" style="color:var(--status-busy,#61afef);">0</span></div>
+      <div class="act-stat-item">Errors: <span class="act-stat-val" data-stat="errors" style="color:var(--status-error,#e06c75);">0</span></div>
+      <div class="act-stat-item" title="Runs that produced output but degraded to a fallback">Degraded: <span class="act-stat-val" data-stat="degraded" style="color:var(--status-warn,#d19a66);">0</span></div>
+      <div style="flex:1;"></div>
+      <div style="font-size:11px;opacity:0.6;">Auto-refreshes every 3s</div>
+    </div>
+
+    <div class="act-toolbar">
+      <div class="act-filter-chips">
+        ${MODULE_CHIPS.map(m => `
+          <button class="act-chip ${(_currentModuleFilter === m.key) ? 'active' : ''}" data-module="${_esc(m.key)}">
+            ${_esc(m.label)} <span class="act-chip-count" data-chip-count="${_esc(m.key)}">0</span>
+          </button>
+        `).join('')}
+      </div>
+
+      <div class="act-search-row">
+        <input type="text" id="act-search-input" class="act-search-input" placeholder="Search queries by action, target, model, or payload…" value="${_esc(_searchQuery)}" />
+        <select id="act-status-select" class="act-btn" style="font-size:12px;">
+          <option value="all">All Statuses</option>
+          <option value="completed">Completed</option>
+          <option value="running">Running</option>
+          <option value="error">Errors</option>
+          <option value="fallback">Fallbacks</option>
+          <option value="halted">Halted</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="act-list-container" id="act-list"></div>
+  `;
+
+  const content = _modal;
+  const header = _modal.querySelector('#act-header-drag');
+  // The call was makeWindowDraggable(_modal, dragHandle) — a bare element
+  // where an options object belongs, so `content` and `header` were both
+  // undefined and the helper returned immediately. The header has advertised
+  // `cursor: move` the whole time. This panel is its own content: it has no
+  // .modal-content wrapper. Docking stays off because the dock rules are
+  // written `.modal.modal-right-docked ...` and this panel is not a `.modal`.
+  makeWindowDraggable(_modal, { content, header, enableDock: false });
+
+  _modal.querySelector('#act-close-btn').addEventListener('click', close);
+  _modal.querySelector('#act-refresh-btn').addEventListener('click', _fetchLogs);
+
+  _modal.querySelector('#act-clear-btn').addEventListener('click', async () => {
+    if (confirm('Prune system query logs older than 7 days?')) {
+      await fetch('/api/system/activity-logs/clear?older_than_days=7', { method: 'DELETE' });
+      _fetchLogs();
+    }
+  });
+
+  _modal.querySelectorAll('.act-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      _currentModuleFilter = chip.getAttribute('data-module');
+      _modal.querySelectorAll('.act-chip').forEach(c => {
+        c.classList.toggle('active', c === chip);
+      });
+      _fetchLogs();
+    });
+  });
+
+  const statusSel = _modal.querySelector('#act-status-select');
+  statusSel.value = _currentStatusFilter;
+  statusSel.addEventListener('change', (e) => {
+    _currentStatusFilter = e.target.value;
+    _fetchLogs();
+  });
+
+  _modal.querySelector('#act-search-input').addEventListener('input', (e) => {
+    _searchQuery = e.target.value;
+    _fetchLogs();
+  });
+
+  // One delegated listener on the container, so re-rendering the rows does
+  // not orphan per-row listeners or need them re-attached.
+  _modal.querySelector('#act-list').addEventListener('click', (e) => {
+    const row = e.target.closest('.act-row');
+    if (!row) return;
+    const id = row.getAttribute('data-id');
+    if (_expandedLogIds.has(id)) _expandedLogIds.delete(id);
+    else _expandedLogIds.add(id);
+    _render();
+  });
+}
+
+/**
+ * Refresh the volatile parts: the four counters, the chip counts, the rows.
+ *
+ * Pre:  _buildChrome has run.
+ * Post: the panel shows current data.
+ * Inv:  no focused element is replaced. A caret in the search box survives
+ *       both a keystroke-triggered refresh and the 3s poll.
+ */
 function _render() {
   if (!_modal) return;
+  const list = _modal.querySelector('#act-list');
+  if (!list) return;
 
   const total = _stats?.total_queries || 0;
-  const running = _stats?.running_count || 0;
-  const errors = _stats?.error_count || 0;
-  // Reported beside errors rather than folded into them: a degraded run still
-  // produced output, and summing the two would hide which happened.
-  const degraded = _stats?.fallback_count || 0;
   const modCounts = _stats?.counts_by_module || {};
-
-  const modules = [
-    { key: 'all', label: 'All', count: total },
-    { key: 'projects', label: 'Projects', count: modCounts.projects || 0 },
-    { key: 'tasks', label: 'Tasks', count: modCounts.tasks || 0 },
-    { key: 'email', label: 'Email', count: modCounts.email || 0 },
-    { key: 'operations', label: 'Operations', count: modCounts.operations || 0 },
-  ];
+  const counts = {
+    total,
+    running: _stats?.running_count || 0,
+    errors: _stats?.error_count || 0,
+    // Reported beside errors rather than folded into them: a degraded run still
+    // produced output, and summing the two would hide which happened.
+    degraded: _stats?.fallback_count || 0,
+  };
+  for (const [key, value] of Object.entries(counts)) {
+    const el = _modal.querySelector(`[data-stat="${key}"]`);
+    if (el) el.textContent = value;
+  }
+  for (const chip of MODULE_CHIPS) {
+    const el = _modal.querySelector(`[data-chip-count="${chip.key}"]`);
+    if (el) el.textContent = chip.key === 'all' ? total : (modCounts[chip.key] || 0);
+  }
 
   let rowsHtml = '';
   if (_logs.length === 0) {
@@ -553,106 +693,7 @@ Metadata: ${JSON.stringify(log.metadata || {}, null, 2)}</div>
     }).join('');
   }
 
-  _modal.innerHTML = `
-    <div class="act-header" id="act-header-drag">
-      <div class="act-title">
-        <span style="color:var(--red,#e06c75);display:inline-flex;">${ICONS.bolt}</span>
-        System Activity &amp; Query Audit Log
-      </div>
-      <div class="act-controls">
-        <button class="act-btn" id="act-refresh-btn" title="Refresh logs">
-          ${ICONS.refresh}
-          Refresh
-        </button>
-        <button class="act-btn danger" id="act-clear-btn" title="Clear logs older than 7 days">
-          ${ICONS.trash}
-          Prune
-        </button>
-        <button class="act-btn" id="act-close-btn" title="Close" style="padding:4px 8px;">${ICONS.close}</button>
-      </div>
-    </div>
-
-    <div class="act-stats-bar">
-      <div class="act-stat-item">Total Queries: <span class="act-stat-val">${total}</span></div>
-      <div class="act-stat-item">Running: <span class="act-stat-val" style="color:var(--status-busy,#61afef);">${running}</span></div>
-      <div class="act-stat-item">Errors: <span class="act-stat-val" style="color:var(--status-error,#e06c75);">${errors}</span></div>
-      <div class="act-stat-item" title="Runs that produced output but degraded to a fallback">Degraded: <span class="act-stat-val" style="color:var(--status-warn,#d19a66);">${degraded}</span></div>
-      <div style="flex:1;"></div>
-      <div style="font-size:11px;opacity:0.6;">Auto-refreshes every 3s</div>
-    </div>
-
-    <div class="act-toolbar">
-      <div class="act-filter-chips">
-        ${modules.map(m => `
-          <button class="act-chip ${(_currentModuleFilter === m.key) ? 'active' : ''}" data-module="${_esc(m.key)}">
-            ${_esc(m.label)} <span class="act-chip-count">${m.count}</span>
-          </button>
-        `).join('')}
-      </div>
-
-      <div class="act-search-row">
-        <input type="text" id="act-search-input" class="act-search-input" placeholder="Search queries by action, target, model, or payload…" value="${_esc(_searchQuery)}" />
-        <select id="act-status-select" class="act-btn" style="font-size:12px;">
-          <option value="all" ${_currentStatusFilter === 'all' ? 'selected' : ''}>All Statuses</option>
-          <option value="completed" ${_currentStatusFilter === 'completed' ? 'selected' : ''}>Completed</option>
-          <option value="running" ${_currentStatusFilter === 'running' ? 'selected' : ''}>Running</option>
-          <option value="error" ${_currentStatusFilter === 'error' ? 'selected' : ''}>Errors</option>
-          <option value="fallback" ${_currentStatusFilter === 'fallback' ? 'selected' : ''}>Fallbacks</option>
-          <option value="halted" ${_currentStatusFilter === 'halted' ? 'selected' : ''}>Halted</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="act-list-container">
-      ${rowsHtml}
-    </div>
-  `;
-
-  // Wire events
-  const dragHandle = _modal.querySelector('#act-header-drag');
-  if (dragHandle) makeWindowDraggable(_modal, dragHandle);
-
-  _modal.querySelector('#act-close-btn')?.addEventListener('click', close);
-  _modal.querySelector('#act-refresh-btn')?.addEventListener('click', _fetchLogs);
-
-  _modal.querySelector('#act-clear-btn')?.addEventListener('click', async () => {
-    if (confirm('Prune system query logs older than 7 days?')) {
-      await fetch('/api/system/activity-logs/clear?older_than_days=7', { method: 'DELETE' });
-      _fetchLogs();
-    }
-  });
-
-  _modal.querySelectorAll('.act-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      _currentModuleFilter = chip.getAttribute('data-module');
-      _fetchLogs();
-    });
-  });
-
-  const statusSel = _modal.querySelector('#act-status-select');
-  if (statusSel) {
-    statusSel.addEventListener('change', (e) => {
-      _currentStatusFilter = e.target.value;
-      _fetchLogs();
-    });
-  }
-
-  const searchInp = _modal.querySelector('#act-search-input');
-  if (searchInp) {
-    searchInp.addEventListener('input', (e) => {
-      _searchQuery = e.target.value;
-      _fetchLogs();
-    });
-  }
-
-  _modal.querySelectorAll('.act-row').forEach(row => {
-    row.addEventListener('click', () => {
-      const id = row.getAttribute('data-id');
-      if (_expandedLogIds.has(id)) _expandedLogIds.delete(id);
-      else _expandedLogIds.add(id);
-      _render();
-    });
-  });
+  list.innerHTML = rowsHtml;
 }
 
 export function open() {
@@ -665,6 +706,9 @@ export function open() {
     // .activity-log-panel rule for why.
     _modal.className = 'activity-log-panel hidden';
     document.body.appendChild(_modal);
+    // Built once per panel, not per render. close() hides rather than
+    // destroys, so reopening reuses this chrome and its listeners.
+    _buildChrome();
   }
 
   _modal.classList.remove('hidden');
