@@ -2553,12 +2553,101 @@ three commits and no failure in any module touched.
   usages remain fallback-less.
 - **Two literals stay in activityLog** — a model pill and a latency badge.
   Neither is an operation status and no token means them.
-- **Two defects found while reading, unfixed:** `activityLog.js` calls
+- ~~**Two defects found while reading, unfixed:**~~ `activityLog.js` calls
   `makeWindowDraggable(_modal, dragHandle)` where `{content, header}` is
   required, so the drag handle has never worked; and `_render()` replaces the
   whole `innerHTML` every 3s, so the search box loses focus on each keystroke.
+  *(Both fixed in Rev AA, `ac64323`.)*
 - **`extract_email_events` cannot report a partial failure.** It has no direct
   log call, so its status reaches the log only through the scheduler's
   success/error boolean.
 - **The 15 Linux test failures remain uncharacterised** beyond their names.
 - **Five branches exist only locally**, all identical to `daily-driver`.
+
+# Rev AA (2026-09-03) — two silent Activity Log defects, and a phone that went offline
+
+## The phone is unreachable, and nothing was deployed
+
+Rev Z's colour work (`ecafbcd`) and this entry's fixes are committed and pushed
+but **not on the device**. Tailscale reports `galaxy-s24-ultra` as
+`offline, last seen 5h ago`; six TCP attempts across three rounds to both 8022
+and 7000 timed out, while this machine's own tailnet link stayed healthy.
+
+**Nothing was mutated.** The backup never ran and neither did the pull, so the
+phone sits at `210b62e` — the Activity Log repair — and still renders status
+colour from literals.
+
+The outstanding deploy is two commits, both static-only, so it needs no restart
+and costs no downtime. `origin/daily-driver` carries everything.
+
+## Two defects that produced no error
+
+Both had been live since the module shipped in `c801984`, and neither was
+caught by any test, because in both cases the code ran without complaint and
+simply did nothing useful.
+
+### The drag handle never worked
+
+`makeWindowDraggable(modal, options)` reads `options.content` and
+`options.header`, and returns immediately if either is missing
+(`windowDrag.js:60`). The call passed a bare element where the options object
+belongs, so both were `undefined` and the helper no-opped on every open.
+
+**A wrong-shaped argument throws nothing and logs nothing.** Meanwhile
+`.act-header` set `cursor: move`, so the panel advertised a gesture it could
+not perform — the only visible symptom was a cursor that lied.
+
+This panel is its own content: it has no `.modal-content` wrapper, unlike the
+Operations and Projects windows. Docking stays off deliberately — the dock
+rules are written `.modal.modal-right-docked …` and this panel is not a
+`.modal`, so enabling it would add a class that styles nothing.
+
+### Typing in the search box lost focus on every keystroke
+
+`_render` assigned `_modal.innerHTML`, rebuilding the whole panel — including
+the focused input and its caret. The `input` handler calls `_fetchLogs`, which
+re-renders, so **each character replaced the element being typed into**. The 3s
+poll did the same to an idle caret.
+
+**The fix is the split, not a focus-restore hack.** `_buildChrome` writes the
+panel and wires it once; `_render` touches only the four counters, the chip
+counts and the row list. Row clicks became one delegated listener on the
+container, since rows are the one thing that genuinely is replaced. `close()`
+hides rather than destroys, so a reopen reuses the chrome and its listeners.
+
+## Verified in a browser
+
+- **Drag**: a real mousedown/mousemove/mouseup sequence moved the panel by
+  exactly the delta — **+160x, +100y**.
+- **Typing**: five characters kept the input as the same DOM node, focused,
+  with a correctly advancing caret.
+- **The poll**: a mid-word caret at position 2 survived **8.8 seconds across
+  three polls**, unmoved.
+- **Seven prior behaviours regression-checked**: expand and collapse, chip
+  filtering with exclusive active state, status filtering (2 error rows, all
+  genuinely `error`), reset to 8, close and reopen reusing the same element
+  with listeners alive, and the dragged position surviving that reopen.
+
+**Suite: 122 failed, 5831 passed, 2 errors** — the same 122 as the Rev X
+baseline, with 15 more passing.
+
+## A correction to this session's own test
+
+**The first version of the new test was wrong, and the code was right.** It
+asserted that every control is looked up at most once; `#act-list` is
+legitimately addressed twice — once to wire the delegated row listener, once
+for `_render` to write rows into. The assertion was rewritten to express the
+real invariant (listeners attached once) rather than loosened to pass.
+
+## Open
+
+- **Two commits are undeployed** — `ecafbcd` and `ac64323`, plus this record.
+  Both static-only; the phone needs `git pull --ff-only` when it returns.
+- **Each search keystroke still fires its own request.** It predates this work
+  and is a rate concern, not a focus one.
+- **259 `--color-*` usages remain unthemed**, and 196 bare `var(--accent)`
+  usages remain fallback-less.
+- **Phone-width layout is unverified** for the WorkBench, and its memory gate
+  was measured off-device.
+- **D7's lane-writer, the 15 Linux test failures, and five local-only
+  branches** all stand from earlier revisions.
