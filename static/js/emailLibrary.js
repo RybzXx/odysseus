@@ -2559,6 +2559,7 @@ export function openEmailLibrary(opts = {}) {
   }
   if (opts.folder) state._libFolder = opts.folder;
   state._libPendingExpandUid = opts.uid || null;
+  _fetchOrganisersForEmailLib();
 
   const modal = document.createElement('div');
   modal.className = 'modal';
@@ -4481,7 +4482,67 @@ const _EMAIL_FILTER_ICONS = {
 };
 
 function _filterIcon(value) {
+  if (value && value.startsWith('organiser:')) {
+    const slug = value.replace('organiser:', '');
+    const org = (state._organisersList || []).find(o => o.slug === slug || o.id === slug);
+    const color = org?.color || '#61afef';
+    return `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};vertical-align:middle;"></span>`;
+  }
   return _EMAIL_FILTER_ICONS[value] || _EMAIL_FILTER_ICONS['all'];
+}
+
+function _emailMatchesOrganiser(em, org) {
+  if (!org) return true;
+  if (Array.isArray(em.organiser_ids) && em.organiser_ids.includes(org.id)) return true;
+
+  const rules = org.rules || {};
+  const senders = (rules.senders || []).map(s => String(s || '').toLowerCase());
+  const domains = (rules.domains || []).map(d => String(d || '').toLowerCase());
+  const keywords = (rules.keywords || []).map(k => String(k || '').toLowerCase());
+
+  const from = String(em.from_address || em.from || em.sender_email || '').toLowerCase();
+  if (senders.some(s => s && from.includes(s))) return true;
+  if (domains.some(d => d && from.includes(d))) return true;
+
+  const text = [em.subject || '', em.snippet || '', em.body || ''].join(' ').toLowerCase();
+  if (keywords.some(k => k && text.includes(k))) return true;
+
+  return false;
+}
+
+async function _fetchOrganisersForEmailLib() {
+  try {
+    const res = await fetch(`${API_BASE}/api/organisers`, { credentials: 'same-origin' });
+    if (res.ok) {
+      const data = await res.json();
+      state._organisersList = (data.organisers || []).filter(o => o.is_active);
+      _populateOrganisersInFilterPicker();
+    }
+  } catch (e) {
+    console.debug('Failed loading organisers for emailLibrary:', e);
+  }
+}
+
+function _populateOrganisersInFilterPicker() {
+  const sel = document.getElementById('email-lib-filter');
+  if (!sel || !state._organisersList || !state._organisersList.length) return;
+
+  let optgroup = sel.querySelector('optgroup[data-organisers-optgroup]');
+  if (!optgroup) {
+    optgroup = document.createElement('optgroup');
+    optgroup.label = 'Work Organisers';
+    optgroup.dataset.organisersOptgroup = '1';
+    sel.appendChild(optgroup);
+  }
+  optgroup.innerHTML = state._organisersList.map(o => `
+    <option value="organiser:${o.slug || o.id}">${_esc(o.name)}</option>
+  `).join('');
+
+  const picker = document.getElementById('email-filter-picker');
+  if (picker) {
+    picker._wired = false;
+    _initFilterPicker();
+  }
 }
 
 function _renderFilterPickerCurrent() {
@@ -4957,7 +5018,13 @@ function _renderGrid() {
   grid.innerHTML = '';
 
   let filtered = state._libEmails;
-  try { console.log('[email-search] _renderGrid: state._libEmails.length=', (state._libEmails || []).length, 'pills=', (state._libSearchPills || []).length, 'draft=', JSON.stringify(state._libSearchDraft || ''), 'libSearch=', JSON.stringify(state._libSearch || '')); } catch {}
+  if (state._libFilter && state._libFilter.startsWith('organiser:')) {
+    const slug = state._libFilter.replace('organiser:', '');
+    const org = (state._organisersList || []).find(o => o.slug === slug || o.id === slug);
+    if (org) {
+      filtered = filtered.filter(em => _emailMatchesOrganiser(em, org));
+    }
+  }
 
   // 'recent' is the default order from the API. Date stays the primary
   // grouping; unread/favorite priorities float inside each date section.
@@ -5153,6 +5220,27 @@ function _createCard(em) {
       else _applyTagFilterFromPill(tagBtn.dataset.emailFilterTag);
     });
     titleRow.appendChild(tagWrap);
+  }
+
+  // Work Organisers matching tag on card
+  if (state._organisersList && state._organisersList.length) {
+    const matchingOrg = state._organisersList.find(o => _emailMatchesOrganiser(em, o));
+    if (matchingOrg) {
+      const orgTag = document.createElement('span');
+      orgTag.className = 'email-tag email-tag-organiser';
+      orgTag.style.cssText = `border: 1px solid ${matchingOrg.color || '#61afef'}44; color: ${matchingOrg.color || '#61afef'}; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px; display: inline-flex; align-items: center; gap: 3px; cursor: pointer;`;
+      orgTag.innerHTML = `<span style="width:5px;height:5px;border-radius:50%;background:${matchingOrg.color || '#61afef'};display:inline-block;"></span>${_esc(matchingOrg.name)}`;
+      orgTag.title = `Organiser: ${matchingOrg.name}`;
+      orgTag.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const sel = document.getElementById('email-lib-filter');
+        if (sel) {
+          sel.value = `organiser:${matchingOrg.slug || matchingOrg.id}`;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      titleRow.appendChild(orgTag);
+    }
   }
 
   // Done check + unread dot stay next to the subject on the left.

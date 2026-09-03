@@ -71,18 +71,24 @@ const MIN_PANEL_HEIGHT = 120;
  */
 function _defaultLayout() {
   return {
+    mode: '2-col',
     columns: [['emails', 'operations'], ['projects']],
     split: 50,
-    heights: { emails: 360, operations: 300 },
+    split3: [33, 33, 34],
+    heights: { emails: 440, operations: 320, projects: 440 },
+    maximizedPanel: null,
   };
 }
 
 function _newState() {
   return {
     emailAccountFilter: 'all',
+    emailAccountFilters: new Set(),
     emailDaysFilter: 7,
     emailUnreadOnly: false,
     emailOrganiserFilter: 'all',
+    emailOrganiserFilters: new Set(),
+    emailSearchQuery: '',
     emailTagFilter: 'all',
     opsFilterSource: 'all',
     opsDaysFilter: 'all',
@@ -107,8 +113,11 @@ function _reconcileLayout(raw) {
   const fallback = _defaultLayout();
   if (!raw || typeof raw !== 'object') return fallback;
 
+  const mode = ['1-col', '2-col', '3-col'].includes(raw.mode) ? raw.mode : '2-col';
+  const numCols = mode === '1-col' ? 1 : (mode === '3-col' ? 3 : 2);
+
   const seen = new Set();
-  const columns = [0, 1].map(i => {
+  const columns = Array.from({ length: numCols }, (_, i) => {
     const col = Array.isArray(raw.columns?.[i]) ? raw.columns[i] : [];
     return col.filter(id => PANEL_IDS.includes(id) && !seen.has(id) && seen.add(id));
   });
@@ -119,11 +128,14 @@ function _reconcileLayout(raw) {
 
   const split = Number(raw.split);
   return {
+    mode,
     columns,
     split: Number.isFinite(split)
       ? Math.min(100 - MIN_SPLIT_PERCENT, Math.max(MIN_SPLIT_PERCENT, split))
       : fallback.split,
+    split3: Array.isArray(raw.split3) && raw.split3.length === 3 ? raw.split3 : fallback.split3,
     heights: (raw.heights && typeof raw.heights === 'object') ? { ...raw.heights } : fallback.heights,
+    maximizedPanel: raw.maximizedPanel || null,
   };
 }
 
@@ -263,28 +275,104 @@ function _applyLayout(body, state) {
   if (!grid) return;
 
   const columns = Array.from(grid.querySelectorAll('[data-column]'));
-  if (columns.length < 2) return;
+  const gutters = Array.from(grid.querySelectorAll('[data-col-gutter]'));
+  const panels = Array.from(grid.querySelectorAll('[data-panel-id]'));
 
-  if (!_isTwoColumn(body)) {
-    grid.style.gridTemplateColumns = '';
+  // 1. Maximized panel mode
+  const maxId = state.layout.maximizedPanel;
+  if (maxId && panels.some(p => p.dataset.panelId === maxId)) {
+    grid.style.gridTemplateColumns = '1fr';
+    gutters.forEach(g => g.style.display = 'none');
+    columns.forEach(col => col.style.display = 'none');
+
+    panels.forEach(p => {
+      const isMax = p.dataset.panelId === maxId;
+      p.style.display = isMax ? 'flex' : 'none';
+      if (isMax) {
+        p.classList.add('maximized');
+        const maxBtn = p.querySelector('[data-panel-maximize]');
+        if (maxBtn) {
+          maxBtn.innerHTML = ICONS.minimize;
+          maxBtn.title = 'Restore grid view';
+        }
+        const scroll = p.querySelector('[data-panel-scroll]');
+        if (scroll) scroll.style.maxHeight = 'calc(100vh - 280px)';
+        if (columns[0]) {
+          columns[0].style.display = 'flex';
+          columns[0].appendChild(p);
+        }
+      } else {
+        p.classList.remove('maximized');
+      }
+    });
     return;
   }
 
-  const { split, columns: order, heights } = state.layout;
-  grid.style.gridTemplateColumns = `${split}% 6px ${100 - split - 1}%`;
-
-  order.forEach((ids, columnIndex) => {
-    const target = columns[columnIndex];
-    if (!target) return;
-    for (const id of ids) {
-      const panel = grid.querySelector(`[data-panel-id="${id}"]`);
-      // appendChild moves an existing node, so this both relocates a panel to
-      // another column and settles the order within one.
-      if (panel) target.appendChild(panel);
+  // Restore non-maximized panels
+  panels.forEach(p => {
+    p.style.display = 'flex';
+    p.classList.remove('maximized');
+    const maxBtn = p.querySelector('[data-panel-maximize]');
+    if (maxBtn) {
+      maxBtn.innerHTML = ICONS.maximize;
+      maxBtn.title = 'Maximize panel';
     }
   });
 
-  for (const [id, height] of Object.entries(heights || {})) {
+  const mode = state.layout.mode || '2-col';
+
+  if (!_isTwoColumn(body) || mode === '1-col') {
+    grid.style.gridTemplateColumns = '1fr';
+    gutters.forEach(g => g.style.display = 'none');
+    if (columns[0]) columns[0].style.display = 'flex';
+    if (columns[1]) columns[1].style.display = 'none';
+    if (columns[2]) columns[2].style.display = 'none';
+
+    PANEL_IDS.forEach(id => {
+      const panel = grid.querySelector(`[data-panel-id="${id}"]`);
+      if (panel && columns[0]) columns[0].appendChild(panel);
+    });
+  } else if (mode === '3-col') {
+    grid.style.gridTemplateColumns = '1fr 6px 1fr 6px 1fr';
+    gutters.forEach(g => g.style.display = 'block');
+    columns.forEach(col => col.style.display = 'flex');
+
+    const order = (state.layout.columns && state.layout.columns.length >= 3)
+      ? state.layout.columns
+      : [['emails'], ['operations'], ['projects']];
+
+    order.forEach((ids, colIdx) => {
+      const target = columns[colIdx];
+      if (!target) return;
+      for (const id of ids) {
+        const panel = grid.querySelector(`[data-panel-id="${id}"]`);
+        if (panel) target.appendChild(panel);
+      }
+    });
+  } else {
+    // 2-col mode
+    const { split = 50, columns: order } = state.layout;
+    grid.style.gridTemplateColumns = `${split}% 6px ${100 - split - 1}%`;
+    if (gutters[0]) gutters[0].style.display = 'block';
+    if (gutters[1]) gutters[1].style.display = 'none';
+    if (columns[0]) columns[0].style.display = 'flex';
+    if (columns[1]) columns[1].style.display = 'flex';
+    if (columns[2]) columns[2].style.display = 'none';
+
+    const twoColOrder = (order && order.length >= 2) ? order : [['emails', 'operations'], ['projects']];
+    twoColOrder.slice(0, 2).forEach((ids, columnIndex) => {
+      const target = columns[columnIndex];
+      if (!target) return;
+      for (const id of ids) {
+        const panel = grid.querySelector(`[data-panel-id="${id}"]`);
+        if (panel) target.appendChild(panel);
+      }
+    });
+  }
+
+  // Restore panel heights
+  const heights = state.layout.heights || {};
+  for (const [id, height] of Object.entries(heights)) {
     const scroll = grid.querySelector(`[data-panel-id="${id}"] [data-panel-scroll]`);
     if (scroll && Number.isFinite(Number(height))) {
       scroll.style.maxHeight = `${Math.max(MIN_PANEL_HEIGHT, Number(height))}px`;
@@ -406,6 +494,38 @@ function _bindPanelResize(body, state) {
   });
 }
 
+function _bindPanelHeaderControls(body, state) {
+  // Height presets
+  body.querySelectorAll('[data-panel-height-preset]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panelId = btn.dataset.panelId;
+      const preset = btn.dataset.panelHeightPreset;
+      let targetHeight = 440;
+      if (preset === 'compact') targetHeight = 240;
+      else if (preset === 'medium') targetHeight = 440;
+      else if (preset === 'large') targetHeight = 680;
+      else if (preset === 'full') targetHeight = Math.max(500, window.innerHeight - 300);
+
+      state.layout.heights = { ...state.layout.heights, [panelId]: targetHeight };
+      const scroll = body.querySelector(`[data-panel-id="${panelId}"] [data-panel-scroll]`);
+      if (scroll) scroll.style.maxHeight = `${targetHeight}px`;
+      _persistLayout(state);
+    });
+  });
+
+  // Maximize / Restore
+  body.querySelectorAll('[data-panel-maximize]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panelId = btn.dataset.panelMaximize;
+      state.layout.maximizedPanel = (state.layout.maximizedPanel === panelId) ? null : panelId;
+      _applyLayout(body, state);
+      _persistLayout(state);
+    });
+  });
+}
+
 /**
  * Make the panels in each column reorderable by dragging their headers.
  *
@@ -448,6 +568,8 @@ const ICONS = {
   send: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`,
   sparkle: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
   layers: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
+  maximize: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>`,
+  minimize: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>`,
 };
 
 function _injectStyles() {
@@ -717,6 +839,112 @@ function _injectStyles() {
       padding: 4px 8px;
       border-radius: 4px;
       font-size: 12px;
+    }
+    .overview-popover-wrapper {
+      position: relative;
+    }
+    .overview-popover-trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      padding: 4px 9px;
+    }
+    .overview-popover-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      z-index: 100;
+      background: var(--panel, #21252b);
+      border: 1px solid var(--border, rgba(255,255,255,0.15));
+      border-radius: 6px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+      padding: 6px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .overview-popover-menu.hidden {
+      display: none !important;
+    }
+    .popover-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      user-select: none;
+      transition: background 0.12s;
+    }
+    .popover-item:hover {
+      background: rgba(255,255,255,0.06);
+    }
+    .overview-filter-chips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+      font-size: 11px;
+    }
+    .overview-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid var(--border, rgba(255,255,255,0.12));
+      color: var(--fg, #abb2bf);
+    }
+    .overview-chip-close {
+      cursor: pointer;
+      opacity: 0.6;
+      font-size: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .overview-chip-close:hover {
+      opacity: 1;
+      color: var(--status-error, #e06c75);
+    }
+    .panel-size-btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border, rgba(255,255,255,0.1));
+      color: var(--fg, #abb2bf);
+      border-radius: 3px;
+      padding: 2px 5px;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .panel-size-btn:hover {
+      background: rgba(255,255,255,0.14);
+      color: #fff;
+    }
+    .panel-maximize-btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border, rgba(255,255,255,0.1));
+      color: var(--fg, #abb2bf);
+      border-radius: 3px;
+      padding: 3px 5px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .panel-maximize-btn:hover {
+      background: rgba(255,255,255,0.14);
+      color: #fff;
+    }
+    .overview-panel.maximized {
+      grid-column: 1 / -1;
+      width: 100%;
     }
     /* Email items */
     .overview-email-item {
@@ -1155,22 +1383,55 @@ function _render(container) {
   // from data already held and cannot disturb the other panels.
   const nowSeconds = Date.now() / 1000;
   let filteredEmails = emailsData.emails || [];
-  if (state.emailAccountFilter !== 'all') {
+
+  // 1. Multi-account filtering
+  if (state.emailAccountFilters && state.emailAccountFilters.size > 0) {
+    filteredEmails = filteredEmails.filter(e => state.emailAccountFilters.has(e.account_id));
+  } else if (state.emailAccountFilter && state.emailAccountFilter !== 'all') {
     filteredEmails = filteredEmails.filter(e => e.account_id === state.emailAccountFilter);
   }
+
+  // 2. Unread toggle
   if (state.emailUnreadOnly) {
     filteredEmails = filteredEmails.filter(e => !e.read);
   }
+
+  // 3. Days cutoff
   if (state.emailDaysFilter) {
     const emailCutoff = nowSeconds - state.emailDaysFilter * 86400;
     filteredEmails = filteredEmails.filter(e => (e.date_epoch || 0) >= emailCutoff);
   }
-  if (state.emailOrganiserFilter !== 'all') {
+
+  // 4. Multi-organiser filtering (OR match)
+  if (state.emailOrganiserFilters && state.emailOrganiserFilters.size > 0) {
+    filteredEmails = filteredEmails.filter(e => {
+      const ids = e.organiser_ids || [];
+      return ids.some(id => state.emailOrganiserFilters.has(id));
+    });
+  } else if (state.emailOrganiserFilter && state.emailOrganiserFilter !== 'all') {
     filteredEmails = filteredEmails.filter(
       e => (e.organiser_ids || []).includes(state.emailOrganiserFilter),
     );
   }
-  if (state.emailTagFilter !== 'all') {
+
+  // 5. Search text match
+  if (state.emailSearchQuery && state.emailSearchQuery.trim()) {
+    const q = state.emailSearchQuery.trim().toLowerCase();
+    filteredEmails = filteredEmails.filter(e => {
+      const text = [
+        e.sender_name || '',
+        e.sender_email || '',
+        e.subject || '',
+        e.snippet || '',
+        e.ai_comment || '',
+        ...(e.tags || []),
+      ].join(' ').toLowerCase();
+      return text.includes(q);
+    });
+  }
+
+  // 6. Tag filter
+  if (state.emailTagFilter && state.emailTagFilter !== 'all') {
     filteredEmails = filteredEmails.filter(e => (e.tags || []).includes(state.emailTagFilter));
   }
 
@@ -1197,6 +1458,56 @@ function _render(container) {
 
   const daysLabel = state.emailDaysFilter === 1 ? 'Today' : `${state.emailDaysFilter}d`;
 
+  // Build active filter chips
+  const activeFilterChips = [];
+  if (state.emailAccountFilters && state.emailAccountFilters.size > 0) {
+    emailsData.accounts.filter(a => state.emailAccountFilters.has(a.id)).forEach(a => {
+      activeFilterChips.push(`
+        <span class="overview-chip">
+          <span>Account: ${_escape(a.name)}</span>
+          <span class="overview-chip-close" data-remove-account="${_escape(a.id)}">✕</span>
+        </span>
+      `);
+    });
+  }
+  if (state.emailOrganiserFilters && state.emailOrganiserFilters.size > 0) {
+    (emailsData.organisers || []).filter(o => state.emailOrganiserFilters.has(o.id)).forEach(o => {
+      activeFilterChips.push(`
+        <span class="overview-chip">
+          <span style="width:7px;height:7px;border-radius:50%;background:${_escape(o.color || '#61afef')};display:inline-block;"></span>
+          <span>${_escape(o.name)}</span>
+          <span class="overview-chip-close" data-remove-organiser="${_escape(o.id)}">✕</span>
+        </span>
+      `);
+    });
+  }
+  if (state.emailSearchQuery && state.emailSearchQuery.trim()) {
+    activeFilterChips.push(`
+      <span class="overview-chip">
+        <span>🔍 "${_escape(state.emailSearchQuery.trim())}"</span>
+        <span class="overview-chip-close" data-clear-search>✕</span>
+      </span>
+    `);
+  }
+  if (state.emailTagFilter && state.emailTagFilter !== 'all') {
+    activeFilterChips.push(`
+      <span class="overview-chip">
+        <span>Tag: ${_escape(state.emailTagFilter)}</span>
+        <span class="overview-chip-close" data-clear-tag>✕</span>
+      </span>
+    `);
+  }
+  if (activeFilterChips.length > 0) {
+    activeFilterChips.push(`
+      <button type="button" class="overview-btn" data-clear-all-email-filters style="font-size:10px;padding:1px 6px;color:#e06c75;">
+        Clear all
+      </button>
+    `);
+  }
+  const activeFilterChipsHtml = activeFilterChips.length > 0
+    ? `<div class="overview-filter-chips">${activeFilterChips.join('')}</div>`
+    : '';
+
   body.innerHTML = `
     <!-- Top KPI Briefing Banner -->
     <div class="overview-kpi-grid">
@@ -1218,8 +1529,7 @@ function _render(container) {
     </div>
 
     <!-- Main grid. Column membership, order, widths and panel heights are all
-         restored by _applyLayout after this markup lands, so what is written
-         here is only the default arrangement. -->
+         restored by _applyLayout after this markup lands. -->
     <div class="overview-main-grid" data-main-grid>
       <div class="overview-column" data-column="0">
         <!-- Email Digest Panel -->
@@ -1227,22 +1537,83 @@ function _render(container) {
           <div class="overview-panel-header" data-panel-handle>
             ${ICONS.mail}
             <span>Email Stream (${daysLabel})</span>
+            <div class="overview-panel-header-actions" style="display:flex;align-items:center;gap:4px;margin-left:auto;">
+              <div class="panel-size-pills" style="display:flex;gap:2px;">
+                <button type="button" class="panel-size-btn" data-panel-height-preset="compact" data-panel-id="emails" title="Compact (240px)">S</button>
+                <button type="button" class="panel-size-btn" data-panel-height-preset="medium" data-panel-id="emails" title="Medium (440px)">M</button>
+                <button type="button" class="panel-size-btn" data-panel-height-preset="large" data-panel-id="emails" title="Large (680px)">L</button>
+              </div>
+              <button type="button" class="panel-maximize-btn" data-panel-maximize="emails" title="${state.layout.maximizedPanel === 'emails' ? 'Restore panel' : 'Maximize panel'}">
+                ${state.layout.maximizedPanel === 'emails' ? ICONS.minimize : ICONS.maximize}
+              </button>
+            </div>
           </div>
           <div class="overview-panel-body">
             <div class="overview-controls-row">
-              <select class="overview-select" data-email-account-select>
-                <option value="all">All Accounts (${emailsData.accounts.length})</option>
-                ${emailsData.accounts.map(a => `<option value="${a.id}" ${state.emailAccountFilter === a.id ? 'selected' : ''}>${a.name}</option>`).join('')}
-              </select>
+              <!-- Accounts Popover Dropdown -->
+              <div class="overview-popover-wrapper" data-dropdown="accounts">
+                <button type="button" class="overview-btn overview-popover-trigger" data-trigger="accounts" title="Filter by email account">
+                  ${ICONS.mail}
+                  <span>${state.emailAccountFilters.size === 0 ? `All Accounts (${emailsData.accounts.length})` : `${state.emailAccountFilters.size} Account(s)`}</span>
+                  <span style="font-size:9px;opacity:0.7;">▼</span>
+                </button>
+                <div class="overview-popover-menu hidden" data-menu="accounts" style="min-width:210px;">
+                  <div style="display:flex;justify-content:space-between;padding:4px 10px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11px;">
+                    <span style="font-weight:600;opacity:0.8;">Accounts</span>
+                    <div style="display:flex;gap:6px;">
+                      <a href="#" data-popover-all="accounts" style="color:#61afef;text-decoration:none;">All</a>
+                      <span style="opacity:0.3;">|</span>
+                      <a href="#" data-popover-clear="accounts" style="color:#e06c75;text-decoration:none;">Clear</a>
+                    </div>
+                  </div>
+                  <div style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;">
+                    ${emailsData.accounts.map(a => `
+                      <label class="popover-item">
+                        <input type="checkbox" data-account-check="${_escape(a.id)}" ${state.emailAccountFilters.has(a.id) ? 'checked' : ''}>
+                        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_escape(a.name)}</span>
+                      </label>
+                    `).join('')}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Organisers Popover Dropdown -->
               ${(emailsData.organisers || []).length ? `
-                <select class="overview-select" data-email-organiser-select
-                        title="Filter by AI Work Organiser">
-                  <option value="all">All organisers</option>
-                  ${emailsData.organisers.map(o => `
-                    <option value="${_escape(o.id)}" ${state.emailOrganiserFilter === o.id ? 'selected' : ''}>${_escape(o.name)}</option>
-                  `).join('')}
-                </select>
+                <div class="overview-popover-wrapper" data-dropdown="organisers">
+                  <button type="button" class="overview-btn overview-popover-trigger" data-trigger="organisers" title="Filter by AI Work Organisers">
+                    ${ICONS.layers}
+                    <span>${state.emailOrganiserFilters.size === 0 ? `All Organisers (${emailsData.organisers.length})` : `${state.emailOrganiserFilters.size} Organiser(s)`}</span>
+                    <span style="font-size:9px;opacity:0.7;">▼</span>
+                  </button>
+                  <div class="overview-popover-menu hidden" data-menu="organisers" style="min-width:260px;">
+                    <div style="display:flex;justify-content:space-between;padding:4px 10px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11px;">
+                      <span style="font-weight:600;opacity:0.8;">Work Organisers</span>
+                      <div style="display:flex;gap:6px;">
+                        <a href="#" data-popover-all="organisers" style="color:#61afef;text-decoration:none;">All</a>
+                        <span style="opacity:0.3;">|</span>
+                        <a href="#" data-popover-clear="organisers" style="color:#e06c75;text-decoration:none;">Clear</a>
+                      </div>
+                    </div>
+                    <div style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;">
+                      ${emailsData.organisers.map(o => `
+                        <label class="popover-item">
+                          <input type="checkbox" data-organiser-check="${_escape(o.id)}" ${state.emailOrganiserFilters.has(o.id) ? 'checked' : ''}>
+                          <span style="width:8px;height:8px;border-radius:50%;background:${_escape(o.color || '#61afef')};flex-shrink:0;"></span>
+                          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${_escape(o.name)}</span>
+                        </label>
+                      `).join('')}
+                    </div>
+                  </div>
+                </div>
               ` : ''}
+
+              <!-- Live Text Search -->
+              <div class="overview-search-box" style="position:relative;display:flex;align-items:center;flex:1;min-width:140px;max-width:280px;">
+                <input type="text" class="overview-search-input" data-email-search placeholder="Search subjects, senders, notes..." value="${_escape(state.emailSearchQuery || '')}" style="width:100%;padding:4px 22px 4px 22px;border-radius:4px;border:1px solid var(--border,rgba(255,255,255,0.12));background:rgba(0,0,0,0.25);color:var(--fg,#abb2bf);font-size:12px;outline:none;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="position:absolute;left:6px;opacity:0.5;pointer-events:none;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                ${state.emailSearchQuery ? `<button type="button" data-email-search-clear style="position:absolute;right:5px;background:none;border:none;color:var(--fg,#abb2bf);opacity:0.6;cursor:pointer;font-size:11px;padding:2px;">✕</button>` : ''}
+              </div>
+
               ${availableTags.length ? `
                 <select class="overview-select" data-email-tag-select title="Filter by tag">
                   <option value="all">All tags</option>
@@ -1260,8 +1631,10 @@ function _render(container) {
               </label>
             </div>
 
-            <div class="overview-panel-scroll" data-panel-scroll style="max-height:360px;">
-              ${filteredEmails.length === 0 ? '<div class="overview-empty">No emails in this duration.</div>' : ''}
+            ${activeFilterChipsHtml}
+
+            <div class="overview-panel-scroll" data-panel-scroll style="max-height:${state.layout.heights?.emails || 440}px;">
+              ${filteredEmails.length === 0 ? '<div class="overview-empty">No emails match the selected filters.</div>' : ''}
               ${filteredEmails.map(em => `
                 <div class="overview-email-item ${!em.read ? 'unread' : ''}" data-email-id="${em.id}" data-email-uid="${em.uid || ''}" data-email-account-id="${em.account_id || ''}" data-email-folder="${em.folder || 'INBOX'}">
                   <div class="overview-email-top">
@@ -1274,9 +1647,13 @@ function _render(container) {
                   <div class="overview-email-subject">${_escape(em.subject)}</div>
                   ${em.snippet && em.snippet !== em.subject ? `<div class="overview-email-snippet">${_escape(em.snippet)}</div>` : ''}
                   ${em.ai_comment ? `<div class="overview-ai-pill">${ICONS.sparkle} <span>${_escape(em.ai_comment)}</span></div>` : ''}
-                  ${(em.triage_reason || (em.tags || []).length) ? `
+                  ${(em.triage_reason || (em.tags || []).length || (em.organiser_ids || []).length) ? `
                     <div class="overview-email-meta">
                       ${(em.tags || []).map(t => `<span class="overview-tag-chip ${_escape(String(t))}">${_escape(String(t))}</span>`).join('')}
+                      ${(em.organiser_ids || []).map(oid => {
+                        const org = (emailsData.organisers || []).find(o => o.id === oid);
+                        return org ? `<span class="overview-triage-chip" style="border-color:${_escape(org.color || '#61afef')};color:#fff;"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${_escape(org.color || '#61afef')};margin-right:3px;"></span>${_escape(org.name)}</span>` : '';
+                      }).join('')}
                       ${em.triage_reason ? `<span class="overview-triage-chip">${_escape(em.triage_reason)}</span>` : ''}
                     </div>
                   ` : ''}
@@ -1294,6 +1671,16 @@ function _render(container) {
           <div class="overview-panel-header" data-panel-handle>
             ${ICONS.operations}
             <span>Operations &amp; Inquiries Radar</span>
+            <div class="overview-panel-header-actions" style="display:flex;align-items:center;gap:4px;margin-left:auto;">
+              <div class="panel-size-pills" style="display:flex;gap:2px;">
+                <button type="button" class="panel-size-btn" data-panel-height-preset="compact" data-panel-id="operations" title="Compact (240px)">S</button>
+                <button type="button" class="panel-size-btn" data-panel-height-preset="medium" data-panel-id="operations" title="Medium (440px)">M</button>
+                <button type="button" class="panel-size-btn" data-panel-height-preset="large" data-panel-id="operations" title="Large (680px)">L</button>
+              </div>
+              <button type="button" class="panel-maximize-btn" data-panel-maximize="operations" title="${state.layout.maximizedPanel === 'operations' ? 'Restore panel' : 'Maximize panel'}">
+                ${state.layout.maximizedPanel === 'operations' ? ICONS.minimize : ICONS.maximize}
+              </button>
+            </div>
           </div>
           <div class="overview-panel-body">
             <div class="overview-controls-row">
@@ -1309,7 +1696,7 @@ function _render(container) {
               <button class="overview-btn ${state.opsDaysFilter === 'all' ? 'active' : ''}" data-ops-days="all">All</button>
             </div>
 
-            <div class="overview-panel-scroll" data-panel-scroll style="max-height:300px;">
+            <div class="overview-panel-scroll" data-panel-scroll style="max-height:${state.layout.heights?.operations || 320}px;">
               ${filteredOps.length === 0 ? '<div class="overview-empty">No recent operations inquiries.</div>' : ''}
               ${filteredOps.map(op => `
                 <div class="overview-inquiry-item ${op.is_overdue ? 'overdue' : ''}">
@@ -1351,6 +1738,16 @@ function _render(container) {
         <div class="overview-panel-header" data-panel-handle>
           ${ICONS.folder}
           <span>Active Projects &amp; Tasks Matrix</span>
+          <div class="overview-panel-header-actions" style="display:flex;align-items:center;gap:4px;margin-left:auto;">
+            <div class="panel-size-pills" style="display:flex;gap:2px;">
+              <button type="button" class="panel-size-btn" data-panel-height-preset="compact" data-panel-id="projects" title="Compact (240px)">S</button>
+              <button type="button" class="panel-size-btn" data-panel-height-preset="medium" data-panel-id="projects" title="Medium (440px)">M</button>
+              <button type="button" class="panel-size-btn" data-panel-height-preset="large" data-panel-id="projects" title="Large (680px)">L</button>
+            </div>
+            <button type="button" class="panel-maximize-btn" data-panel-maximize="projects" title="${state.layout.maximizedPanel === 'projects' ? 'Restore panel' : 'Maximize panel'}">
+              ${state.layout.maximizedPanel === 'projects' ? ICONS.minimize : ICONS.maximize}
+            </button>
+          </div>
         </div>
         <div class="overview-panel-body">
           <div class="overview-projects-container">
@@ -1399,6 +1796,12 @@ function _render(container) {
         </div>
         </div>
       </div>
+
+      <div class="overview-col-gutter" data-col-gutter="1" role="separator"
+           aria-orientation="vertical" tabindex="0" style="display:none;"
+           aria-label="Resize column 2"></div>
+
+      <div class="overview-column" data-column="2" style="display:none;"></div>
     </div>
   `;
 
@@ -1406,6 +1809,7 @@ function _render(container) {
   // between columns rather than choosing where to emit them.
   _applyLayout(body, state);
   _bindEventListeners(container, body, state);
+  _bindPanelHeaderControls(body, state);
   _bindColumnResize(body, state);
   _bindPanelResize(body, state);
   _bindPanelReorder(body, state);
@@ -1420,7 +1824,162 @@ function _bindEventListeners(container, body, state) {
     });
   });
 
-  // Email account selector
+  // Popover menus open/close
+  body.querySelectorAll('[data-trigger]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const target = btn.dataset.trigger;
+      const menu = body.querySelector(`[data-menu="${target}"]`);
+      if (!menu) return;
+      const isHidden = menu.classList.contains('hidden');
+      body.querySelectorAll('.overview-popover-menu').forEach(m => m.classList.add('hidden'));
+      if (isHidden) {
+        menu.classList.remove('hidden');
+      }
+    });
+  });
+
+  // Close popovers on outside click
+  document.addEventListener('click', (e) => {
+    if (!body.contains(e.target)) return;
+    if (!e.target.closest('.overview-popover-wrapper')) {
+      body.querySelectorAll('.overview-popover-menu').forEach(m => m.classList.add('hidden'));
+    }
+  });
+
+  // Account checkboxes
+  body.querySelectorAll('[data-account-check]').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const id = chk.dataset.accountCheck;
+      if (chk.checked) {
+        state.emailAccountFilters.add(id);
+      } else {
+        state.emailAccountFilters.delete(id);
+      }
+      _render(container);
+    });
+  });
+
+  // Organiser checkboxes
+  body.querySelectorAll('[data-organiser-check]').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const id = chk.dataset.organiserCheck;
+      if (chk.checked) {
+        state.emailOrganiserFilters.add(id);
+      } else {
+        state.emailOrganiserFilters.delete(id);
+      }
+      _render(container);
+    });
+  });
+
+  // Popover All / Clear links
+  body.querySelectorAll('[data-popover-all]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const type = link.dataset.popoverAll;
+      if (type === 'accounts') {
+        const accounts = state.data?.email_digest?.accounts || [];
+        state.emailAccountFilters = new Set(accounts.map(a => a.id));
+      } else if (type === 'organisers') {
+        const orgs = state.data?.email_digest?.organisers || [];
+        state.emailOrganiserFilters = new Set(orgs.map(o => o.id));
+      }
+      _render(container);
+    });
+  });
+
+  body.querySelectorAll('[data-popover-clear]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const type = link.dataset.popoverClear;
+      if (type === 'accounts') {
+        state.emailAccountFilters.clear();
+      } else if (type === 'organisers') {
+        state.emailOrganiserFilters.clear();
+      }
+      _render(container);
+    });
+  });
+
+  // Live text search input
+  const searchInput = body.querySelector('[data-email-search]');
+  if (searchInput) {
+    let timer;
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(timer);
+      const val = e.target.value;
+      timer = setTimeout(() => {
+        state.emailSearchQuery = val;
+        _render(container);
+        const nextInput = body.querySelector('[data-email-search]');
+        if (nextInput) {
+          nextInput.focus();
+          nextInput.setSelectionRange(val.length, val.length);
+        }
+      }, 150);
+    });
+  }
+
+  const searchClear = body.querySelector('[data-email-search-clear]');
+  if (searchClear) {
+    searchClear.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.emailSearchQuery = '';
+      _render(container);
+    });
+  }
+
+  // Active filter chips dismiss
+  body.querySelectorAll('[data-remove-account]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.emailAccountFilters.delete(btn.dataset.removeAccount);
+      _render(container);
+    });
+  });
+
+  body.querySelectorAll('[data-remove-organiser]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.emailOrganiserFilters.delete(btn.dataset.removeOrganiser);
+      _render(container);
+    });
+  });
+
+  const clearSearchChip = body.querySelector('[data-clear-search]');
+  if (clearSearchChip) {
+    clearSearchChip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.emailSearchQuery = '';
+      _render(container);
+    });
+  }
+
+  const clearTagChip = body.querySelector('[data-clear-tag]');
+  if (clearTagChip) {
+    clearTagChip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.emailTagFilter = 'all';
+      _render(container);
+    });
+  }
+
+  const clearAllFiltersBtn = body.querySelector('[data-clear-all-email-filters]');
+  if (clearAllFiltersBtn) {
+    clearAllFiltersBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.emailAccountFilters.clear();
+      state.emailOrganiserFilters.clear();
+      state.emailSearchQuery = '';
+      state.emailTagFilter = 'all';
+      _render(container);
+    });
+  }
+
+  // Email account selector (fallback)
   const accSel = body.querySelector('[data-email-account-select]');
   if (accSel) {
     accSel.addEventListener('change', (e) => {
@@ -1436,8 +1995,6 @@ function _bindEventListeners(container, body, state) {
       const days = parseInt(btn.dataset.days, 10) || 7;
       if (state.emailDaysFilter === days) return;
       state.emailDaysFilter = days;
-      // Re-render, never refetch: the rows are already held, and refetching
-      // rebuilt the operations and projects panels for no reason.
       _render(container);
     });
   });
@@ -1779,6 +2336,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const sidebarBtn = document.getElementById('tool-overview-btn');
   if (sidebarBtn) {
     sidebarBtn.addEventListener('click', () => {
+      if (!Modals.toggle('workbench-modal') && !Modals.toggle('overview-modal')) {
+        openCockpit();
+      }
+    });
+  }
+
+  const sidebarOverviewBtn = document.getElementById('sidebar-overview-btn');
+  if (sidebarOverviewBtn) {
+    sidebarOverviewBtn.addEventListener('click', () => {
       if (!Modals.toggle('workbench-modal') && !Modals.toggle('overview-modal')) {
         openCockpit();
       }
