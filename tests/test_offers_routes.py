@@ -54,7 +54,9 @@ def open_gate(monkeypatch):
 
 @pytest.fixture
 def queue(tmp_path, monkeypatch):
+    from services.offers import gap_report
     monkeypatch.setattr(prop, "TEMPLATE_PROPOSAL_DIR", str(tmp_path / "proposals"))
+    monkeypatch.setattr(gap_report, "GAP_SUMMARY_FILE", str(tmp_path / "catalogue_gap.json"))
     return tmp_path
 
 
@@ -85,18 +87,30 @@ def _fields(text=TEXT_MARSHES):
 
 # ── Gap ───────────────────────────────────────────────────────────────────────
 
-def test_gap_reports_coverage_and_conserves_every_day(corpus):
-    gap = _call("get_catalogue_gap")
-    assert gap["offers"] == 2
-    assert gap["total_days"] == 3
-    assert gap["matched"] + gap["near_miss"] + gap["unmatched"] == gap["total_days"]
-    assert gap["matched"] == 1
-    assert gap["coverage"] == pytest.approx(1 / 3, abs=1e-4)
+def test_gap_says_so_when_it_has_never_been_measured(queue, corpus):
+    assert _call("get_catalogue_gap")["measured"] is False
 
 
-def test_gap_separates_never_matched_from_never_referenced(corpus, monkeypatch):
+def test_rebuild_measures_the_gap_and_the_page_reads_that_measurement(queue, corpus):
+    """
+    The reviewer must see the gap the queue came from. Recomputing per request
+    took minutes over a real corpus and timed the page out, and a fresh number
+    beside a stale queue would disagree with it silently.
+    """
+    built = _call("rebuild_proposals")["gap"]
+    assert built["offers"] == 2 and built["total_days"] == 3
+    assert built["matched"] + built["near_miss"] + built["unmatched"] == built["total_days"]
+    assert built["coverage"] == pytest.approx(1 / 3, abs=1e-4)
+
+    served = _call("get_catalogue_gap")
+    assert served["measured"] is True
+    assert {k: served[k] for k in built} == built, "the page shows exactly what was measured"
+
+
+def test_gap_separates_never_matched_from_never_referenced(queue, corpus, monkeypatch):
     monkeypatch.setattr(offers_routes, "load_template_texts",
                         lambda: {"MO1": TEXT_MOSUL, "UNUSED": "Fly to Sulaymaniyah at dawn."})
+    _call("rebuild_proposals")
     gap = _call("get_catalogue_gap")
     assert "UNUSED" in gap["never_matched_codes"]
     assert "UNUSED" in gap["never_referenced_codes"]

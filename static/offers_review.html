@@ -96,9 +96,11 @@ async function api(path, options) {
 async function loadGap() {
   try {
     const g = await api("/api/offers/gap");
+    if (!g.measured) { $("gap").textContent = g.detail; return; }
     $("gap").textContent =
       `${g.offers} offers · ${g.total_days} days · ${g.matched} matched `
-      + `(${(g.coverage * 100).toFixed(1)}%) · ${g.near_miss} edited · ${g.unmatched} uncovered`;
+      + `(${(g.coverage * 100).toFixed(1)}%) · ${g.near_miss} edited · ${g.unmatched} uncovered`
+      + ` · measured ${g.measured_at}`;
   } catch (e) {
     $("gap").innerHTML = `<span class="err">${esc(e.message)}</span>`;
   }

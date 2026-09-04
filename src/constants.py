@@ -55,6 +55,10 @@ OFFER_CORPUS_DIR = os.path.join(DATA_DIR, "offer_corpus")
 # Proposed additions and revisions to the day-template catalogue, awaiting a
 # human verdict. Nothing reaches the catalogue sheet from anywhere else.
 TEMPLATE_PROPOSAL_DIR = os.path.join(DATA_DIR, "template_proposals")
+# The catalogue-gap summary as of the last time proposals were derived. Read by
+# the review page so it shows the measurement its queue came from, rather than a
+# fresh one that could disagree with it.
+GAP_SUMMARY_FILE = os.path.join(DATA_DIR, "catalogue_gap.json")
 EMAIL_URGENCY_CACHE_DIR = os.path.join(DATA_DIR, "email_urgency_cache")
 SKILLS_DIR = os.path.join(DATA_DIR, "skills")
 GALLERY_DIR = os.path.join(DATA_DIR, "gallery")

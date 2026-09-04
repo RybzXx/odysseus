@@ -17,7 +17,12 @@ written thirty times is a template nobody has created yet.
 from __future__ import annotations
 
 import hashlib
-from typing import Iterable
+import json
+import os
+from datetime import datetime, timezone
+from typing import Iterable, Optional
+
+from src.constants import GAP_SUMMARY_FILE
 
 from services.offers.day_match import (
     MATCH_THRESHOLD,
@@ -183,3 +188,50 @@ def format_gap_report(report: GapReport, top_patterns: int = 15) -> str:
         preview = " ".join(pattern.representative_text.split())[:80]
         lines.append(f"  x{pattern.occurrences:<4} {pattern.overnight_city or '(day trip)':<14} {preview}")
     return "\n".join(lines)
+
+
+def summarise(report: GapReport, offer_count: int) -> dict:
+    """The report reduced to what a reviewer needs, in a form that survives JSON."""
+    return {
+        "offers": offer_count,
+        "total_days": report.total_days,
+        "matched": report.matched,
+        "near_miss": report.near_miss,
+        "unmatched": report.unmatched,
+        "coverage": round(report.coverage, 4),
+        "patterns": len(report.patterns),
+        "recurring_patterns": len(report.recurring_patterns),
+        "near_miss_by_code": {code: len(keys)
+                              for code, keys in report.near_miss_by_code.items()},
+        "never_matched_codes": report.never_matched_codes,
+        "never_referenced_codes": report.never_referenced_codes,
+        "measured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def save_summary(summary: dict, path: str = GAP_SUMMARY_FILE) -> str:
+    """
+    Post: the summary is on disk, written atomically.
+
+    Persisted rather than recomputed because the analysis takes minutes over a
+    full corpus, and because the number a reviewer reads should be the one the
+    proposal queue was derived from. A fresh measurement beside a stale queue
+    would show two different gaps and give no way to tell which is which.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as fh:
+        json.dump(summary, fh, ensure_ascii=False, indent=2)
+    os.replace(temporary, path)
+    return path
+
+
+def load_summary(path: str = GAP_SUMMARY_FILE) -> Optional[dict]:
+    """Post: the last saved summary, or None when the gap has never been measured."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (json.JSONDecodeError, OSError):
+        return None

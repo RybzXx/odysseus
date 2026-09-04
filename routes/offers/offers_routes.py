@@ -37,6 +37,9 @@ from services.offers import (
     queue_summary,
     record_verdict,
 )
+from services.offers.gap_report import load_summary as load_gap_summary
+from services.offers.gap_report import save_summary as save_gap_summary
+from services.offers.gap_report import summarise as summarise_gap
 from services.offers.proposals import load as load_proposal
 from services.offers.proposals import save as save_proposal
 
@@ -79,24 +82,20 @@ def setup_offers_routes() -> APIRouter:
 
     @router.get("/gap")
     async def get_catalogue_gap(request: Request):
-        """Coverage of the catalogue against every recovered offer."""
+        """
+        Coverage of the catalogue as of the last time proposals were derived.
+
+        Read, not recomputed. The analysis takes minutes over a full corpus —
+        long enough that computing it per request timed the page out — and a
+        fresh measurement beside a stale queue would show two different gaps
+        with no way to tell which the proposals came from.
+        """
         require_admin(request)
-        offers = list(iter_offers())
-        report = analyse_catalogue_gap(offers, load_template_texts())
-        return {
-            "offers": len(offers),
-            "total_days": report.total_days,
-            "matched": report.matched,
-            "near_miss": report.near_miss,
-            "unmatched": report.unmatched,
-            "coverage": round(report.coverage, 4),
-            "patterns": len(report.patterns),
-            "recurring_patterns": len(report.recurring_patterns),
-            "near_miss_by_code": {code: len(keys)
-                                  for code, keys in report.near_miss_by_code.items()},
-            "never_matched_codes": report.never_matched_codes,
-            "never_referenced_codes": report.never_referenced_codes,
-        }
+        summary = load_gap_summary()
+        if summary is None:
+            return {"measured": False,
+                    "detail": "the gap has not been measured yet — re-derive from corpus"}
+        return {"measured": True, **summary}
 
     @router.post("/proposals/rebuild")
     async def rebuild_proposals(request: Request):
@@ -117,7 +116,9 @@ def setup_offers_routes() -> APIRouter:
                    + propose_new_templates(report, template_texts))
         for proposal in drafted:
             save_proposal(proposal)
-        return {"drafted": len(drafted), "queue": queue_summary()}
+        summary = summarise_gap(report, len(offers))
+        save_gap_summary(summary)
+        return {"drafted": len(drafted), "queue": queue_summary(), "gap": summary}
 
     @router.get("/proposals")
     async def list_proposals(request: Request, status: Optional[str] = None,
