@@ -91,6 +91,7 @@ def propose_revisions(offers: Iterable[SentOffer], report: GapReport,
                                  dominant.overnight_city, note),
             evidence_day_keys=dominant.member_keys,
             occurrences=dominant.occurrences,
+            weight=dominant.weight,
             target_code=code,
             nearest_code=code,
             nearest_score=_score_against(dominant.representative_text, code, template_texts),
@@ -115,7 +116,7 @@ def propose_new_templates(report: GapReport, template_texts: dict,
         nearest = ranked[0] if ranked else None
         mirrors = reordered_templates(pattern.representative_text, template_texts)
         note = (f"Written {pattern.occurrences} times across sent offers with no template "
-                f"that expresses it.")
+                f"that expresses it. Age-weighted evidence: {pattern.weight:.1f}.")
         if mirrors:
             note += (" Shares its content with "
                      + ", ".join(code for code, _, _ in mirrors)
@@ -125,6 +126,7 @@ def propose_new_templates(report: GapReport, template_texts: dict,
             fields=_blank_fields(pattern.representative_text, pattern.overnight_city, note),
             evidence_day_keys=pattern.member_keys,
             occurrences=pattern.occurrences,
+            weight=pattern.weight,
             nearest_code=nearest.code if nearest else None,
             nearest_score=nearest.score if nearest else 0.0,
             reordered_codes=[code for code, _, _ in mirrors],

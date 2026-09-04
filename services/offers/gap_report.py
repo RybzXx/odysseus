@@ -46,6 +46,38 @@ from services.offers.models import (
 _PREFILTER_FLOOR = jaccard_lower_bound(MATCH_THRESHOLD)
 
 
+# How fast the evidence in a day's wording loses weight. Sites close, hotels
+# change, and an offer sent two years ago describes a trip that is no longer
+# sold the same way. At this half-life a day from 12 months ago counts half as
+# much as one from today, and one from 24 months counts a quarter.
+#
+# This applies to WORDING only. A route does not age: the city sequence, the day
+# count and the tour type of a two-year-old offer are as valid as today's, and
+# route retrieval must not weight them down.
+RECENCY_HALF_LIFE_DAYS = 365.0
+
+
+def recency_weight(sent_at, now=None, half_life_days: float = RECENCY_HALF_LIFE_DAYS) -> float:
+    """
+    How much a day's wording counts as evidence, given its age.
+
+    Post: 1.0 for an offer sent today, 0.5 at one half-life, approaching 0
+          beyond that, and never negative.
+
+          An offer with no date weighs 1.0. Absence of a date is not evidence of
+          age, and every offer recovered from mail carries one — only the legacy
+          extract does not, and that is used for routing, where age is
+          irrelevant.
+    """
+    if sent_at is None:
+        return 1.0
+    reference = now or datetime.now(timezone.utc)
+    if sent_at.tzinfo is None:
+        sent_at = sent_at.replace(tzinfo=timezone.utc)
+    age_days = max((reference - sent_at).total_seconds() / 86400.0, 0.0)
+    return 0.5 ** (age_days / half_life_days)
+
+
 def day_key(offer: SentOffer, day: OfferDay) -> str:
     """Addresses one day inside one offer, stable across runs."""
     return f"{offer.message_id}#{day.day_number}"
@@ -104,6 +136,7 @@ def cluster_days(day_pairs: list[tuple]) -> list[DayPattern]:
                 continue
             if similarity(day.text, rep["text"]) >= MATCH_THRESHOLD:
                 rep["members"].append(day_key(offer, day))
+                rep["weight"] += recency_weight(offer.sent_at)
                 placed = True
                 break
         if not placed:
@@ -113,6 +146,7 @@ def cluster_days(day_pairs: list[tuple]) -> list[DayPattern]:
                 "tokens": tokens,
                 "overnight_city": day.overnight_city,
                 "members": [day_key(offer, day)],
+                "weight": recency_weight(offer.sent_at),
             })
 
     patterns = [
@@ -120,12 +154,16 @@ def cluster_days(day_pairs: list[tuple]) -> list[DayPattern]:
             pattern_id=_pattern_id(rep["normalized"]),
             representative_text=rep["text"],
             occurrences=len(rep["members"]),
+            weight=round(rep["weight"], 3),
             overnight_city=rep["overnight_city"],
             member_keys=rep["members"],
         )
         for rep in representatives
     ]
-    patterns.sort(key=lambda p: (-p.occurrences, p.pattern_id))
+    # Ranked by weight, reported by count. A day written five times last month
+    # outranks one written five times two years ago, and the reviewer sees both
+    # numbers rather than a single figure that hides which it is.
+    patterns.sort(key=lambda p: (-p.weight, -p.occurrences, p.pattern_id))
     return patterns
 
 

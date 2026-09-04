@@ -89,6 +89,9 @@ class DayPattern:
     representative_text: str
     occurrences: int
     overnight_city: str
+    # Occurrences discounted by age. Ranks the pattern; `occurrences` still
+    # reports the plain count, because the two answer different questions.
+    weight: float = 0.0
     member_keys: list[str] = field(default_factory=list)   # "<message_id>#<day_number>"
 
     @property

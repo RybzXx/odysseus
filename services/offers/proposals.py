@@ -49,6 +49,10 @@ class TemplateProposal:
     fields: dict                                  # the 11 catalogue columns
     evidence_day_keys: list = field(default_factory=list)
     occurrences: int = 0
+    # Occurrences discounted by age. Orders the queue; `occurrences` reports the
+    # plain count. A day written five times last month is stronger evidence than
+    # one written five times two years ago, and the reviewer sees which.
+    weight: float = 0.0
     target_code: Optional[str] = None             # set for KIND_REVISION
     nearest_code: Optional[str] = None
     nearest_score: float = 0.0
@@ -99,6 +103,7 @@ def build_proposal(
     fields: dict,
     evidence_day_keys: list,
     occurrences: int = 0,
+    weight: float = 0.0,
     target_code: Optional[str] = None,
     nearest_code: Optional[str] = None,
     nearest_score: float = 0.0,
@@ -126,6 +131,7 @@ def build_proposal(
         fields={name: fields[name] for name in TEMPLATE_FIELDS},
         evidence_day_keys=list(evidence_day_keys),
         occurrences=occurrences or len(evidence_day_keys),
+        weight=weight or float(occurrences or len(evidence_day_keys)),
         target_code=target_code,
         nearest_code=nearest_code,
         nearest_score=nearest_score,
@@ -182,7 +188,7 @@ def iter_proposals(status: Optional[str] = None) -> Iterator[TemplateProposal]:
             continue
         if status is None or proposal.status == status:
             found.append(proposal)
-    found.sort(key=lambda p: (-p.occurrences, p.proposal_id))
+    found.sort(key=lambda p: (-p.weight, -p.occurrences, p.proposal_id))
     yield from found
 
 

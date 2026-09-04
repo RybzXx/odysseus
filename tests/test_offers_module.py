@@ -707,3 +707,69 @@ def test_a_proposal_warns_when_it_may_be_an_existing_route_reversed(queue):
     assert len(made) == 1
     assert made[0].reordered_codes == ["NAURUKNJ"]
     assert "different order" in made[0].fields["internal_notes"]
+
+
+# ── Age weighting ─────────────────────────────────────────────────────────────
+
+from datetime import timedelta, timezone  # noqa: E402
+
+from services.offers.gap_report import RECENCY_HALF_LIFE_DAYS, recency_weight  # noqa: E402
+
+NOW = datetime(2026, 9, 4, tzinfo=timezone.utc)
+
+
+def _aged(months, text, message_id):
+    return SentOffer(message_id=message_id, subject="s",
+                     sent_at=NOW - timedelta(days=30.4 * months),
+                     days=[OfferDay(1, text, "Nasiriyah")])
+
+
+def test_a_day_halves_in_weight_every_half_life():
+    assert recency_weight(NOW, NOW) == 1.0
+    assert recency_weight(NOW - timedelta(days=RECENCY_HALF_LIFE_DAYS), NOW) == pytest.approx(0.5)
+    assert recency_weight(NOW - timedelta(days=2 * RECENCY_HALF_LIFE_DAYS), NOW) == pytest.approx(0.25)
+
+
+def test_weight_never_goes_negative_or_above_one():
+    assert recency_weight(NOW + timedelta(days=30), NOW) == 1.0, "a future date is not extra evidence"
+    assert 0.0 < recency_weight(NOW - timedelta(days=3650), NOW) < 0.01
+
+
+def test_an_offer_with_no_date_is_not_penalised():
+    """
+    Absence of a date is not evidence of age. Every offer recovered from mail
+    carries one; only the legacy extract does not, and that is used for routing,
+    where age does not apply.
+    """
+    assert recency_weight(None, NOW) == 1.0
+
+
+def test_recent_evidence_outranks_older_evidence_of_the_same_size(queue):
+    recent = [_aged(1, TEXT_MARSHES, "<r1@x>"), _aged(1, TEXT_MARSHES, "<r2@x>")]
+    old = [_aged(24, EDITED_MARSHES, "<o1@x>"), _aged(24, EDITED_MARSHES, "<o2@x>")]
+    report = analyse_catalogue_gap(recent + old, {"MO1": TEXT_MOSUL})
+
+    assert [p.occurrences for p in report.patterns] == [2, 2], "same plain count"
+    assert report.patterns[0].weight > report.patterns[1].weight
+    assert TEXT_MARSHES in report.patterns[0].representative_text
+
+
+def test_the_queue_is_ordered_by_weight_not_by_count(queue):
+    report = analyse_catalogue_gap(
+        [_aged(1, TEXT_MARSHES, "<r1@x>"), _aged(1, TEXT_MARSHES, "<r2@x>"),
+         _aged(30, EDITED_MARSHES, "<o1@x>"), _aged(30, EDITED_MARSHES, "<o2@x>"),
+         _aged(30, EDITED_MARSHES, "<o3@x>")],
+        {"MO1": TEXT_MOSUL})
+    made = propose_new_templates(report, {"MO1": TEXT_MOSUL})
+    assert made[0].occurrences == 2 and made[1].occurrences == 3
+    assert made[0].weight > made[1].weight, "two recent days beat three old ones"
+
+
+def test_a_proposal_reports_both_the_count_and_the_weight(queue):
+    report = analyse_catalogue_gap(
+        [_aged(24, TEXT_MARSHES, "<a@x>"), _aged(24, TEXT_MARSHES, "<b@x>")],
+        {"MO1": TEXT_MOSUL})
+    proposal = propose_new_templates(report, {"MO1": TEXT_MOSUL})[0]
+    assert proposal.occurrences == 2
+    assert proposal.weight == pytest.approx(0.5, abs=0.05), "two days at a quarter weight each"
+    assert "Age-weighted evidence" in proposal.fields["internal_notes"]

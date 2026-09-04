@@ -126,7 +126,7 @@ function card(p) {
       <span class="tag ${esc(p.kind)}">${esc(p.kind)}</span>
       <strong>${heading}</strong>
       <span class="grow"></span>
-      <span class="note">written ${p.occurrences}× · ${nearest}</span>
+      <span class="note">written ${p.occurrences}× · weighted ${(p.weight ?? 0).toFixed(1)} · ${nearest}</span>
     </div>
     <div class="note" style="margin-top:6px">${esc(p.internal_notes)}</div>
     ${p.reordered_codes && p.reordered_codes.length

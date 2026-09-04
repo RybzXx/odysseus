@@ -85,6 +85,7 @@ def _proposal_to_dict(proposal, template_texts: dict) -> dict:
         "kind": proposal.kind,
         "status": proposal.status,
         "occurrences": proposal.occurrences,
+        "weight": proposal.weight,
         "target_code": proposal.target_code,
         "current_text": current,
         "proposed_text": proposal.fields.get("full_text", ""),
