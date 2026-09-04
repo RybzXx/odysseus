@@ -209,7 +209,7 @@ def summarise(report: GapReport, offer_count: int) -> dict:
     }
 
 
-def save_summary(summary: dict, path: str = GAP_SUMMARY_FILE) -> str:
+def save_summary(summary: dict, path: Optional[str] = None) -> str:
     """
     Post: the summary is on disk, written atomically.
 
@@ -218,6 +218,10 @@ def save_summary(summary: dict, path: str = GAP_SUMMARY_FILE) -> str:
     proposal queue was derived from. A fresh measurement beside a stale queue
     would show two different gaps and give no way to tell which is which.
     """
+    # Resolved at call time, not bound as a default: a default argument captures
+    # the constant when this module is imported, which makes the location
+    # impossible to redirect and silently reads the real corpus during tests.
+    path = path or GAP_SUMMARY_FILE
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     temporary = path + ".tmp"
     with open(temporary, "w", encoding="utf-8") as fh:
@@ -226,8 +230,9 @@ def save_summary(summary: dict, path: str = GAP_SUMMARY_FILE) -> str:
     return path
 
 
-def load_summary(path: str = GAP_SUMMARY_FILE) -> Optional[dict]:
+def load_summary(path: Optional[str] = None) -> Optional[dict]:
     """Post: the last saved summary, or None when the gap has never been measured."""
+    path = path or GAP_SUMMARY_FILE
     if not os.path.exists(path):
         return None
     try:
