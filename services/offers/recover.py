@@ -58,9 +58,38 @@ def main(argv=None) -> int:
                         help="re-split stored offers from their saved text; no mail is read")
     parser.add_argument("--prune", action="store_true",
                         help="with --reparse, discard stored documents that hold no itinerary")
+    parser.add_argument("--rebuild-proposals", action="store_true",
+                        help="re-derive the review queue and the gap summary; no mail is read")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if args.rebuild_proposals:
+        # The same work the review page's button does, without a request
+        # timeout over it. A gap pass costs about 3 minutes on a full corpus,
+        # which no HTTP handler should hold open.
+        from services.offers.gap_report import save_summary, summarise
+        from services.offers.proposals import queue_summary, save
+        from services.offers.propose import propose_new_templates, propose_revisions
+        from services.offers import analyse_catalogue_gap, iter_offers, load_template_texts
+
+        offers = [offer for offer in iter_offers() if offer.day_count]
+        if not offers:
+            print("the offer corpus is empty - recover it first", file=sys.stderr)
+            return 2
+        texts = load_template_texts()
+        print(f"measuring {len(offers)} offers against {len(texts)} templates...", flush=True)
+        report = analyse_catalogue_gap(offers, texts)
+        drafted = propose_revisions(offers, report, texts) + propose_new_templates(report, texts)
+        for proposal in drafted:
+            save(proposal)
+        save_summary(summarise(report, len(offers)))
+        print(f"days {report.total_days}: matched {report.matched} "
+              f"({report.coverage:.1%}), edited {report.near_miss}, "
+              f"uncovered {report.unmatched}")
+        print(f"patterns {len(report.patterns)}, recurring {len(report.recurring_patterns)}")
+        print(f"drafted {len(drafted)} proposals; queue {queue_summary()}")
+        return 0
 
     if args.reparse:
         outcome = reparse_stored(prune=args.prune)
