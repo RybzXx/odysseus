@@ -237,3 +237,57 @@ def test_catalogue_listing_reports_each_template(monkeypatch):
     assert listing["count"] == 1
     assert listing["templates"][0]["code"] == "MO1"
     assert listing["templates"][0]["words"] == len(TEXT_MOSUL.split())
+
+
+# ── What a reviewer is shown ──────────────────────────────────────────────────
+
+def test_a_revision_diff_marks_only_what_changed():
+    """
+    A reviewer reads a revision by its deviation. Most revisions differ by one
+    clause inside otherwise identical prose, so showing both sides in full hides
+    the change instead of showing it.
+    """
+    diff = offers_routes._word_diff("visit the ziggurat and return",
+                                    "visit the great ziggurat and return")
+    assert ("added", "great") in diff
+    assert [words for op, words in diff if op == "removed"] == []
+    assert " ".join(w for op, w in diff if op != "removed") == "visit the great ziggurat and return"
+
+
+def test_a_diff_reports_a_removal_as_well_as_an_addition():
+    diff = offers_routes._word_diff("drive south to the marshes at dawn",
+                                    "drive to the marshes")
+    assert ("removed", "south") in diff
+    assert ("removed", "at dawn") in diff
+
+
+def test_identical_texts_produce_no_change():
+    diff = offers_routes._word_diff(TEXT_MOSUL, TEXT_MOSUL)
+    assert {op for op, _ in diff} == {"same"}
+
+
+def test_a_new_template_has_nothing_to_diff_against(queue, corpus):
+    """A new template replaces no text, so there is no before side to compare."""
+    _call("rebuild_proposals")
+    listed = _call("list_proposals", status=prop.STATUS_PENDING, kind=None)["proposals"][0]
+    assert listed["kind"] == prop.KIND_NEW
+    assert listed["diff"] == []
+    assert listed["current_text"] is None
+
+
+def test_a_revision_carries_its_diff_and_both_evidence_numbers(queue, corpus):
+    proposal = prop.build_proposal(prop.KIND_REVISION,
+                                   _fields(text=TEXT_MOSUL + " Then coffee by the river."),
+                                   ["<1@x>#1"], target_code="MO1", occurrences=3, weight=1.4)
+    prop.save(proposal)
+    shown = _call("get_proposal", proposal_id=proposal.proposal_id)
+    assert ("added", "Then coffee by the river.") in [(op, w) for op, w in shown["diff"]]
+    assert shown["occurrences"] == 3 and shown["weight"] == 1.4
+
+
+def test_a_proposal_shows_the_mirror_template_it_may_reverse(queue, corpus):
+    proposal = prop.build_proposal(prop.KIND_NEW, _fields(), ["<2@x>#1"],
+                                   reordered_codes=["URUKNA"])
+    prop.save(proposal)
+    shown = _call("get_proposal", proposal_id=proposal.proposal_id)
+    assert shown["reordered_codes"] == ["URUKNA"]
