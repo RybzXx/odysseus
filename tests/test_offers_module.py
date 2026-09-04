@@ -773,3 +773,42 @@ def test_a_proposal_reports_both_the_count_and_the_weight(queue):
     assert proposal.occurrences == 2
     assert proposal.weight == pytest.approx(0.5, abs=0.05), "two days at a quarter weight each"
     assert "Age-weighted evidence" in proposal.fields["internal_notes"]
+
+
+# ── Day headings with no space ────────────────────────────────────────────────
+
+GLUED_PDF = ("TheOriginalTourDay1\u25c6Meet and greet, and fast track visa from the airport."
+             "Overnight: Baghdad / night 1.\n"
+             "Day2\u25c67 AM Start the day with a thick-cream and pastry breakfast.\n"
+             "Day3\u25c6Have a morning tour of the monuments in Baghdad.\n"
+             "End of tour\nIncludes:\nAirport transfers.")
+
+
+def test_a_pdf_that_lost_its_spaces_still_yields_days():
+    """
+    One PDF generation extracts with no space anywhere: the offer arrives as
+    "TheOriginalTourDay1 … Day2 … Day3". The heading has no space after it and
+    no word boundary before it, so patterns requiring either found nothing and
+    real offers were rejected as holding no itinerary.
+    """
+    days = split_days(GLUED_PDF)
+    assert [d.day_number for d in days] == [1, 2, 3]
+    assert days[0].overnight_city == "Baghdad"
+    assert "Includes" not in days[-1].text
+
+
+def test_a_weekday_is_never_read_as_a_day_heading():
+    """
+    The trap in allowing "Day1": every weekday ends in "day", so a
+    case-insensitive match turns "Sunday, 12 October" into day 12. Requiring a
+    capital D is what separates a heading from a date.
+    """
+    prose = ("Sunday, 12 October we depart. Monday, 24 February we return. "
+             "Thursday 3 March is arrival day 1 of the tour.")
+    assert split_days(prose) == []
+
+
+@pytest.mark.parametrize("heading", ["Day 1", "Day1", "DAY 1", "day 1"])
+def test_every_written_form_of_a_first_day_is_recognised(heading):
+    text = f"{heading}\nArrive in Baghdad.\nDay 2\nDepart."
+    assert [d.day_number for d in split_days(text)] == [1, 2]

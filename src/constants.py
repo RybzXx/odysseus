@@ -59,6 +59,10 @@ TEMPLATE_PROPOSAL_DIR = os.path.join(DATA_DIR, "template_proposals")
 # the review page so it shows the measurement its queue came from, rather than a
 # fresh one that could disagree with it.
 GAP_SUMMARY_FILE = os.path.join(DATA_DIR, "catalogue_gap.json")
+# Every attachment the recovery could not turn into an offer, with the reason.
+# Written in full: a truncated console list once hid 369 rejections, among them
+# real offers that a parser fix later recovered.
+RECOVERY_FAILURES_FILE = os.path.join(DATA_DIR, "offer_recovery_failures.json")
 EMAIL_URGENCY_CACHE_DIR = os.path.join(DATA_DIR, "email_urgency_cache")
 SKILLS_DIR = os.path.join(DATA_DIR, "skills")
 GALLERY_DIR = os.path.join(DATA_DIR, "gallery")

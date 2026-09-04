@@ -15,11 +15,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sqlite3
 import sys
 from datetime import date, timedelta
 
-from src.constants import APP_DB, OFFER_CORPUS_DIR
+from src.constants import APP_DB, OFFER_CORPUS_DIR, RECOVERY_FAILURES_FILE
 
 from services.offers.offer_store import build_routes_json, reparse_stored
 from services.offers.sent_offers import fetch_sent_offers
@@ -109,6 +110,7 @@ def main(argv=None) -> int:
         return 2
 
     totals = {"scanned": 0, "stored": 0, "skipped": 0, "failed": 0}
+    all_failures = []
     for account_id, owner, imap_user in accounts:
         print(f"\n=== {imap_user}  {since} .. {before} ===", flush=True)
         manifest = fetch_sent_offers(
@@ -123,12 +125,17 @@ def main(argv=None) -> int:
         totals["stored"] += manifest["offers_stored"]
         totals["skipped"] += manifest["offers_skipped"]
         totals["failed"] += len(manifest["failures"])
+        all_failures.extend(dict(failure, account=imap_user)
+                            for failure in manifest["failures"])
         print(f"scanned {manifest['messages_scanned']}  "
               f"{'would store' if args.dry_run else 'stored'} {manifest['offers_stored']}  "
               f"skipped {manifest['offers_skipped']}  "
               f"failed {len(manifest['failures'])}", flush=True)
         for failure in manifest["failures"][:20]:
             print("  ! " + json.dumps(failure, ensure_ascii=False), flush=True)
+        if len(manifest["failures"]) > 20:
+            print(f"  ... {len(manifest['failures']) - 20} more, see the failures file",
+                  flush=True)
 
     print(f"\ntotals: {totals}")
     print(f"corpus: {OFFER_CORPUS_DIR}")
