@@ -61,6 +61,10 @@
   .evidence pre { margin-top: 8px; }
   .empty { text-align: center; color: var(--muted); padding: 50px 20px; }
   .err { color: var(--gone); }
+  .mirror { margin-top: 8px; padding: 8px 10px; border-radius: 7px;
+            background: var(--del); color: var(--gone); font-size: 13px; }
+  .diff ins { background: var(--add); text-decoration: none; padding: 0 2px; }
+  .diff del { background: var(--del); padding: 0 2px; }
 </style>
 </head>
 <body>
@@ -125,6 +129,19 @@ function card(p) {
       <span class="note">written ${p.occurrences}× · ${nearest}</span>
     </div>
     <div class="note" style="margin-top:6px">${esc(p.internal_notes)}</div>
+    ${p.reordered_codes && p.reordered_codes.length
+        ? `<div class="mirror">Same content as <strong>${p.reordered_codes.map(esc).join(", ")}</strong>
+           in a different order. Check whether this is that route reversed before you create a new template.</div>`
+        : ""}
+    ${p.diff && p.diff.length
+        ? `<div class="col" style="margin-top:12px">
+             <h4>What changes</h4>
+             <pre class="diff">${p.diff.map(([op, words]) =>
+                 op === "added" ? `<ins>${esc(words)}</ins>`
+               : op === "removed" ? `<del>${esc(words)}</del>`
+               : esc(words)).join(" ")}</pre>
+           </div>`
+        : ""}
     <div class="cols">
       <div class="col">
         <h4>${isRevision ? "Currently in the catalogue" : "No current text"}</h4>

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from services.offers.day_match import rank_templates
+from services.offers.day_match import rank_templates, reordered_templates
 from services.offers.gap_report import cluster_days, day_key
 from services.offers.models import GapReport, SentOffer
 from services.offers.proposals import (
@@ -113,8 +113,13 @@ def propose_new_templates(report: GapReport, template_texts: dict,
             continue
         ranked = rank_templates(pattern.representative_text, template_texts)
         nearest = ranked[0] if ranked else None
+        mirrors = reordered_templates(pattern.representative_text, template_texts)
         note = (f"Written {pattern.occurrences} times across sent offers with no template "
                 f"that expresses it.")
+        if mirrors:
+            note += (" Shares its content with "
+                     + ", ".join(code for code, _, _ in mirrors)
+                     + " in a different order — check whether this is that route reversed.")
         proposals.append(build_proposal(
             kind=KIND_NEW,
             fields=_blank_fields(pattern.representative_text, pattern.overnight_city, note),
@@ -122,6 +127,7 @@ def propose_new_templates(report: GapReport, template_texts: dict,
             occurrences=pattern.occurrences,
             nearest_code=nearest.code if nearest else None,
             nearest_score=nearest.score if nearest else 0.0,
+            reordered_codes=[code for code, _, _ in mirrors],
         ))
     return proposals
 

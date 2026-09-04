@@ -55,6 +55,13 @@ TEXT_MARSHES = (
     "and return to the hotel before sunset."
 )
 
+# The same day after an operator edited it. Calibrated to land in the near-miss
+# band, which is where a template-plus-edit belongs: 0.756 against TEXT_MOSUL.
+EDITED_MOSUL = (TEXT_MOSUL + " A visit to the church rebuilt by UNESCO follows, "
+                "then coffee by the river before dusk.")
+EDITED_MARSHES = (TEXT_MARSHES + " A stop at the reed house follows, "
+                  "then tea with the family.")
+
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
@@ -123,12 +130,11 @@ def test_bands_partition_the_score_range():
 
 def test_edited_template_lands_in_the_near_miss_band():
     """
-    The defect this module exists to fix: MO1 scores 0.848 against three real
-    offer days that are MO1 plus one clause about a church rebuilt by UNESCO.
-    Verbatim matching called that a new day; it is an edit.
+    The defect this module exists to fix: MO1 is the most-edited template in the
+    real corpus, reached only by days that added a clause to it. Verbatim
+    matching called every one of them a new day; each is an edit.
     """
-    edited = TEXT_MOSUL + " A visit to the church rebuilt by UNESCO follows."
-    best = rank_templates(edited, {"MO1": TEXT_MOSUL, "MARSH": TEXT_MARSHES})[0]
+    best = rank_templates(EDITED_MOSUL, {"MO1": TEXT_MOSUL, "MARSH": TEXT_MARSHES})[0]
     assert best.code == "MO1"
     assert best.band == BAND_NEAR_MISS
     assert NEAR_MISS_FLOOR <= best.score < MATCH_THRESHOLD
@@ -318,7 +324,7 @@ def test_routes_json_is_written_in_the_schema_existing_consumers_read(store, tmp
 # ── Gap analysis ──────────────────────────────────────────────────────────────
 
 def _corpus():
-    edited = TEXT_MOSUL + " A visit to the church rebuilt by UNESCO follows."
+    edited = EDITED_MOSUL
     first = SentOffer(message_id="<1@x>", subject="s", sent_at=None, days=[
         OfferDay(1, TEXT_MOSUL, "Mosul"),
         OfferDay(2, edited, "Mosul"),
@@ -364,7 +370,7 @@ def test_a_template_used_only_in_edited_form_is_not_reported_as_unused():
     is matched outright here, while a template reached only by near misses must
     still count as referenced.
     """
-    edited_only = TEXT_MARSHES + " A stop at the reed house follows."
+    edited_only = EDITED_MARSHES
     corpus = [SentOffer(message_id="<edit@x>", subject="s", sent_at=None, days=[
         OfferDay(1, TEXT_MOSUL, "Mosul"),
         OfferDay(2, edited_only, "Nasiriyah"),
@@ -539,11 +545,10 @@ def test_a_day_written_once_is_left_bespoke(queue):
 
 
 def test_repeated_near_misses_become_a_revision_of_their_template(queue):
-    edited = TEXT_MOSUL + " A visit to the church rebuilt by UNESCO follows."
     offers = [SentOffer(message_id="<r1@x>", subject="s", sent_at=None,
-                        days=[OfferDay(1, edited, "Mosul")]),
+                        days=[OfferDay(1, EDITED_MOSUL, "Mosul")]),
               SentOffer(message_id="<r2@x>", subject="s", sent_at=None,
-                        days=[OfferDay(1, edited, "Mosul")])]
+                        days=[OfferDay(1, EDITED_MOSUL, "Mosul")])]
     texts = {"MO1": TEXT_MOSUL}
     report = analyse_catalogue_gap(offers, texts)
     assert report.near_miss == 2
@@ -626,3 +631,79 @@ def test_split_days_emits_tidied_prose():
     days = split_days(text)
     assert days[0].text.startswith("Arrival and transfer.")
     assert "◆" not in days[0].text and "  " not in days[0].text
+
+
+# ── Reversed routes ───────────────────────────────────────────────────────────
+
+from services.offers.day_match import (  # noqa: E402
+    is_reordered,
+    reordered_templates,
+    similarity_parts,
+)
+
+ROUTE_NORTHBOUND = ("Drive to Najaf and walk to the shrine of Imam Ali. "
+                    "Then continue to Uruk and see the great ziggurat. "
+                    "Finally return to the hotel in Najaf for the night.")
+ROUTE_SOUTHBOUND = ("Drive to Uruk and see the great ziggurat. "
+                    "Then continue to Najaf and walk to the shrine of Imam Ali. "
+                    "Finally return to the hotel in Najaf for the night.")
+
+
+def test_similarity_is_the_mean_of_its_two_halves():
+    jaccard, sequence = similarity_parts(TEXT_MOSUL, EDITED_MOSUL)
+    assert similarity(TEXT_MOSUL, EDITED_MOSUL) == round(0.5 * jaccard + 0.5 * sequence, 3)
+
+
+def test_the_halves_disagree_when_the_order_changes():
+    """The signal the mean hides: every word shared, half the order kept."""
+    jaccard, sequence = similarity_parts(ROUTE_NORTHBOUND, ROUTE_SOUTHBOUND)
+    assert jaccard == 1.0, "a reversed route uses exactly the same words"
+    assert sequence < 0.75
+    assert is_reordered(jaccard, sequence)
+
+
+def test_identical_and_unrelated_texts_are_not_reordered():
+    assert not is_reordered(*similarity_parts(TEXT_MOSUL, TEXT_MOSUL))
+    assert not is_reordered(*similarity_parts(TEXT_MOSUL, TEXT_MARSHES))
+
+
+def test_a_reversed_route_never_matches_however_high_it_scores():
+    """
+    The reason this rule exists. A reversed three-sentence day scores 0.836 —
+    above the 0.80 threshold — because token overlap is blind to order and
+    carries half the weight. Accepting it would bind a journey to its mirror.
+    """
+    best = rank_templates(ROUTE_SOUTHBOUND, {"NAURUKNJ": ROUTE_NORTHBOUND})[0]
+    assert best.score > MATCH_THRESHOLD
+    assert best.reordered is True
+    assert best.band == BAND_NO_MATCH, (
+        "not a match, and not an edit either — calling it an edit would propose "
+        "replacing the mirror template with the reversed wording"
+    )
+
+
+def test_a_match_carries_both_halves_of_its_score():
+    best = rank_templates(TEXT_MOSUL, {"MO1": TEXT_MOSUL})[0]
+    assert best.jaccard == 1.0 and best.sequence == 1.0
+    assert best.reordered is False and best.band == BAND_MATCH
+
+
+def test_reordered_templates_names_the_mirror():
+    found = reordered_templates(ROUTE_SOUTHBOUND,
+                                {"NAURUKNJ": ROUTE_NORTHBOUND, "MARSH": TEXT_MARSHES})
+    assert [code for code, _, _ in found] == ["NAURUKNJ"]
+
+
+def test_a_genuinely_new_day_has_no_mirror():
+    assert reordered_templates(TEXT_MARSHES, {"MO1": TEXT_MOSUL}) == []
+
+
+def test_a_proposal_warns_when_it_may_be_an_existing_route_reversed(queue):
+    offers = [SentOffer(message_id=f"<m{n}@x>", subject="s", sent_at=None,
+                        days=[OfferDay(1, ROUTE_SOUTHBOUND, "Najaf")]) for n in (1, 2)]
+    texts = {"NAURUKNJ": ROUTE_NORTHBOUND}
+    report = analyse_catalogue_gap(offers, texts)
+    made = propose_new_templates(report, texts)
+    assert len(made) == 1
+    assert made[0].reordered_codes == ["NAURUKNJ"]
+    assert "different order" in made[0].fields["internal_notes"]

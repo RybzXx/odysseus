@@ -28,6 +28,12 @@ class TemplateMatch:
     code: str
     score: float
     band: str
+    # The two halves of the score, kept so a caller can see what the mean hides.
+    jaccard: float = 0.0
+    sequence: float = 0.0
+    # Same words, different order — the route driven the other way. Such a pair
+    # is never a match, whatever it scores.
+    reordered: bool = False
 
 
 @dataclass

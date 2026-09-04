@@ -52,6 +52,10 @@ class TemplateProposal:
     target_code: Optional[str] = None             # set for KIND_REVISION
     nearest_code: Optional[str] = None
     nearest_score: float = 0.0
+    # Templates this day matches in content but not in order — the same route
+    # driven the other way. Without this, a reversed route becomes a second
+    # template for a journey the catalogue already describes.
+    reordered_codes: list = field(default_factory=list)
     status: str = STATUS_PENDING
     reviewer_note: str = ""
     created_at: str = ""
@@ -98,6 +102,7 @@ def build_proposal(
     target_code: Optional[str] = None,
     nearest_code: Optional[str] = None,
     nearest_score: float = 0.0,
+    reordered_codes: Optional[list] = None,
 ) -> TemplateProposal:
     """
     Pre:  `kind` is KIND_NEW or KIND_REVISION; `fields` covers TEMPLATE_FIELDS;
@@ -124,6 +129,7 @@ def build_proposal(
         target_code=target_code,
         nearest_code=nearest_code,
         nearest_score=nearest_score,
+        reordered_codes=list(reordered_codes or []),
         created_at=_now(),
     )
 

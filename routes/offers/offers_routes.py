@@ -12,6 +12,7 @@ approving a proposal records a verdict, and applying approved proposals is a
 separate deliberate step (ws-03 WP1.5).
 """
 
+import difflib
 import logging
 from typing import Optional
 
@@ -52,6 +53,28 @@ class Verdict(BaseModel):
     edited_fields: Optional[dict] = None
 
 
+def _word_diff(before: str, after: str) -> list:
+    """
+    The change between two texts, word by word.
+
+    Post: [(op, words)] where op is "same", "added" or "removed". A reviewer
+          reads a revision by its deviation, not by re-reading both sides —
+          most revisions differ by a clause inside otherwise identical prose.
+    """
+    left, right = (before or "").split(), (after or "").split()
+    parts = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(
+            None, left, right, autojunk=False).get_opcodes():
+        if op == "equal":
+            parts.append(("same", " ".join(left[i1:i2])))
+        else:
+            if i1 != i2:
+                parts.append(("removed", " ".join(left[i1:i2])))
+            if j1 != j2:
+                parts.append(("added", " ".join(right[j1:j2])))
+    return parts
+
+
 def _proposal_to_dict(proposal, template_texts: dict) -> dict:
     """One proposal plus what a reviewer needs to judge it without leaving the page."""
     current = None
@@ -68,6 +91,8 @@ def _proposal_to_dict(proposal, template_texts: dict) -> dict:
         "overnight_city": proposal.fields.get("overnight_city", ""),
         "nearest_code": proposal.nearest_code,
         "nearest_score": proposal.nearest_score,
+        "reordered_codes": proposal.reordered_codes,
+        "diff": _word_diff(current, proposal.fields.get("full_text", "")) if current else [],
         "evidence_day_keys": proposal.evidence_day_keys,
         "internal_notes": proposal.fields.get("internal_notes", ""),
         "fields": proposal.fields,

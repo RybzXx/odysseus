@@ -34,7 +34,13 @@ from services.offers.models import (
 )
 
 # Accepts a template match. Template-derived days score 1.000.
-MATCH_THRESHOLD = 0.85
+#
+# Set to 0.80 by the catalogue's owner on 2026-09-04, from measurement rather
+# than intuition. Overnight-city agreement — evidence the scorer never sees —
+# is 82% across [0.80, 0.85) and 83% across [0.85, 0.90), against a chance
+# level near 20%. The band behaves like the accepted band, so the previous
+# 0.85 was refusing 72 days that look exactly like the ones it took.
+MATCH_THRESHOLD = 0.80
 
 # Below the threshold but at or above this floor, a day reads as a known
 # template edited after generation, not as a new day. The two demand opposite
@@ -90,6 +96,65 @@ def normalize_day_text(text: str) -> str:
     return _WHITESPACE_RE.sub(" ", lowered).strip()
 
 
+# A route driven in the opposite direction uses almost the same words in almost
+# the opposite order. Token overlap stays high while the sequence ratio falls,
+# and the combined score lands too low to match but too high to be unrelated —
+# so the day looks new when it is really an existing template, reversed.
+#
+#     MEASURED over 577 days against 28 templates: 7 pairs show this signature,
+#     and every one is the Najaf/Uruk mirror. NAURUKNJ scores jaccard 0.94
+#     against sequence 0.43; URUKNA scores 0.84 against 0.53. Their combined
+#     scores are 0.62 to 0.68 — below the near-miss floor, so without this they
+#     become proposals for templates that already exist in the other direction.
+REORDER_TOKEN_FLOOR = 0.75
+REORDER_SEQUENCE_GAP = 0.25
+
+
+def similarity_parts(day_text: str, template_text: str) -> tuple:
+    """
+    The two halves of the score, kept apart.
+
+    Post: (jaccard, sequence), each 0.0 to 1.0. Their mean is `similarity`.
+          Apart they say something the mean hides: high overlap with a low
+          sequence ratio means the same content in a different order.
+    """
+    left, right = normalize_day_text(day_text), normalize_day_text(template_text)
+    left_tokens, right_tokens = set(left.split()), set(right.split())
+    if not left_tokens or not right_tokens:
+        return 0.0, 0.0
+    jaccard = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+    sequence = difflib.SequenceMatcher(None, left, right, autojunk=False).ratio()
+    return jaccard, sequence
+
+
+def is_reordered(jaccard: float, sequence: float) -> bool:
+    """Post: True when two texts share their words but not their order."""
+    return jaccard >= REORDER_TOKEN_FLOOR and (jaccard - sequence) >= REORDER_SEQUENCE_GAP
+
+
+def reordered_templates(day_text: str, template_texts: dict) -> list:
+    """
+    Templates this day matches in content but not in order.
+
+    Pre:  `template_texts` maps template code to full text.
+    Post: [(code, jaccard, sequence)] for every template that shares this day's
+          words in a different order, strongest overlap first. Empty for a day
+          that is genuinely new.
+
+    A caller uses this to warn before a reversed route becomes a second
+    template for a journey the catalogue already describes.
+    """
+    found = []
+    for code, text in template_texts.items():
+        if not (text or "").strip():
+            continue
+        jaccard, sequence = similarity_parts(day_text, text)
+        if is_reordered(jaccard, sequence):
+            found.append((code, round(jaccard, 3), round(sequence, 3)))
+    found.sort(key=lambda entry: -entry[1])
+    return found
+
+
 def similarity(day_text: str, template_text: str) -> float:
     """
     Half token overlap, half sequence ratio, over normalized text.
@@ -109,12 +174,7 @@ def similarity(day_text: str, template_text: str) -> float:
         jaccard 0.827, sequence ratio 0.205 with autojunk and 0.924 without —
         a combined score of 0.516 against 0.875 for the same pair.
     """
-    left, right = normalize_day_text(day_text), normalize_day_text(template_text)
-    left_tokens, right_tokens = set(left.split()), set(right.split())
-    if not left_tokens or not right_tokens:
-        return 0.0
-    jaccard = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
-    sequence = difflib.SequenceMatcher(None, left, right, autojunk=False).ratio()
+    jaccard, sequence = similarity_parts(day_text, template_text)
     return round(0.5 * jaccard + 0.5 * sequence, 3)
 
 
@@ -139,8 +199,25 @@ def token_overlap(left_tokens: set, right_tokens: set) -> float:
     return len(left_tokens & right_tokens) / len(union) if union else 0.0
 
 
-def band_for(score: float) -> str:
-    """Post: exactly one of BAND_MATCH, BAND_NEAR_MISS, BAND_NO_MATCH."""
+def band_for(score: float, reordered: bool = False) -> str:
+    """
+    Post: exactly one of BAND_MATCH, BAND_NEAR_MISS, BAND_NO_MATCH.
+
+    A reordered pair is neither a match nor an edit, whatever it scores. Two
+    itineraries with the same words in the opposite order are opposite journeys.
+    The score cannot see that: token overlap is blind to order and carries half
+    the weight. MEASURED on a reversed three-sentence day: jaccard 1.000,
+    sequence 0.671, score 0.836 — above the 0.80 threshold, so without this rule
+    the catalogue would accept a route as its own mirror.
+
+    It is not an edit either. Calling it one would propose replacing the mirror
+    template with the reversed wording, which is worse than creating a
+    duplicate. It is a day the catalogue does not express, and the proposal
+    built from it carries the mirror's code so a human decides whether the
+    reversed route deserves its own row.
+    """
+    if reordered:
+        return BAND_NO_MATCH
     if score >= MATCH_THRESHOLD:
         return BAND_MATCH
     if score >= NEAR_MISS_FLOOR:
@@ -168,8 +245,14 @@ def rank_templates(day_text: str, template_texts: dict) -> list[TemplateMatch]:
     for code, text in template_texts.items():
         if not (text or "").strip():
             continue
-        score = similarity(day_text, text)
-        matches.append(TemplateMatch(code=code, score=score, band=band_for(score)))
+        jaccard, sequence = similarity_parts(day_text, text)
+        score = round(0.5 * jaccard + 0.5 * sequence, 3)
+        reordered = is_reordered(jaccard, sequence)
+        matches.append(TemplateMatch(
+            code=code, score=score, band=band_for(score, reordered),
+            jaccard=round(jaccard, 3), sequence=round(sequence, 3),
+            reordered=reordered,
+        ))
     matches.sort(key=lambda m: (-m.score, m.code))
     return matches
 
