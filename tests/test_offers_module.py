@@ -572,3 +572,57 @@ def test_proposals_survive_the_queue_round_trip(queue):
     for proposal in propose_new_templates(report, {"MO1": TEXT_MOSUL}):
         prop.save(proposal)
     assert prop.queue_summary()[prop.STATUS_PENDING] == 1
+
+
+# ── PDF layout debris ─────────────────────────────────────────────────────────
+
+from services.offers.offer_text import tidy_day_text  # noqa: E402
+
+
+def test_tidy_collapses_pdf_spacing_without_changing_words():
+    raw = "8  AM  Start  the  day  with  the  old  \ncity,\n \nespecially\n \nthe\n \nmosque."
+    tidied = tidy_day_text(raw)
+    assert tidied == "8 AM Start the day with the old city, especially the mosque."
+    assert set(tidied.split()) == set(raw.split()), "no word is added or lost"
+
+
+def test_tidy_turns_bullet_glyphs_into_lines():
+    assert tidy_day_text("◆ First thing. ◆ Second thing.") == "First thing.\nSecond thing."
+    assert tidy_day_text("• One. ▪ Two. ‣ Three.") == "One.\nTwo.\nThree."
+
+
+def test_tidy_drops_leading_layout_punctuation():
+    assert tidy_day_text("/  ◆  After breakfast we depart.") == "After breakfast we depart."
+
+
+def test_splitting_the_same_extraction_twice_gives_the_same_days():
+    """
+    The property the corpus actually depends on: a day is a function of the
+    attachment, not of how many passes have run over it. `reparse_stored` always
+    starts from the stored raw extraction for exactly this reason — tidying is
+    not idempotent over its own output, because a PDF's newlines are noise to
+    join while the tidied ones are structure to keep.
+    """
+    raw = ("Day 1\n◆  Arrival  and  \ntransfer.\nOvernight: Baghdad / night 1.\n"
+           "Day 2\n◆  Drive  to  \nBabylon.\n")
+    first = [(d.day_number, d.text, d.overnight_city) for d in split_days(raw)]
+    second = [(d.day_number, d.text, d.overnight_city) for d in split_days(raw)]
+    assert first == second and len(first) == 2
+
+
+def test_tidy_leaves_clean_prose_alone():
+    clean = "After breakfast we will head to Babylon, a UNESCO world heritage site."
+    assert tidy_day_text(clean) == clean
+
+
+def test_tidy_of_nothing_is_nothing():
+    assert tidy_day_text("") == "" and tidy_day_text(None) == ""
+    assert tidy_day_text("  ◆  /  ") == ""
+
+
+def test_split_days_emits_tidied_prose():
+    text = ("Day 1\n◆  Arrival  and  \ntransfer.\nOvernight: Baghdad / night 1.\n"
+            "Day 2\n◆  Drive  to  Babylon.\n")
+    days = split_days(text)
+    assert days[0].text.startswith("Arrival and transfer.")
+    assert "◆" not in days[0].text and "  " not in days[0].text

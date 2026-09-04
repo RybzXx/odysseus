@@ -34,11 +34,6 @@ _TRAILER_MARKER_RE = re.compile(
     r"|notes?\s*:)\s*$"
 )
 
-# A .docx offer puts each day heading on its own line. A PDF often does not:
-# text extraction can flatten a whole itinerary onto one line, with the day
-# marker buried mid-sentence and its spacing doubled. The strict form is tried
-# first because it cannot mistake prose for a heading; the loose form is only
-# consulted when the strict one finds no usable sequence.
 # PDF extraction flattens the closing matter onto the same line as the last
 # day, so the anchored markers never fire. Only the unambiguous section
 # headings are matched loosely: "Optional:" and "Notes:" can legitimately
@@ -51,8 +46,14 @@ _LOOSE_TRAILER_MARKER_RE = re.compile(
     r"|general\s+information\s*:?)"
 )
 
+# A .docx offer puts each day heading on its own line. A PDF often does not:
+# extraction can flatten a whole itinerary onto one line, with the day marker
+# buried mid-sentence and its spacing doubled. The strict form is preferred
+# because it cannot mistake prose for a heading; the loose form covers the rest.
 _DAY_HEADER_RE = re.compile(r"(?im)^\s*Day\s+(\d+)\b")
 _LOOSE_DAY_HEADER_RE = re.compile(r"(?i)\bDay\s{1,4}(\d{1,2})\b")
+
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
 _OVERNIGHT_RE = re.compile(r"(?i)Overnight:\s*([^/\n]+?)\s*(?:/|night|$)")
 _GROUP_HINT_RE = re.compile(r"(?i)\bgroup\b")
 
@@ -118,6 +119,39 @@ def extract_offer_text(data: bytes, filename: str) -> str:
     if not text.strip():
         raise OfferTextError(f"no text recovered from {filename}")
     return text
+
+
+# PDF extraction leaves layout debris in the prose: bullet glyphs that were
+# list markers, runs of spaces where the page had columns, and line breaks
+# dropped mid-sentence so single words sit alone between newlines. None of it
+# is content, and all of it would reach a customer's document verbatim if a day
+# went into the catalogue unclean.
+_BULLET_GLYPH_RE = re.compile(r"[◆●▪▶•‣⁃]")
+_LEADING_PUNCTUATION_RE = re.compile(r"^[\s/|,;:.–—-]+")
+_LINE_BREAK_SENTINEL = "\x00"
+
+
+def tidy_day_text(block: str) -> str:
+    """
+    Remove layout debris from one day's prose, changing no words.
+
+    Pre:  `block` is a day's text **as extracted**, not text this function has
+          already returned. Applying it twice is a caller bug: a PDF's newlines
+          are noise to be joined while this function's newlines are structure to
+          be kept, and once the bullets are gone the two are indistinguishable.
+          Nothing in this package re-tidies — `reparse_stored` always starts
+          from the stored raw extraction, so the result depends on the
+          attachment alone and not on how many passes have run.
+    Post: bullet glyphs become line breaks, every other whitespace run becomes a
+          single space, and leading punctuation is dropped. Word content is
+          untouched — this repairs typography, it does not rewrite prose, so it
+          is safe to run without a model and without review.
+    """
+    text = _BULLET_GLYPH_RE.sub(_LINE_BREAK_SENTINEL, block or "")
+    text = _WHITESPACE_RUN_RE.sub(" ", text)
+    lines = [_LEADING_PUNCTUATION_RE.sub("", part).strip()
+             for part in text.split(_LINE_BREAK_SENTINEL)]
+    return "\n".join(line for line in lines if line)
 
 
 def trim_trailer(block: str) -> str:
@@ -209,7 +243,7 @@ def split_days(text: str) -> list[OfferDay]:
         overnight = _OVERNIGHT_RE.search(block)
         days.append(OfferDay(
             day_number=int(header.group(1)),
-            text=trim_trailer(block).strip(),
+            text=tidy_day_text(trim_trailer(block)),
             overnight_city=overnight.group(1).strip() if overnight else "",
         ))
     return days
