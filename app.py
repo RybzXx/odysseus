@@ -865,6 +865,10 @@ from routes.operations.itinerary_routes import router as itinerary_router
 app.include_router(setup_operations_routes())
 app.include_router(itinerary_router)
 
+# Offers (day-template catalogue gap and its human review queue)
+from routes.offers.offers_routes import setup_offers_routes
+app.include_router(setup_offers_routes())
+
 # Projects Module (hybrid file-as-spec + SQLite project workspace management)
 from routes.projects.projects_routes import setup_projects_routes
 app.include_router(setup_projects_routes())
@@ -968,6 +972,15 @@ async def serve_projects(request: Request):
 @app.get("/operations")
 async def serve_operations(request: Request):
     return await serve_index(request)
+
+@app.get("/offers")
+async def serve_offers(request: Request):
+    """The catalogue review page — a standalone page, not the chat shell.
+
+    Deliberately not a workbench panel yet: the review needs to be usable
+    before it needs to be docked, and a standalone page cannot break the SPA.
+    """
+    return FileResponse(os.path.join(STATIC_DIR, "offers_review.html"))
 
 @app.get("/overview")
 async def serve_overview(request: Request):

@@ -1,0 +1,23 @@
+[
+  {
+    "active": true,
+    "daily_rate_usd": 80,
+    "guide_code": "MAIN_GUIDE",
+    "guide_type": "Main Tour Guide",
+    "notes": "Primary knowledgeable English-speaking guide"
+  },
+  {
+    "active": true,
+    "daily_rate_usd": 20,
+    "guide_code": "LOCAL_GUIDE",
+    "guide_type": "Local City Guide / Coordinator",
+    "notes": "Local coordinators and guides in each city. Rate is per day per local guide."
+  },
+  {
+    "active": true,
+    "daily_rate_usd": 20,
+    "guide_code": "FEMALE_GUIDE",
+    "guide_type": "Female Guide (Shrine Access)",
+    "notes": "Female team member for holy shrine access. Rate included in group packages."
+  }
+]

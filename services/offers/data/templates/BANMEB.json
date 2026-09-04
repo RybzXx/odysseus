@@ -1,0 +1,21 @@
+{
+  "code": "BANMEB",
+  "title": "Plains of Nineveh, Nimrud & Erbil",
+  "city": "Nineveh / Erbil",
+  "region": "Northern Iraq",
+  "overnight_city": "Erbil",
+  "full_text": "Early morning head to the Plains of Nineveh. Have breakfast with a local Christian family in Bahzani and learn their stories and history.\nVisit some of the Yazidi temples in the town.\nThen head to the archaeological site of Nimrud (Kalhu) — one of the Assyrian capitals.\nHead to Erbil and, depending on time, check into the hotel and visit the citadel and the surrounding bustling markets.",
+  "included_sites": [
+    "NVH_MARK",
+    "MO_NM",
+    "ERB_CITD"
+  ],
+  "pricing_tags": [
+    "guide_day",
+    "transport_day",
+    "hotel_night"
+  ],
+  "active": true,
+  "needs_review": false,
+  "internal_notes": ""
+}

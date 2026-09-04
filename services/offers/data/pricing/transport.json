@@ -1,0 +1,38 @@
+[
+  {
+    "active": true,
+    "capacity_max": 2,
+    "capacity_min": 1,
+    "daily_rate_usd": 120,
+    "notes": "Standard vehicle for small groups and private tours",
+    "vehicle_code": "SMALL_CAR",
+    "vehicle_name": "Small/Standard Car"
+  },
+  {
+    "active": true,
+    "capacity_max": 3,
+    "capacity_min": 5,
+    "daily_rate_usd": 220,
+    "notes": "Large vehicle for bigger private groups",
+    "vehicle_code": "LARGE_CAR",
+    "vehicle_name": "Large Car / 4x4"
+  },
+  {
+    "active": true,
+    "capacity_max": 10,
+    "capacity_min": 6,
+    "daily_rate_usd": 200,
+    "notes": "Used for group tours within cities. Daily rate varies — set 0 and enter manually or update with current rate. Old code used 220/day as proxy.",
+    "vehicle_code": "TOYOTA_COASTER",
+    "vehicle_name": "Toyota Coaster (28-seater)"
+  },
+  {
+    "active": true,
+    "capacity_max": 40,
+    "capacity_min": 7,
+    "daily_rate_usd": 450,
+    "notes": "Used for group tours between cities. Daily rate varies — enter manually. Price is included in group per-person rate in group pricing mode.",
+    "vehicle_code": "VIP_BUS",
+    "vehicle_name": "VIP Bus (32-seater)"
+  }
+]

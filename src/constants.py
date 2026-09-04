@@ -48,6 +48,13 @@ DEEP_RESEARCH_DIR = os.path.join(DATA_DIR, "deep_research")
 MCP_OAUTH_DIR = os.path.join(DATA_DIR, "mcp_oauth")
 GENERATED_IMAGES_DIR = os.path.join(DATA_DIR, "generated_images")
 TTS_CACHE_DIR = os.path.join(DATA_DIR, "tts_cache")
+# One directory per sent offer, holding the original attachment plus everything
+# derived from it. The attachment is the authority for the whole offer corpus,
+# so it lives under DATA_DIR and is never regenerated.
+OFFER_CORPUS_DIR = os.path.join(DATA_DIR, "offer_corpus")
+# Proposed additions and revisions to the day-template catalogue, awaiting a
+# human verdict. Nothing reaches the catalogue sheet from anywhere else.
+TEMPLATE_PROPOSAL_DIR = os.path.join(DATA_DIR, "template_proposals")
 EMAIL_URGENCY_CACHE_DIR = os.path.join(DATA_DIR, "email_urgency_cache")
 SKILLS_DIR = os.path.join(DATA_DIR, "skills")
 GALLERY_DIR = os.path.join(DATA_DIR, "gallery")

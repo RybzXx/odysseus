@@ -1,13 +1,16 @@
 """
 services/itinerary/generator.py
 
-Bridge to WebOperationsBilW pipeline for validation, quote calculations, and Google Doc creation.
+Drives the vendored itinerary pipeline: validation, quote calculation, and
+Google Doc creation.
+
+The pipeline used to be imported across a filesystem path from a separate
+WebOperationsBilW checkout, so odysseus could not run without that checkout
+present. It now lives in `services/itinerary/pipeline` (ws-03 decision B1).
 """
 from __future__ import annotations
 
 import logging
-import os
-import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,47 +24,39 @@ from services.itinerary.binder import bind_route_to_templates
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PIPELINE_PATH = r"d:\ai_projects_2026\New_Operrations\NewOPsWeb\WebOperationsBilW"
-PIPELINE_ROOT = os.environ.get("BILWEEKEND_REPO_ROOT") or _DEFAULT_PIPELINE_PATH
-
-
 def _ensure_pipeline_imported():
-    if not os.path.isdir(PIPELINE_ROOT):
-        logger.warning(f"WebOperationsBilW directory not found at {PIPELINE_ROOT}")
-        return None
+    """
+    Bind the vendored pipeline's entry points.
 
-    if PIPELINE_ROOT not in sys.path:
-        sys.path.insert(0, PIPELINE_ROOT)
+    Post: a dict of the callables the rest of this module uses, or None if the
+          package itself is broken.
 
-    webops_src = os.path.join(PIPELINE_ROOT, "src")
+    The dict shape and the lazy re-binding at each use site are kept from the
+    old path-based bridge, which could legitimately find nothing. Vendoring
+    makes absence a packaging bug rather than a configuration state, so a
+    failure here is now worth a stack trace rather than a warning.
+    """
     try:
-        import src
-        if hasattr(src, "__path__") and webops_src not in src.__path__:
-            src.__path__.append(webops_src)
-    except Exception as e:
-        logger.warning(f"Could not extend src.__path__: {e}")
-
-    try:
-        from models import TourRequest
-        from src.app_core import (
+        from services.itinerary.pipeline.models import TourRequest
+        from services.itinerary.pipeline.app_core import (
+            build_default_request,
             check_request,
             generate_document,
-            build_default_request,
             load_runtime_data,
         )
-        from src.loader import load_all_templates, load_pricing
-        return {
-            "TourRequest": TourRequest,
-            "check_request": check_request,
-            "generate_document": generate_document,
-            "build_default_request": build_default_request,
-            "load_runtime_data": load_runtime_data,
-            "load_all_templates": load_all_templates,
-            "load_pricing": load_pricing,
-        }
-    except Exception as exc:
-        logger.warning(f"WebOperationsBilW pipeline could not be imported from {PIPELINE_ROOT}: {exc}")
+        from services.itinerary.pipeline.loader import load_all_templates, load_pricing
+    except Exception:
+        logger.exception("vendored itinerary pipeline failed to import")
         return None
+    return {
+        "TourRequest": TourRequest,
+        "check_request": check_request,
+        "generate_document": generate_document,
+        "build_default_request": build_default_request,
+        "load_runtime_data": load_runtime_data,
+        "load_all_templates": load_all_templates,
+        "load_pricing": load_pricing,
+    }
 
 
 _PIPELINE = _ensure_pipeline_imported()
@@ -89,7 +84,7 @@ def build_tour_request(
     if not _PIPELINE:
         _PIPELINE = _ensure_pipeline_imported()
     if not _PIPELINE:
-        raise RuntimeError("WebOperationsBilW pipeline is not available.")
+        raise RuntimeError("services.itinerary.pipeline failed to import.")
 
     TourRequest = _PIPELINE["TourRequest"]
 
@@ -248,7 +243,7 @@ def execute_generation(req: NormalizedRequest) -> ItineraryGenerationResult:
             key=req.key,
             status="error",
             preview=preview,
-            error_message="WebOperationsBilW pipeline is not imported.",
+            error_message="services.itinerary.pipeline failed to import.",
         )
 
     try:

@@ -1,0 +1,145 @@
+"""
+services/offers
+
+The sent-offer corpus and the day-catalogue gap it exposes.
+
+Self-contained: the day templates, pricing and general info this module needs
+are vendored under `data/`, so nothing here reaches outside the repository.
+
+Pipeline: `sent_offers` recovers offers from the Sent folder into `offer_store`,
+`offer_text` turns attachments into days, `day_match` scores those days against
+the vendored `catalogue`, and `gap_report` says what the catalogue is missing.
+"""
+from services.offers.models import (
+    BAND_MATCH,
+    BAND_NEAR_MISS,
+    BAND_NO_MATCH,
+    DayPattern,
+    GapReport,
+    OfferDay,
+    SentOffer,
+    TemplateMatch,
+)
+from services.offers.catalogue import (
+    TEMPLATE_FIELDS,
+    active_template_texts,
+    load_template_texts,
+    load_templates,
+)
+from services.offers.day_match import (
+    AMBIGUITY_MARGIN,
+    MATCH_THRESHOLD,
+    NEAR_MISS_FLOOR,
+    ambiguous_rivals,
+    band_for,
+    normalize_day_text,
+    rank_templates,
+    similarity,
+)
+from services.offers.offer_text import (
+    OfferTextError,
+    detect_tour_type,
+    extract_offer_text,
+    split_days,
+    trim_trailer,
+)
+from services.offers.offer_store import (
+    OfferStoreError,
+    build_routes_json,
+    is_stored,
+    iter_offers,
+    load_offer,
+    offer_dir,
+    offer_slug,
+    store_offer,
+)
+from services.offers.proposals import (
+    KIND_NEW,
+    KIND_REVISION,
+    STATUS_APPROVED,
+    STATUS_PENDING,
+    STATUS_REJECTED,
+    ProposalError,
+    TemplateProposal,
+    build_proposal,
+    iter_proposals,
+    queue_summary,
+    record_verdict,
+)
+from services.offers.propose import (
+    MIN_OCCURRENCES_FOR_NEW,
+    propose_new_templates,
+    propose_revisions,
+)
+from services.offers.reconcile import (
+    SAME_OFFER_DAY_COVERAGE,
+    SAME_OFFER_THRESHOLD,
+    format_reconciliation,
+    reconcile,
+)
+from services.offers.gap_report import (
+    analyse_catalogue_gap,
+    classify_days,
+    cluster_days,
+    day_key,
+    format_gap_report,
+)
+
+__all__ = [
+    "BAND_MATCH",
+    "BAND_NEAR_MISS",
+    "BAND_NO_MATCH",
+    "DayPattern",
+    "GapReport",
+    "OfferDay",
+    "SentOffer",
+    "TemplateMatch",
+    "TEMPLATE_FIELDS",
+    "active_template_texts",
+    "load_template_texts",
+    "load_templates",
+    "AMBIGUITY_MARGIN",
+    "MATCH_THRESHOLD",
+    "NEAR_MISS_FLOOR",
+    "ambiguous_rivals",
+    "band_for",
+    "normalize_day_text",
+    "rank_templates",
+    "similarity",
+    "OfferTextError",
+    "detect_tour_type",
+    "extract_offer_text",
+    "split_days",
+    "trim_trailer",
+    "OfferStoreError",
+    "build_routes_json",
+    "is_stored",
+    "iter_offers",
+    "load_offer",
+    "offer_dir",
+    "offer_slug",
+    "store_offer",
+    "analyse_catalogue_gap",
+    "classify_days",
+    "cluster_days",
+    "day_key",
+    "format_gap_report",
+    "KIND_NEW",
+    "KIND_REVISION",
+    "STATUS_APPROVED",
+    "STATUS_PENDING",
+    "STATUS_REJECTED",
+    "ProposalError",
+    "TemplateProposal",
+    "build_proposal",
+    "iter_proposals",
+    "queue_summary",
+    "record_verdict",
+    "MIN_OCCURRENCES_FOR_NEW",
+    "propose_new_templates",
+    "propose_revisions",
+    "SAME_OFFER_DAY_COVERAGE",
+    "SAME_OFFER_THRESHOLD",
+    "format_reconciliation",
+    "reconcile",
+]

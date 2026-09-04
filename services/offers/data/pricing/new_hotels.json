@@ -1,0 +1,1020 @@
+{
+  "hotels": [
+    {
+      "hotel_code": "BAGHDAD_BABYLON_HOTEL",
+      "hotel_name": "Babylon Hotel",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 227.27,
+      "double_rate": 242.42,
+      "twin_rate": 242.42,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_CORAL_BAGHDAD",
+      "hotel_name": "Coral Baghdad",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 220.0,
+      "double_rate": 240.0,
+      "twin_rate": 240.0,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_CORAL_PALACE",
+      "hotel_name": "Coral Palace",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 234.85,
+      "double_rate": 246.59,
+      "twin_rate": 293.56,
+      "triple_rate": 328.79,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_BAGHDAD_HOTEL",
+      "hotel_name": "Baghdad Hotel",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 190.0,
+      "double_rate": 190.0,
+      "twin_rate": 190.0,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_MOVENPICK",
+      "hotel_name": "Movenpick",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 382.58,
+      "double_rate": 454.55,
+      "twin_rate": 454.55,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_WORLD_HEART",
+      "hotel_name": "World Heart",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 400.0,
+      "double_rate": 430.0,
+      "twin_rate": 480.0,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_VHOTEL",
+      "hotel_name": "VHotel",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 174.24,
+      "double_rate": 189.39,
+      "twin_rate": 189.39,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_YARMOOK_HOTEL",
+      "hotel_name": "Yarmook Hotel",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 159.09,
+      "double_rate": 212.12,
+      "twin_rate": 212.12,
+      "triple_rate": 303.03,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_NOORLAND",
+      "hotel_name": "Noorland",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 90.0,
+      "double_rate": 100.0,
+      "twin_rate": 100.0,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_QASER_AL_JADERIYAH",
+      "hotel_name": "Qaser Al Jaderiyah",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 136.36,
+      "double_rate": 147.73,
+      "twin_rate": 151.52,
+      "triple_rate": 189.39,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_BILITOM",
+      "hotel_name": "Bilitom",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 110.0,
+      "double_rate": 130.0,
+      "twin_rate": 130.0,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_GRAND_BLOOM",
+      "hotel_name": "Grand Bloom",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 166.67,
+      "double_rate": 191.67,
+      "twin_rate": 191.67,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_AL_ANDALUS",
+      "hotel_name": "Al Andalus",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 100.0,
+      "double_rate": 130.0,
+      "twin_rate": 130.0,
+      "triple_rate": 150.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_URUK",
+      "hotel_name": "Uruk",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 94.7,
+      "double_rate": 113.64,
+      "twin_rate": 113.64,
+      "triple_rate": 132.58,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_BAZ_HOTEL",
+      "hotel_name": "Baz Hotel",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 132.0,
+      "double_rate": 174.0,
+      "twin_rate": 215.0,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BAGHDAD_AL_MUHAJER",
+      "hotel_name": "Al Muhajer",
+      "city": "Baghdad",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 60.61,
+      "double_rate": 106.06,
+      "twin_rate": 106.06,
+      "triple_rate": 121.21,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "NASIRIYAH_SUMERION_HOTEL",
+      "hotel_name": "Sumerion Hotel",
+      "city": "Nasiriyah",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 94.7,
+      "double_rate": 94.7,
+      "twin_rate": 94.7,
+      "triple_rate": 113.64,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "NASIRIYAH_ZAITOON_HOTEL",
+      "hotel_name": "Zaitoon Hotel",
+      "city": "Nasiriyah",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 56.82,
+      "double_rate": 75.76,
+      "twin_rate": 75.76,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "NASIRIYAH_GUDEA_HOTEL",
+      "hotel_name": "Gudea Hotel",
+      "city": "Nasiriyah",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 60.61,
+      "double_rate": 75.76,
+      "twin_rate": 60.61,
+      "triple_rate": 94.7,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "KARBALA_AL_BARON",
+      "hotel_name": "Al Baron",
+      "city": "Karbala",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 105.0,
+      "double_rate": 115.0,
+      "twin_rate": 115.0,
+      "triple_rate": 160.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "KARBALA_CORAL_KARBALA",
+      "hotel_name": "Coral Karbala",
+      "city": "Karbala",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 60.0,
+      "double_rate": 90.0,
+      "twin_rate": 90.0,
+      "triple_rate": 120.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "KARBALA_BURJ_KARBALA",
+      "hotel_name": "Burj Karbala",
+      "city": "Karbala",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 50.0,
+      "double_rate": 50.0,
+      "twin_rate": 50.0,
+      "triple_rate": 80.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "NAJAF_ZAMZAM_HOTEL",
+      "hotel_name": "ZamZam Hotel",
+      "city": "Najaf",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 45.45,
+      "double_rate": 60.61,
+      "twin_rate": 60.61,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "NAJAF_GRANADA_HOTEL",
+      "hotel_name": "Granada Hotel",
+      "city": "Najaf",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 50.0,
+      "double_rate": 75.0,
+      "twin_rate": 75.0,
+      "triple_rate": 90.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BASRA_MILLENIUM_BASRA",
+      "hotel_name": "Millenium Basra",
+      "city": "Basra",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 185.0,
+      "double_rate": 210.0,
+      "twin_rate": 210.0,
+      "triple_rate": 290.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BASRA_ATLAS_HOTEL",
+      "hotel_name": "Atlas Hotel",
+      "city": "Basra",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 56.82,
+      "double_rate": 75.76,
+      "twin_rate": 75.76,
+      "triple_rate": 94.7,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BASRA_ARJAAN_HOTEL",
+      "hotel_name": "Arjaan Hotel",
+      "city": "Basra",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 53.03,
+      "double_rate": 68.18,
+      "twin_rate": 68.18,
+      "triple_rate": 90.91,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "BASRA_TAJ_AL_BASRA",
+      "hotel_name": "Taj Al Basra",
+      "city": "Basra",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 30.3,
+      "double_rate": 60.61,
+      "twin_rate": 60.61,
+      "triple_rate": 90.91,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "SULAYMANIYAH_BURJ_AL_ARAB",
+      "hotel_name": "Burj Al Arab",
+      "city": "Sulaymaniyah",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 100.0,
+      "double_rate": 120.0,
+      "twin_rate": 120.0,
+      "triple_rate": 136.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "SULAYMANIYAH_MILLENIUM_KURDISTAN_HOTEL_AND_SPA",
+      "hotel_name": "Millenium Kurdistan Hotel and spa",
+      "city": "Sulaymaniyah",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 90.0,
+      "double_rate": 110.0,
+      "twin_rate": 110.0,
+      "triple_rate": 140.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "SULAYMANIYAH_KHAN_SARAY",
+      "hotel_name": "Khan Saray",
+      "city": "Sulaymaniyah",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 37.88,
+      "double_rate": 60.61,
+      "twin_rate": 60.61,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "MOSUL_MODERN_PLAZA_HOTEL",
+      "hotel_name": "Modern Plaza Hotel",
+      "city": "Mosul",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 37.88,
+      "double_rate": 45.45,
+      "twin_rate": 45.45,
+      "triple_rate": 53.03,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "MOSUL_BASHTABIA_HOTEL",
+      "hotel_name": "Bashtabia Hotel",
+      "city": "Mosul",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 45.45,
+      "double_rate": 60.61,
+      "twin_rate": 60.61,
+      "triple_rate": 60.61,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "MOSUL_THE_BARON_HOTEL",
+      "hotel_name": "The Baron Hotel",
+      "city": "Mosul",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 45.45,
+      "double_rate": 53.03,
+      "twin_rate": 53.03,
+      "triple_rate": 79.55,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "MOSUL_RAMADA_PLAZA",
+      "hotel_name": "Ramada Plaza",
+      "city": "Mosul",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 121.0,
+      "double_rate": 143.0,
+      "twin_rate": 143.0,
+      "triple_rate": 231.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "ERBIL_BRISTORIA_HOTEL",
+      "hotel_name": "Bristoria Hotel",
+      "city": "Erbil",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 95.0,
+      "double_rate": 105.0,
+      "twin_rate": 105.0,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "ERBIL_ERBIL_QUARTZ",
+      "hotel_name": "Erbil Quartz",
+      "city": "Erbil",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 55.0,
+      "double_rate": 70.0,
+      "twin_rate": 70.0,
+      "triple_rate": 90.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "ERBIL_ERBIL_VIEW",
+      "hotel_name": "Erbil View",
+      "city": "Erbil",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 55.0,
+      "double_rate": 70.0,
+      "twin_rate": 70.0,
+      "triple_rate": 88.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "ERBIL_MY_HOTEL",
+      "hotel_name": "My Hotel",
+      "city": "Erbil",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 30.0,
+      "double_rate": 40.0,
+      "twin_rate": 40.0,
+      "triple_rate": 0.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "DUHOK_DDK_HOTEL",
+      "hotel_name": "DDK Hotel",
+      "city": "Duhok",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 70.0,
+      "double_rate": 85.0,
+      "twin_rate": 85.0,
+      "triple_rate": 100.0,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "DUHOK_SHAWAR_HOTEL",
+      "hotel_name": "Shawar Hotel",
+      "city": "Duhok",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 37.88,
+      "double_rate": 45.45,
+      "twin_rate": 45.45,
+      "triple_rate": 53.03,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "SORAN_SORAN_PALACE",
+      "hotel_name": "Soran Palace",
+      "city": "Soran",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 18.94,
+      "double_rate": 28.79,
+      "twin_rate": 28.79,
+      "triple_rate": 43.18,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "SORAN_DIANA_HOTEL",
+      "hotel_name": "Diana hotel",
+      "city": "Soran",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 18.94,
+      "double_rate": 24.24,
+      "twin_rate": 24.24,
+      "triple_rate": 36.36,
+      "active": true,
+      "notes": ""
+    },
+    {
+      "hotel_code": "KIRKUK_ALTUN_SARAY",
+      "hotel_name": "Altun Saray",
+      "city": "Kirkuk",
+      "star_level": 0,
+      "currency": "USD",
+      "single_rate": 30.3,
+      "double_rate": 37.88,
+      "twin_rate": 37.88,
+      "triple_rate": 56.82,
+      "active": true,
+      "notes": ""
+    }
+  ],
+  "defaults": {
+    "Baghdad": {
+      "3star": "Noorland",
+      "4star": "Noorland",
+      "5star": "Babylon Hotel"
+    },
+    "Nasiriyah": {
+      "3star": "Sumerion Hotel",
+      "4star": "Sumerion Hotel",
+      "5star": "Sumerion Hotel"
+    },
+    "Karbala": {
+      "3star": "Burj Karbala",
+      "4star": "Coral Karbala",
+      "5star": "Al Baron"
+    },
+    "Najaf": {
+      "3star": "ZamZam Hotel",
+      "4star": "ZamZam Hotel",
+      "5star": "Granada Hotel"
+    },
+    "Basra": {
+      "3star": "Atlas Hotel",
+      "4star": "Atlas Hotel",
+      "5star": "Millenium Basra"
+    },
+    "Sulaymaniyah": {
+      "3star": "",
+      "4star": "",
+      "5star": "Millenium Kurdistan Hotel and spa"
+    },
+    "Mosul": {
+      "3star": "Modern Plaza Hotel",
+      "4star": "The Baron Hotel",
+      "5star": "Ramada Plaza"
+    },
+    "Erbil": {
+      "3star": "My Hotel",
+      "4star": "Erbil Quartz",
+      "5star": "Bristoria Hotel"
+    },
+    "Duhok": {
+      "3star": "Shawar Hotel",
+      "4star": "Shawar Hotel",
+      "5star": "DDK Hotel"
+    },
+    "Soran": {
+      "3star": "Soran Palace",
+      "4star": "Soran Palace",
+      "5star": ""
+    },
+    "Kirkuk": {
+      "3star": "Altun Saray",
+      "4star": "Altun Saray",
+      "5star": "Altun Saray"
+    }
+  },
+  "city_tier_rates": {
+    "Baghdad": {
+      "3star": {
+        "single": 90.0,
+        "double": 100.0,
+        "team_fee": 0.0,
+        "default_hotel": "BAGHDAD_NOORLAND",
+        "hotel_name": "Noorland",
+        "currency": "USD",
+        "notes": "",
+        "twin": 100.0,
+        "triple": 0.0
+      },
+      "4star": {
+        "single": 90.0,
+        "double": 100.0,
+        "team_fee": 0.0,
+        "default_hotel": "BAGHDAD_NOORLAND",
+        "hotel_name": "Noorland",
+        "currency": "USD",
+        "notes": "",
+        "twin": 100.0,
+        "triple": 0.0
+      },
+      "5star": {
+        "single": 227.27,
+        "double": 242.42,
+        "team_fee": 0.0,
+        "default_hotel": "BAGHDAD_BABYLON_HOTEL",
+        "hotel_name": "Babylon Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 242.42,
+        "triple": 0.0
+      }
+    },
+    "Basra": {
+      "3star": {
+        "single": 56.82,
+        "double": 75.76,
+        "team_fee": 50.0,
+        "default_hotel": "BASRA_ATLAS_HOTEL",
+        "hotel_name": "Atlas Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 75.76,
+        "triple": 94.7
+      },
+      "4star": {
+        "single": 56.82,
+        "double": 75.76,
+        "team_fee": 50.0,
+        "default_hotel": "BASRA_ATLAS_HOTEL",
+        "hotel_name": "Atlas Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 75.76,
+        "triple": 94.7
+      },
+      "5star": {
+        "single": 185.0,
+        "double": 210.0,
+        "team_fee": 60.0,
+        "default_hotel": "BASRA_MILLENIUM_BASRA",
+        "hotel_name": "Millenium Basra",
+        "currency": "USD",
+        "notes": "",
+        "twin": 210.0,
+        "triple": 290.0
+      }
+    },
+    "Duhok": {
+      "3star": {
+        "single": 37.88,
+        "double": 45.45,
+        "team_fee": 50.0,
+        "default_hotel": "DUHOK_SHAWAR_HOTEL",
+        "hotel_name": "Shawar Hotel",
+        "currency": "USD",
+        "notes": "Using Najaf 3-star prices as proxy. Verify actual Duhok hotel rates.",
+        "twin": 45.45,
+        "triple": 53.03
+      },
+      "4star": {
+        "single": 37.88,
+        "double": 45.45,
+        "team_fee": 50.0,
+        "default_hotel": "DUHOK_SHAWAR_HOTEL",
+        "hotel_name": "Shawar Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 45.45,
+        "triple": 53.03
+      },
+      "5star": {
+        "single": 70.0,
+        "double": 85.0,
+        "team_fee": 60.0,
+        "default_hotel": "DUHOK_DDK_HOTEL",
+        "hotel_name": "DDK Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 85.0,
+        "triple": 100.0
+      }
+    },
+    "Erbil": {
+      "3star": {
+        "single": 30.0,
+        "double": 40.0,
+        "team_fee": 50.0,
+        "default_hotel": "ERBIL_MY_HOTEL",
+        "hotel_name": "My Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 40.0,
+        "triple": 0.0
+      },
+      "4star": {
+        "single": 55.0,
+        "double": 70.0,
+        "team_fee": 70.0,
+        "default_hotel": "ERBIL_ERBIL_QUARTZ",
+        "hotel_name": "Erbil Quartz",
+        "currency": "USD",
+        "notes": "",
+        "twin": 70.0,
+        "triple": 90.0
+      },
+      "5star": {
+        "single": 95.0,
+        "double": 105.0,
+        "team_fee": 100.0,
+        "default_hotel": "ERBIL_BRISTORIA_HOTEL",
+        "hotel_name": "Bristoria Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 105.0,
+        "triple": 0.0
+      }
+    },
+    "Karbala": {
+      "3star": {
+        "single": 50.0,
+        "double": 50.0,
+        "team_fee": 50.0,
+        "default_hotel": "KARBALA_BURJ_KARBALA",
+        "hotel_name": "Burj Karbala",
+        "currency": "USD",
+        "notes": "",
+        "twin": 50.0,
+        "triple": 80.0
+      },
+      "4star": {
+        "single": 60.0,
+        "double": 90.0,
+        "team_fee": 50.0,
+        "default_hotel": "KARBALA_CORAL_KARBALA",
+        "hotel_name": "Coral Karbala",
+        "currency": "USD",
+        "notes": "",
+        "twin": 90.0,
+        "triple": 120.0
+      },
+      "5star": {
+        "single": 105.0,
+        "double": 115.0,
+        "team_fee": 60.0,
+        "default_hotel": "KARBALA_AL_BARON",
+        "hotel_name": "Al Baron",
+        "currency": "USD",
+        "notes": "",
+        "twin": 115.0,
+        "triple": 160.0
+      }
+    },
+    "Kirkuk": {
+      "3star": {
+        "single": 30.3,
+        "double": 37.88,
+        "team_fee": 0,
+        "default_hotel": "KIRKUK_ALTUN_SARAY",
+        "hotel_name": "Altun Saray",
+        "currency": "USD",
+        "notes": "",
+        "twin": 37.88,
+        "triple": 56.82
+      },
+      "4star": {
+        "single": 30.3,
+        "double": 37.88,
+        "team_fee": 0,
+        "default_hotel": "KIRKUK_ALTUN_SARAY",
+        "hotel_name": "Altun Saray",
+        "currency": "USD",
+        "notes": "",
+        "twin": 37.88,
+        "triple": 56.82
+      },
+      "5star": {
+        "single": 30.3,
+        "double": 37.88,
+        "team_fee": 0,
+        "default_hotel": "KIRKUK_ALTUN_SARAY",
+        "hotel_name": "Altun Saray",
+        "currency": "USD",
+        "notes": "",
+        "twin": 37.88,
+        "triple": 56.82
+      }
+    },
+    "Mosul": {
+      "3star": {
+        "single": 37.88,
+        "double": 45.45,
+        "team_fee": 50.0,
+        "default_hotel": "MOSUL_MODERN_PLAZA_HOTEL",
+        "hotel_name": "Modern Plaza Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 45.45,
+        "triple": 53.03
+      },
+      "4star": {
+        "single": 45.45,
+        "double": 53.03,
+        "team_fee": 50.0,
+        "default_hotel": "MOSUL_THE_BARON_HOTEL",
+        "hotel_name": "The Baron Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 53.03,
+        "triple": 79.55
+      },
+      "5star": {
+        "single": 121.0,
+        "double": 143.0,
+        "team_fee": 50.0,
+        "default_hotel": "MOSUL_RAMADA_PLAZA",
+        "hotel_name": "Ramada Plaza",
+        "currency": "USD",
+        "notes": "No confirmed 5-star in Mosul — same as 4-star. Verify.",
+        "twin": 143.0,
+        "triple": 231.0
+      }
+    },
+    "Najaf": {
+      "3star": {
+        "single": 45.45,
+        "double": 60.61,
+        "team_fee": 50.0,
+        "default_hotel": "NAJAF_ZAMZAM_HOTEL",
+        "hotel_name": "ZamZam Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 60.61,
+        "triple": 0.0
+      },
+      "4star": {
+        "single": 45.45,
+        "double": 60.61,
+        "team_fee": 50.0,
+        "default_hotel": "NAJAF_ZAMZAM_HOTEL",
+        "hotel_name": "ZamZam Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 60.61,
+        "triple": 0.0
+      },
+      "5star": {
+        "single": 50.0,
+        "double": 75.0,
+        "team_fee": 60.0,
+        "default_hotel": "NAJAF_GRANADA_HOTEL",
+        "hotel_name": "Granada Hotel",
+        "currency": "USD",
+        "notes": "No confirmed 5-star in Najaf — verify.",
+        "twin": 75.0,
+        "triple": 90.0
+      }
+    },
+    "Nasiriyah": {
+      "3star": {
+        "single": 94.7,
+        "double": 94.7,
+        "team_fee": 50.0,
+        "default_hotel": "NASIRIYAH_SUMERION_HOTEL",
+        "hotel_name": "Sumerion Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 94.7,
+        "triple": 113.64
+      },
+      "4star": {
+        "single": 94.7,
+        "double": 94.7,
+        "team_fee": 50.0,
+        "default_hotel": "NASIRIYAH_SUMERION_HOTEL",
+        "hotel_name": "Sumerion Hotel",
+        "currency": "USD",
+        "notes": "",
+        "twin": 94.7,
+        "triple": 113.64
+      },
+      "5star": {
+        "single": 94.7,
+        "double": 94.7,
+        "team_fee": 50.0,
+        "default_hotel": "NASIRIYAH_SUMERION_HOTEL",
+        "hotel_name": "Sumerion Hotel",
+        "currency": "USD",
+        "notes": "No 5-star in Nasiriyah — same as 4-star. Review.",
+        "twin": 94.7,
+        "triple": 113.64
+      }
+    },
+    "Soran": {
+      "3star": {
+        "single": 18.94,
+        "double": 28.79,
+        "team_fee": 50.0,
+        "default_hotel": "SORAN_SORAN_PALACE",
+        "hotel_name": "Soran Palace",
+        "currency": "USD",
+        "notes": "Using Mosul 3-star prices as proxy. Verify actual Soran rates.",
+        "twin": 28.79,
+        "triple": 43.18
+      },
+      "4star": {
+        "single": 18.94,
+        "double": 28.79,
+        "team_fee": 50.0,
+        "default_hotel": "SORAN_SORAN_PALACE",
+        "hotel_name": "Soran Palace",
+        "currency": "USD",
+        "notes": "",
+        "twin": 28.79,
+        "triple": 43.18
+      },
+      "5star": {
+        "single": 60.0,
+        "double": 80.0,
+        "team_fee": 50.0,
+        "default_hotel": "",
+        "hotel_name": "",
+        "currency": "USD",
+        "notes": "",
+        "twin": 0,
+        "triple": 0
+      }
+    },
+    "Sulaymaniyah": {
+      "3star": {
+        "single": 60.0,
+        "double": 80.0,
+        "team_fee": 50.0,
+        "default_hotel": "",
+        "hotel_name": "",
+        "currency": "USD",
+        "notes": "Using Erbil prices. Verify actual Sulaymaniyah rates.",
+        "twin": 0,
+        "triple": 0
+      },
+      "4star": {
+        "single": 75.0,
+        "double": 90.0,
+        "team_fee": 70.0,
+        "default_hotel": "",
+        "hotel_name": "",
+        "currency": "USD",
+        "notes": "",
+        "twin": 0,
+        "triple": 0
+      },
+      "5star": {
+        "single": 90.0,
+        "double": 110.0,
+        "team_fee": 100.0,
+        "default_hotel": "SULAYMANIYAH_MILLENIUM_KURDISTAN_HOTEL_AND_SPA",
+        "hotel_name": "Millenium Kurdistan Hotel and spa",
+        "currency": "USD",
+        "notes": "",
+        "twin": 110.0,
+        "triple": 140.0
+      }
+    }
+  }
+}

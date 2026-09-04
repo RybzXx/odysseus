@@ -1,0 +1,22 @@
+{
+  "code": "SAASMO",
+  "title": "Samarra, Ashur, Hatra & Mosul",
+  "city": "Samarra / Ashur / Hatra",
+  "region": "Central Iraq",
+  "overnight_city": "Mosul",
+  "full_text": "8 AM After breakfast we will head to Samarra to visit the beautiful Abbasid caliphate architecture and artistic relics, twisted minaret, lake palace, and the great mosque of Samarra. This historical city is a UNESCO World Heritage Site.\nHead to one of the most important ancient cities of Assyria, Ashur (Assur), and visit the ziggurat of the city.\nAfter that we will head to Hatra, an important historic religious centre with its strategic position along caravan trade routes. Hatra was one of the first Arab states to be established outside of Arabia. Lunch will be in the middle of the way in one of the village's restaurants.\nHead to Mosul, check into the hotel and have the famous dish (Lahm Baajeen) for dinner.",
+  "included_sites": [
+    "SA_G_MAL",
+    "SA_S_MAL",
+    "MO_ASR",
+    "MO_HTR"
+  ],
+  "pricing_tags": [
+    "guide_day",
+    "transport_day",
+    "hotel_night"
+  ],
+  "active": true,
+  "needs_review": false,
+  "internal_notes": ""
+}

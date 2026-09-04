@@ -1,0 +1,42 @@
+[
+  {
+    "active": true,
+    "extra_code": "SHRINE_HELP",
+    "extra_name": "Shrine Help (Abaya + Female Guide Assistance)",
+    "notes": "Abaya rental and female guide assistance at holy shrines (Karbala, Najaf)",
+    "unit_price_usd": 20,
+    "unit_type": "per_group"
+  },
+  {
+    "active": true,
+    "extra_code": "AIRPORT_TRANSFER",
+    "extra_name": "Airport Transfers (Both Ways)",
+    "notes": "Fast track visa + airport transfer service, both arrival and departure",
+    "unit_price_usd": 100,
+    "unit_type": "per_group"
+  },
+  {
+    "active": true,
+    "extra_code": "FAST_TRACK_VISA",
+    "extra_name": "Fast Track Visa Service",
+    "notes": "Included in AIRPORT_TRANSFER package. Set separately if needed.",
+    "unit_price_usd": 60,
+    "unit_type": "per_person"
+  },
+  {
+    "active": true,
+    "extra_code": "SIM_CARD",
+    "extra_name": "Local SIM Card Assistance",
+    "notes": "Logistics team assists with SIM card in the city. Cost usually absorbed.",
+    "unit_price_usd": 0,
+    "unit_type": "per_group"
+  },
+  {
+    "active": true,
+    "extra_code": "EVISA_SERVICE",
+    "extra_name": "eVisa Application Service",
+    "notes": "BilWeekend applies eVisa on behalf of traveler at a lower fee than official rate. Enter current fee manually.",
+    "unit_price_usd": 135,
+    "unit_type": "per_person"
+  }
+]

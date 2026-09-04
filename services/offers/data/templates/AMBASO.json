@@ -1,0 +1,21 @@
+{
+  "code": "AMBASO",
+  "title": "Amedi, Barzan & Drive to Soran",
+  "city": "Duhok / Erbil Governorate",
+  "region": "Northern Iraq",
+  "overnight_city": "Soran",
+  "full_text": "After breakfast, head to Amedi — a historical town on top of a mountain engulfed by beautiful scenery. We will see a number of historical sites including the ancient gates and Amedi's great mosque.\nHead to Barzan, a city that stands as a testament to Kurdish resilience. The city where one of the most prominent figures of Kurdistan's politics was from (Mula Mustafa Barzani). We will get to see the modern Barzani memorial that shows his interesting story amongst other important pieces.\nContinue heading to Soran, while enjoying the beautiful scenery on the way.",
+  "included_sites": [
+    "DUH_AMEDI",
+    "ERB_BARZAN",
+    "ERB_SORA"
+  ],
+  "pricing_tags": [
+    "guide_day",
+    "transport_day",
+    "hotel_night"
+  ],
+  "active": true,
+  "needs_review": false,
+  "internal_notes": ""
+}

@@ -1,0 +1,17 @@
+{
+  "code": "BA0",
+  "title": "Basra Arrival",
+  "city": "Basra",
+  "region": "Southern Iraq",
+  "overnight_city": "Basra",
+  "full_text": "Arrival at Basra airport. Depending on arrival time, a tour around the city can be organised.",
+  "included_sites": [],
+  "pricing_tags": [
+    "guide_day",
+    "transport_day",
+    "hotel_night"
+  ],
+  "active": true,
+  "needs_review": false,
+  "internal_notes": ""
+}

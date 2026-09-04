@@ -1,0 +1,208 @@
+{
+  "Baghdad": {
+    "3star": {
+      "single": 65.0,
+      "double": 90.0,
+      "team_fee": 0.0,
+      "default_hotel": "BG_BAGHDAD_HOTEL"
+    },
+    "4star": {
+      "single": 100.0,
+      "double": 140.0,
+      "team_fee": 0.0,
+      "default_hotel": "BG_CORAL_BAGHDAD"
+    },
+    "5star": {
+      "single": 370.0,
+      "double": 400.0,
+      "team_fee": 0.0,
+      "default_hotel": "BG_WORLD_HEART"
+    }
+  },
+  "Karbala": {
+    "3star": {
+      "single": 50.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": "KA_CORAL_KARBALA"
+    },
+    "4star": {
+      "single": 70.0,
+      "double": 100.0,
+      "team_fee": 50.0,
+      "default_hotel": "KA_AL_BARON"
+    },
+    "5star": {
+      "single": 135.0,
+      "double": 150.0,
+      "team_fee": 60.0,
+      "default_hotel": "KA_AL_BARON"
+    }
+  },
+  "Nasiriyah": {
+    "3star": {
+      "single": 70.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": "NA_SUMERION"
+    },
+    "4star": {
+      "single": 80.0,
+      "double": 90.0,
+      "team_fee": 50.0,
+      "default_hotel": "NA_SUMERION"
+    },
+    "5star": {
+      "single": 80.0,
+      "double": 90.0,
+      "team_fee": 50.0,
+      "default_hotel": "NA_SUMERION",
+      "review_note": "No 5-star in Nasiriyah — same as 4-star. Review."
+    }
+  },
+  "Najaf": {
+    "3star": {
+      "single": 50.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": "NJ_ZAMZAM"
+    },
+    "4star": {
+      "single": 60.0,
+      "double": 90.0,
+      "team_fee": 50.0,
+      "default_hotel": "NJ_GRANADA"
+    },
+    "5star": {
+      "single": 120.0,
+      "double": 150.0,
+      "team_fee": 60.0,
+      "default_hotel": "NJ_GRANADA",
+      "review_note": "No confirmed 5-star in Najaf — verify."
+    }
+  },
+  "Basra": {
+    "3star": {
+      "single": 50.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": "BA_ATLAS"
+    },
+    "4star": {
+      "single": 60.0,
+      "double": 90.0,
+      "team_fee": 50.0,
+      "default_hotel": "BA_MILLENNIUM"
+    },
+    "5star": {
+      "single": 135.0,
+      "double": 160.0,
+      "team_fee": 60.0,
+      "default_hotel": "BA_MILLENNIUM"
+    }
+  },
+  "Mosul": {
+    "3star": {
+      "single": 50.0,
+      "double": 70.0,
+      "team_fee": 50.0,
+      "default_hotel": "MO_BARON"
+    },
+    "4star": {
+      "single": 60.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": "MO_RAMADA"
+    },
+    "5star": {
+      "single": 60.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": "MO_RAMADA",
+      "review_note": "No confirmed 5-star in Mosul — same as 4-star. Verify."
+    }
+  },
+  "Erbil": {
+    "3star": {
+      "single": 60.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": "EB_QUARTZ"
+    },
+    "4star": {
+      "single": 75.0,
+      "double": 90.0,
+      "team_fee": 70.0,
+      "default_hotel": "EB_QUARTZ"
+    },
+    "5star": {
+      "single": 120.0,
+      "double": 150.0,
+      "team_fee": 100.0,
+      "default_hotel": "EB_QUARTZ"
+    }
+  },
+  "Duhok": {
+    "3star": {
+      "single": 50.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": "",
+      "review_note": "Using Najaf 3-star prices as proxy. Verify actual Duhok hotel rates."
+    },
+    "4star": {
+      "single": 60.0,
+      "double": 90.0,
+      "team_fee": 50.0,
+      "default_hotel": ""
+    },
+    "5star": {
+      "single": 120.0,
+      "double": 150.0,
+      "team_fee": 60.0,
+      "default_hotel": ""
+    }
+  },
+  "Soran": {
+    "3star": {
+      "single": 50.0,
+      "double": 70.0,
+      "team_fee": 50.0,
+      "default_hotel": "",
+      "review_note": "Using Mosul 3-star prices as proxy. Verify actual Soran rates."
+    },
+    "4star": {
+      "single": 60.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": ""
+    },
+    "5star": {
+      "single": 60.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": ""
+    }
+  },
+  "Sulaymaniyah": {
+    "3star": {
+      "single": 60.0,
+      "double": 80.0,
+      "team_fee": 50.0,
+      "default_hotel": "",
+      "review_note": "Using Erbil prices. Verify actual Sulaymaniyah rates."
+    },
+    "4star": {
+      "single": 75.0,
+      "double": 90.0,
+      "team_fee": 70.0,
+      "default_hotel": ""
+    },
+    "5star": {
+      "single": 100.0,
+      "double": 120.0,
+      "team_fee": 100.0,
+      "default_hotel": ""
+    }
+  }
+}

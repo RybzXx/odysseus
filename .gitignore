@@ -28,6 +28,16 @@ secrets.env.*
 data/
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
+# The vendored day-template catalogue and pricing are reference data the offers
+# module needs to run anywhere, not user data. The recovered offer corpus is a
+# different thing entirely and stays under DATA_DIR, still ignored.
+!services/offers/data/
+!services/offers/data/**
+# The 164-offer legacy corpus. services/itinerary and services/offers both read
+# it, so an untracked copy means a fresh clone cannot run either. Offer prose and
+# counterparty names only — scanned, no customer emails or phone numbers.
+!services/itinerary/data/
+!services/itinerary/data/**
 logs/
 *.log
 *.db

@@ -1,0 +1,21 @@
+{
+  "code": "BA1",
+  "title": "Basra — Museum, Old City & Shatt Al Arab",
+  "city": "Basra",
+  "region": "Southern Iraq",
+  "overnight_city": "Basra",
+  "full_text": "After breakfast, head to the Basra Museum — once one of the old presidential palaces in Basra.\nHaving a walk in old Basra with Shanasheel houses, Ashar Canal and the Old Basra Bazaar.\nRiver tour in Shatt Al Arab by Ashari boats and a walk along the Corniche of Basra.",
+  "included_sites": [
+    "BA_MUSE",
+    "BA_OLD_CITY",
+    "BA_HASSON"
+  ],
+  "pricing_tags": [
+    "guide_day",
+    "transport_day",
+    "hotel_night"
+  ],
+  "active": true,
+  "needs_review": false,
+  "internal_notes": ""
+}

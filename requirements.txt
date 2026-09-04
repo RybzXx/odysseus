@@ -52,3 +52,12 @@ pytest-asyncio
 # using `httpx` above; this is test-client only.
 httpx2
 pyyaml
+
+# Google APIs for the vendored itinerary pipeline (services/itinerary/pipeline):
+# reads the catalogue and pricing sheets, and renders the offer document into
+# Google Docs. Previously satisfied by the separate WebOperationsBilW checkout's
+# own requirements; vendoring the pipeline makes them this project's.
+google-api-python-client
+google-auth
+google-auth-httplib2
+httplib2

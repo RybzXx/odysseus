@@ -42,22 +42,46 @@ ALLOWED_CALLERS = frozenset({
 })
 
 
+# Directories this repository does not ship, pruned before they are entered.
+# `data/` is the runtime data directory: gitignored, user-owned, and on a
+# working machine it holds whole unrelated checkouts — 40,310 .py files on the
+# machine this was found on, node_modules included. `rglob` descends before any
+# filter can reject a path, so walking it turned a sub-second test into one that
+# never finished and hung the whole suite. Nothing under these can be a caller
+# of llm_verify(), because none of it is shipped.
+_SKIPPED_DIRS = frozenset({"tests", "data", ".claude", ".git", "node_modules",
+                           "venv", ".venv", "__pycache__"})
+
+
+def _source_files() -> list:
+    """
+    Post: every .py file this repository ships, as repo-relative posix paths.
+
+    Prunes during the walk rather than filtering after it: the cost of these
+    directories is entering them, not matching them.
+    """
+    found = []
+    for directory, subdirectories, filenames in os.walk(REPO):
+        subdirectories[:] = [d for d in subdirectories if d not in _SKIPPED_DIRS]
+        for filename in filenames:
+            if filename.endswith(".py"):
+                found.append(
+                    (Path(directory) / filename).relative_to(REPO).as_posix()
+                )
+    return found
+
+
 def _grep_files(pattern: str) -> set[str]:
     """Return the set of repo-relative .py file paths whose body matches
-    `pattern`. Skips tests, the override module itself, and worktree
-    scratch dirs."""
+    `pattern`. Skips tests, the override module itself, the runtime data
+    directory, and worktree scratch dirs."""
     rx = re.compile(pattern)
     hits: set[str] = set()
-    for path in REPO.rglob("*.py"):
-        rel = path.relative_to(REPO).as_posix()
-        if rel.startswith("tests/"):
-            continue
+    for rel in _source_files():
         if rel == "src/tls_overrides.py":  # definition site, not a caller
             continue
-        if rel.startswith(".claude/") or "/.claude/" in rel:
-            continue
         try:
-            body = path.read_text(encoding="utf-8", errors="ignore")
+            body = (REPO / rel).read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         if rx.search(body):

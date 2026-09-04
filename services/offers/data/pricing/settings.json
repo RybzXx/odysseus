@@ -1,0 +1,45 @@
+{
+  "_note": "Exchange rate is IQD per 1 USD. Set to null to require manual input at runtime.",
+  "airport_transfer_flat_usd": 100,
+  "bank_transfer_surcharge_percent": 5,
+  "default_currency": "USD",
+  "default_markup_percent": 10,
+  "exchange_rate": null,
+  "exchange_rate_note": "Check current rate. Formula sheet used 1.32, hotel sheet noted 1.55 — both may be outdated.",
+  "food_tiers_usd": {
+    "1": {
+      "price_per_person_per_day": 10,
+      "description": "Basic local meals"
+    },
+    "2": {
+      "price_per_person_per_day": 15,
+      "description": "Standard local meals"
+    },
+    "3": {
+      "price_per_person_per_day": 20,
+      "description": "Full board with snacks and refreshments"
+    }
+  },
+  "group_foc_thresholds": [
+    {
+      "min_pax": 15,
+      "max_pax": 17,
+      "foc_count": 1
+    },
+    {
+      "min_pax": 18,
+      "max_pax": 20,
+      "foc_count": 1
+    },
+    {
+      "min_pax": 21,
+      "max_pax": 22,
+      "foc_count": 1
+    }
+  ],
+  "guide_daily_rate_usd": 80,
+  "local_guide_daily_rate_usd": 20,
+  "shrine_help_fee_usd": 20,
+  "transport_large_daily_rate_usd": 220,
+  "transport_small_daily_rate_usd": 120
+}

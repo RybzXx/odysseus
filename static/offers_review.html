@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalogue review — Bil Weekend offers</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1c1b19; --muted: #6b6862;
+    --line: #e2e0da; --accent: #2f5d50; --warn: #8a5a1c; --gone: #8a2f2f;
+    --add: #eaf3ee; --del: #fbeeee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a; --panel: #1e2024; --ink: #e8e6e1; --muted: #9a978f;
+      --line: #313439; --accent: #7fb8a4; --warn: #d3a15f; --gone: #d98b8b;
+      --add: #1d2b24; --del: #2e2020;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel);
+           border-bottom: 1px solid var(--line); padding: 14px 20px; }
+  h1 { margin: 0 0 4px; font-size: 17px; font-weight: 620; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  main { max-width: 1000px; margin: 0 auto; padding: 20px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel);
+           color: var(--ink); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--gone); }
+  button[disabled] { opacity: .5; cursor: not-allowed; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 16px; margin-bottom: 14px; }
+  .row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 999px;
+         border: 1px solid var(--line); color: var(--muted); }
+  .tag.new { color: var(--accent); border-color: var(--accent); }
+  .tag.revision { color: var(--warn); border-color: var(--warn); }
+  .grow { flex: 1; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+  .col h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase;
+            letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  pre, textarea { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+                  white-space: pre-wrap; word-break: break-word; margin: 0;
+                  background: var(--bg); border: 1px solid var(--line);
+                  border-radius: 7px; padding: 10px; color: var(--ink); }
+  pre.current { background: var(--del); }
+  textarea { width: 100%; min-height: 190px; background: var(--add); resize: vertical; }
+  input[type=text] { font: inherit; padding: 6px 9px; border: 1px solid var(--line);
+                     border-radius: 7px; background: var(--bg); color: var(--ink); }
+  .fields { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  .fields label { font-size: 12px; color: var(--muted); }
+  .actions { display: flex; gap: 8px; margin-top: 14px; align-items: center; }
+  .note { color: var(--muted); font-size: 13px; }
+  .evidence { margin-top: 10px; }
+  .evidence summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .evidence pre { margin-top: 8px; }
+  .empty { text-align: center; color: var(--muted); padding: 50px 20px; }
+  .err { color: var(--gone); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Catalogue review</h1>
+  <div class="sub" id="summary">loading…</div>
+  <div class="bar">
+    <button id="f-pending" class="primary">Pending</button>
+    <button id="f-approved">Approved</button>
+    <button id="f-rejected">Rejected</button>
+    <span class="grow"></span>
+    <button id="rebuild">Re-derive from corpus</button>
+  </div>
+  <div class="sub" id="gap"></div>
+</header>
+<main id="list"><div class="empty">loading…</div></main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let filter = "pending";
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function api(path, options) {
+  const res = await fetch(path, {
+    headers: { "Content-Type": "application/json" }, ...options,
+  });
+  if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
+  return res.json();
+}
+
+async function loadGap() {
+  try {
+    const g = await api("/api/offers/gap");
+    $("gap").textContent =
+      `${g.offers} offers · ${g.total_days} days · ${g.matched} matched `
+      + `(${(g.coverage * 100).toFixed(1)}%) · ${g.near_miss} edited · ${g.unmatched} uncovered`;
+  } catch (e) {
+    $("gap").innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  }
+}
+
+function card(p) {
+  const isRevision = p.kind === "revision";
+  const heading = isRevision
+    ? `Revise <strong>${esc(p.target_code)}</strong>`
+    : `New template${p.overnight_city ? ` — ${esc(p.overnight_city)}` : ""}`;
+  const nearest = p.nearest_code
+    ? `nearest existing: <strong>${esc(p.nearest_code)}</strong> at ${p.nearest_score.toFixed(2)}`
+    : "no comparable template";
+  const decided = p.status !== "pending";
+
+  return `
+  <div class="card" data-id="${esc(p.proposal_id)}">
+    <div class="row">
+      <span class="tag ${esc(p.kind)}">${esc(p.kind)}</span>
+      <strong>${heading}</strong>
+      <span class="grow"></span>
+      <span class="note">written ${p.occurrences}× · ${nearest}</span>
+    </div>
+    <div class="note" style="margin-top:6px">${esc(p.internal_notes)}</div>
+    <div class="cols">
+      <div class="col">
+        <h4>${isRevision ? "Currently in the catalogue" : "No current text"}</h4>
+        <pre class="current">${esc(p.current_text || "—")}</pre>
+      </div>
+      <div class="col">
+        <h4>Proposed — edit before approving</h4>
+        <textarea class="text" ${decided ? "disabled" : ""}>${esc(p.proposed_text)}</textarea>
+      </div>
+    </div>
+    <div class="fields">
+      <label>Code <input type="text" class="code" value="${esc(p.fields.code || p.target_code || "")}"
+             placeholder="e.g. MO2" ${decided ? "disabled" : ""}></label>
+      <label>Region <input type="text" class="region" value="${esc(p.fields.region || "")}"
+             placeholder="Central Iraq" ${decided ? "disabled" : ""}></label>
+      <label>Overnight <input type="text" class="overnight"
+             value="${esc(p.fields.overnight_city || "")}" ${decided ? "disabled" : ""}></label>
+    </div>
+    <details class="evidence">
+      <summary>${p.evidence_day_keys.length} sent day(s) behind this</summary>
+      <div class="days"></div>
+    </details>
+    <div class="actions">
+      ${decided
+        ? `<span class="note">${esc(p.status)}${p.reviewer_note ? " — " + esc(p.reviewer_note) : ""}</span>`
+        : `<input type="text" class="why" placeholder="note (optional)" style="flex:1">
+           <button class="primary approve">Approve</button>
+           <button class="danger reject">Reject</button>`}
+      <span class="msg note"></span>
+    </div>
+  </div>`;
+}
+
+function wire(el, p) {
+  el.querySelector(".evidence").addEventListener("toggle", async (ev) => {
+    const box = el.querySelector(".days");
+    if (!ev.target.open || box.dataset.loaded) return;
+    box.dataset.loaded = "1";
+    for (const key of p.evidence_day_keys.slice(0, 12)) {
+      try {
+        const d = await api(`/api/offers/evidence/${encodeURIComponent(key)}`);
+        box.insertAdjacentHTML("beforeend",
+          `<pre><strong>${esc(d.attachment_name)}</strong> · day ${d.day_number}`
+          + `${d.overnight_city ? " · " + esc(d.overnight_city) : ""}\n\n${esc(d.text)}</pre>`);
+      } catch (e) {
+        box.insertAdjacentHTML("beforeend", `<pre class="err">${esc(key)}: ${esc(e.message)}</pre>`);
+      }
+    }
+  });
+
+  const decide = async (status) => {
+    const msg = el.querySelector(".msg");
+    const code = el.querySelector(".code").value.trim();
+    if (status === "approved" && !code) {
+      msg.innerHTML = '<span class="err">a template needs a code before it can be approved</span>';
+      return;
+    }
+    el.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    msg.textContent = "saving…";
+    try {
+      await api(`/api/offers/proposals/${encodeURIComponent(p.proposal_id)}/verdict`, {
+        method: "POST",
+        body: JSON.stringify({
+          status,
+          reviewer_note: el.querySelector(".why").value,
+          edited_fields: {
+            code,
+            full_text: el.querySelector(".text").value,
+            region: el.querySelector(".region").value.trim(),
+            overnight_city: el.querySelector(".overnight").value.trim(),
+          },
+        }),
+      });
+      await render();
+    } catch (e) {
+      msg.innerHTML = `<span class="err">${esc(e.message)}</span>`;
+      el.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+    }
+  };
+
+  el.querySelector(".approve")?.addEventListener("click", () => decide("approved"));
+  el.querySelector(".reject")?.addEventListener("click", () => decide("rejected"));
+}
+
+async function render() {
+  const list = $("list");
+  try {
+    const data = await api(`/api/offers/proposals?status=${encodeURIComponent(filter)}`);
+    const q = data.queue;
+    $("summary").textContent =
+      `${q.pending} pending · ${q.approved} approved · ${q.rejected} rejected`;
+    if (!data.proposals.length) {
+      list.innerHTML = `<div class="empty">nothing ${esc(filter)}</div>`;
+      return;
+    }
+    list.innerHTML = data.proposals.map(card).join("");
+    data.proposals.forEach((p, i) => wire(list.children[i], p));
+  } catch (e) {
+    list.innerHTML = `<div class="empty err">${esc(e.message)}</div>`;
+  }
+}
+
+for (const status of ["pending", "approved", "rejected"]) {
+  $(`f-${status}`).addEventListener("click", () => {
+    filter = status;
+    for (const s of ["pending", "approved", "rejected"]) {
+      $(`f-${s}`).classList.toggle("primary", s === status);
+    }
+    render();
+  });
+}
+
+$("rebuild").addEventListener("click", async (ev) => {
+  ev.target.disabled = true;
+  ev.target.textContent = "re-deriving…";
+  try {
+    await api("/api/offers/proposals/rebuild", { method: "POST" });
+    await Promise.all([loadGap(), render()]);
+  } catch (e) {
+    $("summary").innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  }
+  ev.target.disabled = false;
+  ev.target.textContent = "Re-derive from corpus";
+});
+
+loadGap();
+render();
+</script>
+</body>
+</html>
