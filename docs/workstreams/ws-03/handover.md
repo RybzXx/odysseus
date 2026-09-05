@@ -520,3 +520,20 @@ corpus each proposal came from.
 | 2. Group similar days | Built as a view |
 | 3. Suggest the code | Not started. The code abbreviates the places named in a template's title, and a new proposal has no title |
 | 4. Spaceless days | Repaired, 543 to 1 |
+
+---
+
+## Owner directive — 2026-09-05, evening
+
+**The operations sheet is canon.** Anything already in it is settled and is not
+re-proposed, re-worded, or argued with.
+
+    https://docs.google.com/spreadsheets/d/1EiNUPoI3526-3Coxkjno_CesVc4UT2LhO8RebUKwn4w/edit?gid=0
+
+**The objective is to append to that sheet.** Not to rewrite it.
+
+Given as part of the New Operations work. Not yet read, and not yet checked
+against the catalogue this workstream already loads.
+
+**The queue is too long and too repetitive.** 338 pending, and the owner asked
+for it shorter.
