@@ -337,6 +337,116 @@ def reparse_stored(prune: bool = False) -> dict:
     return outcome
 
 
+_REEXTRACTED_WARNING = "text re-extracted from the stored attachment"
+
+
+def reextract_stored() -> dict:
+    """
+    Read every stored attachment again, and keep the new text where the old text
+    had lost its word boundaries.
+
+    This is what invariant 1.1 is for. The attachment is kept for the life of
+    the corpus and never rewritten, so every derivative of it is disposable and
+    can be made again. `reparse_stored` re-splits the text that is already on
+    disk; this one goes back past it, to the bytes as they were sent.
+
+    Pre:  the store holds `source.<ext>` beside each `offer.json`.
+    Post: an offer whose stored text looked unspaced, and whose attachment reads
+          better on a second pass, carries the better text in `text.txt`, days
+          re-split from it, and a warning saying the text was made again.
+          Every other offer is left byte-identical. No `source.<ext>` is
+          written.
+
+    Blame: an attachment that cannot be read at all is counted and skipped. It
+    was already in the corpus before this ran, and dropping it here would lose
+    an offer to a repair.
+    """
+    from services.offers.offer_text import (
+        OfferTextError,
+        extract_offer_text,
+        looks_unspaced,
+        split_days,
+    )
+
+    outcome = {"examined": 0, "unspaced": 0, "repaired": 0,
+               "still_unspaced": [], "unreadable": []}
+    if not os.path.isdir(OFFER_CORPUS_DIR):
+        return outcome
+
+    for name in sorted(os.listdir(OFFER_CORPUS_DIR)):
+        directory = os.path.join(OFFER_CORPUS_DIR, name)
+        record_path = os.path.join(directory, _OFFER_RECORD)
+        text_path = os.path.join(directory, _OFFER_TEXT)
+        if not (os.path.exists(record_path) and os.path.exists(text_path)):
+            continue
+        try:
+            with open(record_path, encoding="utf-8") as fh:
+                record = json.load(fh)
+            with open(text_path, encoding="utf-8") as fh:
+                old_text = fh.read()
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        outcome["examined"] += 1
+        offer = _offer_from_dict(record)
+        # The day is the unit that gets matched, so one damaged day is enough to
+        # send the document back to its attachment. A document can read well
+        # overall and still hold a day that lost its boundaries: one here scores
+        # 0.094 across the whole file while its third day reads
+        # "Visit theSulaymaniyahMuseum, atreasuretroveof".
+        if not (looks_unspaced(old_text)
+                or any(looks_unspaced(day.text) for day in offer.days)):
+            continue
+        outcome["unspaced"] += 1
+
+        source = _stored_source_path(directory)
+        if source is None:
+            outcome["unreadable"].append(offer.attachment_name)
+            continue
+        try:
+            with open(source, "rb") as fh:
+                new_text = extract_offer_text(fh.read(), offer.attachment_name)
+        except (OfferTextError, OSError):
+            outcome["unreadable"].append(offer.attachment_name)
+            continue
+
+        if looks_unspaced(new_text):
+            outcome["still_unspaced"].append(offer.attachment_name)
+            continue
+
+        offer.days = split_days(new_text)
+        # A document can read well while one day inside it does not. One PDF
+        # here loses spaces irregularly — "Visit theSulaymaniyahMuseum,
+        # atreasuretroveof Kurdishhistory" — and both readers return it that
+        # way. The repair is kept, and the day that resisted it is named.
+        for day in offer.days:
+            if looks_unspaced(day.text):
+                outcome["still_unspaced"].append(
+                    f"{offer.attachment_name} day {day.day_number}")
+        if _REEXTRACTED_WARNING not in offer.extraction_warnings:
+            offer.extraction_warnings.append(_REEXTRACTED_WARNING)
+
+        temporary = text_path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as fh:
+            fh.write(new_text)
+        os.replace(temporary, text_path)
+
+        temporary = record_path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as fh:
+            json.dump(_offer_to_dict(offer), fh, ensure_ascii=False, indent=2)
+        os.replace(temporary, record_path)
+        outcome["repaired"] += 1
+    return outcome
+
+
+def _stored_source_path(directory: str) -> Optional[str]:
+    """Post: the attachment beside a stored record, or None when it is gone."""
+    for entry in sorted(os.listdir(directory)):
+        if entry.startswith(_SOURCE_STEM + "."):
+            return os.path.join(directory, entry)
+    return None
+
+
 def build_routes_json(path: str) -> int:
     """
     Write the corpus in the schema `services/itinerary` already reads.

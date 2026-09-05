@@ -247,3 +247,186 @@ def test_the_fingerprint_is_cheap_enough_to_take_on_every_request(corpus_root):
     elapsed = time.perf_counter() - started
     assert stamp["count"] == 400
     assert elapsed < 0.25, f"fingerprint over 400 offers took {elapsed:.3f}s"
+
+
+# --- unspaced extraction ---------------------------------------------------
+
+def test_text_that_kept_its_spaces_is_not_called_unspaced():
+    from services.offers.offer_text import looks_unspaced
+    assert not looks_unspaced("Meet and greet, and fast track visa from the airport.")
+
+
+def test_text_that_lost_every_space_is_called_unspaced():
+    from services.offers.offer_text import looks_unspaced
+    assert looks_unspaced("Meetandgreet,andfasttrackvisafromtheairporttothehotel.Atouroftheoldcityfollowsinthelateafternoon,thendinnerbythriver.")
+
+
+def test_empty_text_is_not_called_unspaced():
+    """
+    Nothing can be said about a string with no characters. Calling it broken
+    would send it for repair on every pass, forever.
+    """
+    from services.offers.offer_text import looks_unspaced
+    assert not looks_unspaced("")
+    assert not looks_unspaced("   \n ")
+
+
+def test_the_threshold_sits_in_the_measured_gap():
+    """
+    Affected days measured between 0.000 and 0.027, text read correctly between
+    0.147 and 0.151. A threshold outside that gap would either miss a broken day
+    or send a good one for repair.
+    """
+    from services.offers.offer_text import MIN_SPACE_RATIO
+    assert 0.03 < MIN_SPACE_RATIO < 0.14
+
+
+def test_reextraction_repairs_a_stored_offer_and_leaves_the_attachment_alone(
+        corpus_root, monkeypatch):
+    import services.offers.offer_text as offer_text
+    from services.offers.models import OfferDay, SentOffer
+    from services.offers.offer_store import reextract_stored, store_offer
+
+    monkeypatch.setattr(offer_store, "OFFER_CORPUS_DIR", str(corpus_root))
+    unspaced = ("Day1\nMeetandgreet,andfasttrackvisafromtheairporttothehotel."
+                "Atourofthecityfollows,thendinnerbytheriverbeforewereturn.")
+    spaced = "Day 1\nMeet and greet, and fast track visa from the airport to the hotel."
+    attachment = b"%PDF-1.4 stand-in"
+    store_offer(
+        SentOffer(message_id="<1@x>", subject="Iraq", sent_at=None,
+                  attachment_name="offer.pdf", days=[OfferDay(1, unspaced, "")]),
+        attachment, unspaced,
+    )
+    monkeypatch.setattr(offer_text, "extract_offer_text", lambda data, name: spaced)
+
+    outcome = reextract_stored()
+    assert outcome["unspaced"] == 1
+    assert outcome["repaired"] == 1
+
+    directory = next(corpus_root.iterdir())
+    assert (directory / "text.txt").read_text(encoding="utf-8") == spaced
+    assert (directory / "source.pdf").read_bytes() == attachment
+    record = json.loads((directory / "offer.json").read_text(encoding="utf-8"))
+    assert any("re-extracted" in w for w in record["extraction_warnings"])
+
+
+def test_reextraction_leaves_a_well_spaced_offer_untouched(corpus_root, monkeypatch):
+    import services.offers.offer_text as offer_text
+    from services.offers.models import OfferDay, SentOffer
+    from services.offers.offer_store import reextract_stored, store_offer
+
+    monkeypatch.setattr(offer_store, "OFFER_CORPUS_DIR", str(corpus_root))
+    spaced = "Day 1\nMeet and greet at the airport, then drive to the hotel."
+    store_offer(
+        SentOffer(message_id="<2@x>", subject="Iraq", sent_at=None,
+                  attachment_name="offer.pdf", days=[OfferDay(1, spaced, "")]),
+        b"%PDF-", spaced,
+    )
+    directory = next(corpus_root.iterdir())
+    before = (directory / "offer.json").read_bytes()
+
+    def _never_called(data, name):
+        raise AssertionError("a well-spaced offer must not be extracted again")
+    monkeypatch.setattr(offer_text, "extract_offer_text", _never_called)
+
+    outcome = reextract_stored()
+    assert outcome["unspaced"] == 0
+    assert outcome["repaired"] == 0
+    assert (directory / "offer.json").read_bytes() == before
+
+
+def test_a_second_read_that_is_still_unspaced_changes_nothing(corpus_root, monkeypatch):
+    import services.offers.offer_text as offer_text
+    from services.offers.models import OfferDay, SentOffer
+    from services.offers.offer_store import reextract_stored, store_offer
+
+    monkeypatch.setattr(offer_store, "OFFER_CORPUS_DIR", str(corpus_root))
+    unspaced = ("Day1\nMeetandgreet,andfasttrackvisafromtheairporttothehotel."
+                "Atourofthecityfollows,thendinnerbytheriverbeforewereturn.")
+    store_offer(
+        SentOffer(message_id="<3@x>", subject="Iraq", sent_at=None,
+                  attachment_name="offer.pdf", days=[OfferDay(1, unspaced, "")]),
+        b"%PDF-", unspaced,
+    )
+    directory = next(corpus_root.iterdir())
+    before = (directory / "offer.json").read_bytes()
+    monkeypatch.setattr(offer_text, "extract_offer_text", lambda data, name: unspaced)
+
+    outcome = reextract_stored()
+    assert outcome["repaired"] == 0
+    assert outcome["still_unspaced"] == ["offer.pdf"]
+    assert (directory / "offer.json").read_bytes() == before
+
+
+def test_the_pdf_reader_keeps_pypdf_when_its_text_is_fine(monkeypatch):
+    """The second reader is asked only about a document the first one mangled."""
+    import services.offers.offer_text as offer_text
+    monkeypatch.setattr(offer_text, "_pdf_text_pypdf", lambda data: "Meet and greet at the airport.")
+
+    def _never_called(data):
+        raise AssertionError("PyMuPDF must not be asked about text that is already spaced")
+    monkeypatch.setattr(offer_text, "_pdf_text_pymupdf", _never_called)
+    assert offer_text._pdf_text(b"x") == "Meet and greet at the airport."
+
+
+def test_the_pdf_reader_falls_back_when_the_first_read_lost_its_spaces(monkeypatch):
+    import services.offers.offer_text as offer_text
+    mangled = ("Meetandgreetattheairport,thenweheadtothehotelandrestbefore"
+               "thefirstfulldayofthetourbeginstomorrowmorningatnineoclock.")
+    clean = ("Meet and greet at the airport, then we head to the hotel and rest "
+             "before the first full day of the tour begins tomorrow morning.")
+    monkeypatch.setattr(offer_text, "_pdf_text_pypdf", lambda data: mangled)
+    monkeypatch.setattr(offer_text, "_pdf_text_pymupdf", lambda data: clean)
+    assert offer_text._pdf_text(b"x") == clean
+
+
+def test_the_pdf_reader_keeps_the_first_read_when_the_fallback_is_no_better(monkeypatch):
+    import services.offers.offer_text as offer_text
+    mangled = ("Meetandgreetattheairport,thenweheadtothehotelandrestbefore"
+               "thefirstfulldayofthetourbeginstomorrowmorningatnineoclock.")
+    monkeypatch.setattr(offer_text, "_pdf_text_pypdf", lambda data: mangled)
+    monkeypatch.setattr(offer_text, "_pdf_text_pymupdf", lambda data: None)
+    assert offer_text._pdf_text(b"x") == mangled
+
+
+def test_text_too_short_to_judge_is_not_called_unspaced():
+    """
+    A day reading "Arrival" holds no spaces because it is one word. Five such
+    days in one .docx were sent for repair by a ratio test that judged them.
+    """
+    from services.offers.offer_text import looks_unspaced
+    assert not looks_unspaced("Arrival")
+    assert not looks_unspaced("Uplistsikhe")
+
+
+def test_reextraction_follows_one_damaged_day_in_a_document_that_reads_well(
+        corpus_root, monkeypatch):
+    """
+    The day is the unit that gets matched. One document scored 0.094 across the
+    whole file while its third day read "Visit theSulaymaniyahMuseum".
+    """
+    import services.offers.offer_text as offer_text
+    from services.offers.models import OfferDay, SentOffer
+    from services.offers.offer_store import reextract_stored, store_offer
+
+    monkeypatch.setattr(offer_store, "OFFER_CORPUS_DIR", str(corpus_root))
+    good_day = ("Meet and greet at the airport, then drive to the hotel and rest "
+                "before the first full day of the tour begins tomorrow morning.")
+    bad_day = ("VisittheSulaymaniyahMuseum,atreasuretroveofKurdishhistory,thenwalk"
+               "throughthebazaarandreturntothehotelbeforesunsetfortheevening.")
+    whole = good_day + "\n" + good_day + "\n" + bad_day
+    store_offer(
+        SentOffer(message_id="<4@x>", subject="Iraq", sent_at=None,
+                  attachment_name="offer.pdf",
+                  days=[OfferDay(1, good_day, ""), OfferDay(2, good_day, ""),
+                        OfferDay(3, bad_day, "")]),
+        b"%PDF-", whole,
+    )
+    from services.offers.offer_text import looks_unspaced
+    assert not looks_unspaced(whole), "the document must read well overall"
+
+    repaired = good_day + "\n" + good_day + "\n" + good_day
+    monkeypatch.setattr(offer_text, "extract_offer_text", lambda data, name: repaired)
+    outcome = reextract_stored()
+    assert outcome["unspaced"] == 1
+    assert outcome["repaired"] == 1

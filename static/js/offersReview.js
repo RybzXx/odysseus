@@ -19,6 +19,51 @@ const PAGE_SIZE = 25;
 let loaded = [];
 let shown = 0;
 
+// Near-duplicate proposals read as one thing and are decided as several. A full
+// rebuild left 257, of which 95 sit in at least one pair scoring 0.60 or above.
+// Grouping is a view: nothing is merged, no proposal is dropped, and no id
+// changes. It is computed here rather than on the server because the response
+// already carries every text, and the reviewer moves the line while reading.
+let groupThreshold = 0.70;
+
+const WORD_RE = /[a-z0-9]+/g;
+
+function tokensOf(text) {
+  return new Set(String(text || "").toLowerCase().match(WORD_RE) || []);
+}
+
+function overlap(a, b) {
+  if (!a.size || !b.size) return 0;
+  let shared = 0;
+  for (const token of a) if (b.has(token)) shared += 1;
+  return shared / (a.size + b.size - shared);
+}
+
+function groupByLikeness(proposals, threshold) {
+  const sets = proposals.map((p) => tokensOf(p.proposed_text));
+  const parent = proposals.map((_, i) => i);
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  for (let a = 0; a < proposals.length; a += 1) {
+    for (let b = a + 1; b < proposals.length; b += 1) {
+      if (overlap(sets[a], sets[b]) >= threshold) {
+        const ra = find(a), rb = find(b);
+        if (ra !== rb) parent[ra] = rb;
+      }
+    }
+  }
+  const byRoot = new Map();
+  proposals.forEach((p, i) => {
+    const root = find(i);
+    if (!byRoot.has(root)) byRoot.set(root, []);
+    byRoot.get(root).push(p);
+  });
+  // Strongest evidence first, both between groups and inside one.
+  const groups = [...byRoot.values()];
+  groups.forEach((g) => g.sort((x, y) => (y.weight ?? 0) - (x.weight ?? 0)));
+  groups.sort((x, y) => (y[0].weight ?? 0) - (x[0].weight ?? 0));
+  return groups;
+}
+
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -42,8 +87,14 @@ function provenanceWarning(provenance) {
       + `The corpus now holds ${esc(live.count)} offers.</div>`;
   }
   const stored = provenance.stored || {};
-  return `<div class="warn">Stale. Derived from a corpus of `
-    + `${esc(stored.count)} offers. The corpus now holds ${esc(live.count)}. `
+  // Two corpora can hold the same number of offers and different text. A
+  // re-extraction rewrote 90 records and left the count at 335, so printing
+  // "335 offers then, 335 now" would read as no change at all.
+  const change = stored.count === live.count
+    ? `The corpus still holds ${esc(live.count)} offers, and their text has changed since.`
+    : `Derived from a corpus of ${esc(stored.count)} offers. `
+      + `The corpus now holds ${esc(live.count)}.`;
+  return `<div class="warn">Stale. ${change} `
     + `Re-derive before you act on these numbers.</div>`;
 }
 
@@ -184,30 +235,107 @@ function wire(el, p) {
   el.querySelector(".reject")?.addEventListener("click", () => decide("rejected"));
 }
 
+function groupBlock(group, index) {
+  if (group.length === 1) return card(group[0]);
+  return `<div class="group">
+    <div class="group-head">
+      <strong>${group.length} near-duplicate proposals</strong>
+      <span class="note">decided together, or one at a time</span>
+      <span class="grow"></span>
+      <button class="group-approve" data-group="${index}">Approve all ${group.length}</button>
+      <button class="group-reject danger" data-group="${index}">Reject all ${group.length}</button>
+      <span class="msg note" data-group-msg="${index}"></span>
+    </div>
+    ${group.map(card).join("")}
+  </div>`;
+}
+
+function wireGroup(container, group, index) {
+  const decideAll = async (status) => {
+    const msg = container.querySelector(`[data-group-msg="${index}"]`);
+    // One verdict, one proposal at a time. Each still needs its own code, and a
+    // proposal the server refuses must not silently take the others down.
+    const refused = [];
+    for (const p of group) {
+      const el = container.querySelector(`.card[data-id="${CSS.escape(p.proposal_id)}"]`);
+      const code = el?.querySelector(".code")?.value.trim();
+      if (status === "approved" && !code) { refused.push(p.proposal_id); continue; }
+      try {
+        await api(`/api/offers/proposals/${encodeURIComponent(p.proposal_id)}/verdict`, {
+          method: "POST",
+          body: JSON.stringify({
+            status,
+            reviewer_note: el?.querySelector(".why")?.value || "",
+            edited_fields: {
+              code,
+              full_text: el?.querySelector(".text")?.value,
+              region: el?.querySelector(".region")?.value.trim(),
+              overnight_city: el?.querySelector(".overnight")?.value.trim(),
+            },
+          }),
+        });
+      } catch (e) { refused.push(p.proposal_id); }
+    }
+    if (refused.length) {
+      msg.innerHTML = `<span class="err">${refused.length} of ${group.length} not decided`
+        + ` — a template needs a code before it can be approved</span>`;
+    }
+    await render();
+  };
+  container.querySelector(`.group-approve[data-group="${index}"]`)
+    ?.addEventListener("click", () => decideAll("approved"));
+  container.querySelector(`.group-reject[data-group="${index}"]`)
+    ?.addEventListener("click", () => decideAll("rejected"));
+}
+
 function appendBatch() {
   const list = $("list");
   const batch = loaded.slice(shown, shown + PAGE_SIZE);
   const before = list.children.length;
-  list.insertAdjacentHTML("beforeend", batch.map(card).join(""));
-  batch.forEach((p, index) => wire(list.children[before + index], p));
+  list.insertAdjacentHTML("beforeend",
+    batch.map((group, i) => groupBlock(group, shown + i)).join(""));
+  batch.forEach((group, i) => {
+    const container = list.children[before + i];
+    const cards = container.classList.contains("group")
+      ? container.querySelectorAll(".card") : [container];
+    group.forEach((p, j) => wire(cards[j], p));
+    if (group.length > 1) wireGroup(container, group, shown + i);
+  });
   shown += batch.length;
 
+  const proposals = loaded.reduce((n, g) => n + g.length, 0);
   const more = $("more");
   if (shown < loaded.length) {
     const next = Math.min(PAGE_SIZE, loaded.length - shown);
     more.innerHTML = `<button id="show-more">Show ${next} more</button>`
-      + `<span class="note">${shown} of ${loaded.length} shown</span>`;
+      + `<span class="note">${shown} of ${loaded.length} blocks shown`
+      + ` · ${proposals} proposals</span>`;
     $("show-more").addEventListener("click", appendBatch);
   } else {
     more.innerHTML = loaded.length > PAGE_SIZE
-      ? `<span class="note">all ${loaded.length} shown</span>` : "";
+      ? `<span class="note">all ${loaded.length} blocks shown · ${proposals} proposals</span>` : "";
   }
+}
+
+let lastFetched = [];
+
+function regroup() {
+  const list = $("list");
+  $("more").innerHTML = "";
+  shown = 0;
+  loaded = groupByLikeness(lastFetched, groupThreshold);
+  const grouped = loaded.filter((g) => g.length > 1).length;
+  $("grouping-count").textContent =
+    `${loaded.length} blocks from ${lastFetched.length} proposals · ${grouped} grouped`;
+  list.innerHTML = "";
+  appendBatch();
 }
 
 async function render() {
   const list = $("list");
   $("more").innerHTML = "";
   loaded = [];
+  lastFetched = [];
   shown = 0;
   try {
     const data = await api(`/api/offers/proposals?status=${encodeURIComponent(filter)}`);
@@ -216,15 +344,21 @@ async function render() {
       `${q.pending} pending · ${q.approved} approved · ${q.rejected} rejected`;
     if (!data.proposals.length) {
       list.innerHTML = `<div class="empty">nothing ${esc(filter)}</div>`;
+      $("grouping-count").textContent = "";
       return;
     }
-    loaded = data.proposals;
-    list.innerHTML = "";
-    appendBatch();
+    lastFetched = data.proposals;
+    regroup();
   } catch (e) {
     list.innerHTML = `<div class="empty err">${esc(e.message)}</div>`;
   }
 }
+
+$("grouping").addEventListener("input", (ev) => {
+  groupThreshold = Number(ev.target.value) / 100;
+  $("grouping-value").textContent = groupThreshold.toFixed(2);
+  if (lastFetched.length) regroup();
+});
 
 for (const status of ["pending", "approved", "rejected"]) {
   $(`f-${status}`).addEventListener("click", () => {

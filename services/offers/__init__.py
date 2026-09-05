@@ -54,6 +54,7 @@ from services.offers.offer_store import (
     offer_dir,
     offer_slug,
     offers_of_message,
+    reextract_stored,
     store_offer,
 )
 from services.offers.proposals import (
@@ -124,6 +125,7 @@ __all__ = [
     "offer_dir",
     "offer_slug",
     "offers_of_message",
+    "reextract_stored",
     "store_offer",
     "analyse_catalogue_gap",
     "classify_days",

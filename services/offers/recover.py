@@ -25,6 +25,7 @@ from src.constants import APP_DB, OFFER_CORPUS_DIR, RECOVERY_FAILURES_FILE
 from services.offers.offer_store import (
     build_routes_json,
     corpus_fingerprint,
+    reextract_stored,
     reparse_stored,
 )
 from services.offers.sent_offers import fetch_sent_offers
@@ -106,6 +107,9 @@ def main(argv=None) -> int:
                         help="re-fetch offers already in the store")
     parser.add_argument("--reparse", action="store_true",
                         help="re-split stored offers from their saved text; no mail is read")
+    parser.add_argument("--reextract", action="store_true",
+                        help="read the stored attachments again where the saved text lost its "
+                             "spaces; no mail is read")
     parser.add_argument("--prune", action="store_true",
                         help="with --reparse, discard stored documents that hold no itinerary")
     parser.add_argument("--rebuild-proposals", action="store_true",
@@ -145,6 +149,24 @@ def main(argv=None) -> int:
               f"uncovered {report.unmatched}")
         print(f"patterns {len(report.patterns)}, recurring {len(report.recurring_patterns)}")
         print(f"drafted {len(drafted)} proposals; queue {queue_summary()}")
+        return 0
+
+    if args.reextract:
+        outcome = reextract_stored()
+        print(f"examined {outcome['examined']} stored offers; "
+              f"{outcome['unspaced']} had text that lost its spaces")
+        print(f"repaired {outcome['repaired']}")
+        if outcome["still_unspaced"]:
+            print(f"still unspaced after a second read: {len(outcome['still_unspaced'])}")
+            for name in outcome["still_unspaced"][:20]:
+                print(f"  - {name}")
+        if outcome["unreadable"]:
+            print(f"attachment could not be read: {len(outcome['unreadable'])}")
+            for name in outcome["unreadable"][:20]:
+                print(f"  - {name}")
+        if outcome["repaired"]:
+            print("the queue and the gap summary now describe an older corpus; "
+                  "re-derive with --rebuild-proposals")
         return 0
 
     if args.reparse:

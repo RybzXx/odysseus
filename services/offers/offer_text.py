@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+from typing import Optional
 
 from services.offers.models import OfferDay
 
@@ -96,7 +97,35 @@ def _docx_text(data: bytes) -> str:
     return _BLANK_RUN_RE.sub("\n\n", text)
 
 
-def _pdf_text(data: bytes) -> str:
+# Below this share of spaces, the extraction lost the word boundaries rather
+# than the document lacking them. Measured over 2424 stored days: affected days
+# sit between 0.000 and 0.027, text read correctly sits between 0.147 and 0.151,
+# and the corpus median is 0.161. Nothing measured falls between 0.03 and 0.14.
+MIN_SPACE_RATIO = 0.05
+
+# Shorter than this, a missing space is not evidence of anything. A day reading
+# "Arrival" or "Tbilisi" holds no spaces because it is one word. The shortest
+# damaged day measured in the corpus is 196 characters, so this floor sits well
+# below anything the test needs to catch.
+MIN_LENGTH_TO_JUDGE = 80
+
+
+def looks_unspaced(text: str) -> bool:
+    """
+    True when an extraction dropped the word boundaries rather than the text
+    lacking them.
+
+    Post: False for text shorter than MIN_LENGTH_TO_JUDGE, and for empty text.
+          Nothing can be said about a string too short to hold a sentence, and
+          calling it broken would send it for repair on every pass, forever.
+    """
+    stripped = (text or "").strip()
+    if len(stripped) < MIN_LENGTH_TO_JUDGE:
+        return False
+    return stripped.count(" ") / len(stripped) < MIN_SPACE_RATIO
+
+
+def _pdf_text_pypdf(data: bytes) -> str:
     try:
         from pypdf import PdfReader
     except ImportError as exc:                                  # pragma: no cover
@@ -107,6 +136,47 @@ def _pdf_text(data: bytes) -> str:
     except Exception as exc:
         raise OfferTextError(f"unreadable .pdf: {exc}") from exc
     return _BLANK_RUN_RE.sub("\n\n", "\n".join(pages))
+
+
+def _pdf_text_pymupdf(data: bytes) -> Optional[str]:
+    """
+    Post: the same document read by PyMuPDF, or None when PyMuPDF cannot be
+          used at all. None is not a failure to report — the caller keeps what
+          it already has.
+    """
+    try:
+        import fitz
+    except ImportError:                                         # pragma: no cover
+        return None
+    try:
+        with fitz.open(stream=data, filetype="pdf") as document:
+            pages = [page.get_text() for page in document]
+    except Exception:
+        return None
+    return _BLANK_RUN_RE.sub("\n\n", "\n".join(pages))
+
+
+def _pdf_text(data: bytes) -> str:
+    """
+    Post: the PDF's text, with word boundaries where the document had them.
+
+    pypdf reads most of these files correctly and drops every space in some of
+    them: 543 of 2424 stored days arrived as `Meetandgreet,andfasttrackvisa`.
+    Those days match no template at all — 0 of a 70-day sample reached the 0.80
+    threshold, against 53% of days that kept their spaces.
+
+    pypdf stays the first reader. PyMuPDF is asked only when the first result
+    looks unspaced, and its answer is taken only when it is better. Reading
+    every file twice would change text that is already correct, and every
+    proposal id with it.
+    """
+    text = _pdf_text_pypdf(data)
+    if not looks_unspaced(text):
+        return text
+    rescued = _pdf_text_pymupdf(data)
+    if rescued and not looks_unspaced(rescued):
+        return rescued
+    return text
 
 
 def extract_offer_text(data: bytes, filename: str) -> str:
