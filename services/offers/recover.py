@@ -139,6 +139,17 @@ def main(argv=None) -> int:
 
     print(f"\ntotals: {totals}")
     print(f"corpus: {OFFER_CORPUS_DIR}")
+
+    if all_failures:
+        # In full, never truncated. The console list is capped at 20 per
+        # account, and that cap once hid 369 of 409 rejections. Of the 40 that
+        # happened to be visible, 25 were real offers a parser fix later
+        # recovered — evidence that only existed because the cap missed them.
+        os.makedirs(os.path.dirname(RECOVERY_FAILURES_FILE) or ".", exist_ok=True)
+        with open(RECOVERY_FAILURES_FILE, "w", encoding="utf-8") as fh:
+            json.dump(all_failures, fh, ensure_ascii=False, indent=2)
+        print(f"failures: {len(all_failures)} recorded in {RECOVERY_FAILURES_FILE}")
+
     if args.routes_json and not args.dry_run:
         print(f"routes.json: {build_routes_json(args.routes_json)} routes")
     return 0
