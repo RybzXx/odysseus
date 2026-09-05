@@ -42,6 +42,8 @@
   .tag.stale { color: var(--gone); border-color: var(--gone); }
   .tag.rare { color: var(--accent); border-color: var(--accent); }
   .tag.machine { color: var(--warn); border-color: var(--warn); }
+  .tag.ready { color: var(--accent); border-color: var(--accent); }
+  .tag.unready { color: var(--gone); border-color: var(--gone); }
   .tag.low { color: var(--gone); border-color: var(--gone); }
   .suggest { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--warn);
              border-radius: 9px; }
@@ -76,6 +78,7 @@
   .diff del { background: var(--del); padding: 0 2px; }
   .grouping { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .grouping input { width: 120px; }
+  .grouping input[type=checkbox] { width: auto; }
   .search { width: 220px; }
   .sep { color: var(--line); padding: 0 2px; }
   .group { border: 1px solid var(--warn); border-radius: 10px; padding: 8px; margin-top: 14px; }
@@ -97,6 +100,8 @@
     <button id="q-rare" class="primary">Rare</button>
     <button id="q-recurring">Recurring</button>
     <button id="q-all">All</button>
+    <span class="sep">|</span>
+    <label class="grouping"><input type="checkbox" id="ready-only"> ready for push</label>
     <input type="text" id="search" class="search" placeholder="search the proposals…">
     <span class="grow"></span>
     <label class="grouping">Group near-duplicates
@@ -113,6 +118,6 @@
 
 <div id="more" class="bar"></div>
 
-<script src="/static/js/offersReview.js?v=20260905suggest1"></script>
+<script src="/static/js/offersReview.js?v=20260905ready1"></script>
 </body>
 </html>

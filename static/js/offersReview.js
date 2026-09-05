@@ -21,6 +21,9 @@ let regions = [];
 // Typed words narrow the list the page already holds. 493 rare proposals is not
 // a scrolling problem once a day can be found by its own words.
 let searchTerms = [];
+// An approved row still needs its catalogue columns before it is worth writing.
+// This narrows the approved list to the rows that carry every one of them.
+let readyOnly = false;
 
 // The queue holds hundreds of proposals after a full-corpus rebuild, and each
 // card carries the whole proposed text. Building them all in one write locks a
@@ -193,6 +196,9 @@ function card(p) {
     ? `nearest existing: <strong>${esc(p.nearest_code)}</strong> at ${p.nearest_score.toFixed(2)}`
     : "no comparable template";
   const decided = p.status !== "pending";
+  // An approved row is edited until it reaches the sheet. Its boxes stay open,
+  // because a verdict settles the wording and not the columns around it.
+  const editable = !decided || (p.status === "approved" && !p.applied_at);
   // A proposal from an older corpus sits in the same queue as a current one.
   // The reviewer is told which, because the evidence behind a stale proposal
   // may no longer be in the corpus at all.
@@ -235,15 +241,33 @@ function card(p) {
       </div>
       <div class="col">
         <h4>Proposed — edit before approving</h4>
-        <textarea class="text" ${decided ? "disabled" : ""}>${esc(p.proposed_text)}</textarea>
+        <textarea class="text" ${editable ? "" : "disabled"}>${esc(p.proposed_text)}</textarea>
       </div>
     </div>
     <div class="fields">
       <label>Code <input type="text" class="code" value="${esc(p.fields.code || p.target_code || "")}"
-             placeholder="e.g. MO2" ${decided ? "disabled" : ""}></label>
-      <label>Region ${regionSelect(p.fields.region || "", decided)}</label>
+             placeholder="e.g. MO2" ${editable ? "" : "disabled"}></label>
+      <label>Region ${regionSelect(p.fields.region || "", !editable)}</label>
       <label>Overnight <input type="text" class="overnight"
-             value="${esc(p.fields.overnight_city || "")}" ${decided ? "disabled" : ""}></label>
+             value="${esc(p.fields.overnight_city || "")}" ${editable ? "" : "disabled"}></label>
+    </div>
+    <div class="fields">
+      <label>Title <input type="text" class="title" value="${esc(p.fields.title || "")}"
+             placeholder="e.g. Old Mosul — Reconstruction" ${editable ? "" : "disabled"}></label>
+      <label>City <input type="text" class="city" value="${esc(p.fields.city || "")}"
+             placeholder="e.g. Mosul / Nineveh" ${editable ? "" : "disabled"}></label>
+    </div>
+    <div class="fields">
+      <label>Sites <input type="text" class="sites" value="${esc(p.fields.included_sites_json || "[]")}"
+             placeholder='["MO_NORI"]' ${editable ? "" : "disabled"}></label>
+      <label>Pricing tags <input type="text" class="tags"
+             value="${esc(p.fields.pricing_tags_json || "[]")}"
+             placeholder='["guide_day"]' ${editable ? "" : "disabled"}></label>
+      ${p.status === "approved"
+        ? `<span class="grow"></span>
+           <span class="tag ${p.ready_to_push ? "ready" : "unready"}">${
+             p.ready_to_push ? "ready for push" : "not ready"}</span>`
+        : ""}
     </div>
     ${decided ? "" : suggestionBlock(p)}
     <details class="evidence">
@@ -252,7 +276,10 @@ function card(p) {
     </details>
     <div class="actions">
       ${decided
-        ? `<span class="note">${esc(p.status)}${p.reviewer_note ? " — " + esc(p.reviewer_note) : ""}</span>`
+        ? `<span class="note">${esc(p.status)}${p.reviewer_note ? " — " + esc(p.reviewer_note) : ""}</span>
+           ${p.status === "approved" && !p.applied_at
+             ? `<span class="grow"></span><button class="primary save-row">Save the columns</button>`
+             : ""}`
         : `<input type="text" class="why" placeholder="note (optional)" style="flex:1">
            <button class="primary approve">Approve</button>
            <button class="danger reject">Reject</button>`}
@@ -321,6 +348,38 @@ function wire(el, p) {
     ev.target.disabled = true;
   });
 
+  // One reader for the columns, so the verdict path and the save path can never
+  // disagree about what the card holds.
+  const columnsOn = (root) => ({
+    code: root.querySelector(".code")?.value.trim() || "",
+    title: root.querySelector(".title")?.value.trim() || "",
+    city: root.querySelector(".city")?.value.trim() || "",
+    region: root.querySelector(".region")?.value.trim() || "",
+    overnight_city: root.querySelector(".overnight")?.value.trim() || "",
+    included_sites_json: root.querySelector(".sites")?.value.trim() || "[]",
+    pricing_tags_json: root.querySelector(".tags")?.value.trim() || "[]",
+    full_text: root.querySelector(".text")?.value ?? "",
+  });
+
+  el.querySelector(".save-row")?.addEventListener("click", async (ev) => {
+    const msg = el.querySelector(".msg");
+    ev.target.disabled = true;
+    msg.textContent = "saving…";
+    try {
+      const updated = await api(
+        `/api/offers/proposals/${encodeURIComponent(p.proposal_id)}/revise`,
+        { method: "POST", body: JSON.stringify({ fields: columnsOn(el) }) });
+      Object.assign(p, updated);
+      const fresh = document.createElement("div");
+      fresh.innerHTML = card(p);
+      el.replaceWith(fresh.firstElementChild);
+      wire(fresh.firstElementChild, p);
+    } catch (e) {
+      ev.target.disabled = false;
+      msg.innerHTML = `<span class="err">${esc(e.message)}</span>`;
+    }
+  });
+
   const decide = async (status) => {
     const msg = el.querySelector(".msg");
     const code = el.querySelector(".code").value.trim();
@@ -338,10 +397,7 @@ function wire(el, p) {
           reviewer_note: el.querySelector(".why").value,
           edited_fields: {
             ...(el.dataset.acceptedFields ? JSON.parse(el.dataset.acceptedFields) : {}),
-            code,
-            full_text: el.querySelector(".text").value,
-            region: el.querySelector(".region").value.trim(),
-            overnight_city: el.querySelector(".overnight").value.trim(),
+            ...columnsOn(el),
           },
         }),
       });
@@ -445,7 +501,9 @@ function regroup() {
   const list = $("list");
   $("more").innerHTML = "";
   shown = 0;
-  const found = lastFetched.filter(matchesSearch);
+  const found = lastFetched
+    .filter(matchesSearch)
+    .filter((p) => !readyOnly || p.ready_to_push);
   loaded = groupByLikeness(found, groupThreshold);
   const grouped = loaded.filter((g) => g.length > 1).length;
   const scope = found.length === lastFetched.length
@@ -486,6 +544,11 @@ async function render() {
     list.innerHTML = `<div class="empty err">${esc(e.message)}</div>`;
   }
 }
+
+$("ready-only").addEventListener("change", (ev) => {
+  readyOnly = ev.target.checked;
+  if (lastFetched.length) regroup();
+});
 
 $("search").addEventListener("input", (ev) => {
   searchTerms = ev.target.value.toLowerCase().split(/\s+/).filter(Boolean);

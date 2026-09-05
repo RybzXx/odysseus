@@ -52,10 +52,14 @@ from services.offers.gap_report import load_summary as load_gap_summary
 from services.offers.gap_report import save_summary as save_gap_summary
 from services.offers.gap_report import summarise as summarise_gap
 from services.offers.proposals import load as load_proposal
-from services.offers.proposals import record_suggestion
+from services.offers.proposals import is_ready_to_push, record_suggestion, revise_approved
 from services.offers.proposals import save as save_proposal
 
 logger = logging.getLogger(__name__)
+
+
+class Revision(BaseModel):
+    fields: dict
 
 
 class ApplyRequest(BaseModel):
@@ -117,6 +121,7 @@ def _proposal_to_dict(proposal, template_texts: dict) -> dict:
         "fields": proposal.fields,
         "frequency": proposal.frequency,
         "suggested": proposal.suggested,
+        "ready_to_push": is_ready_to_push(proposal),
         "reviewer_note": proposal.reviewer_note,
         "created_at": proposal.created_at,
         "decided_at": proposal.decided_at,
@@ -263,6 +268,22 @@ def setup_offers_routes() -> APIRouter:
         except ProposalError as exc:
             raise HTTPException(409, str(exc)) from exc
         return _proposal_to_dict(proposal, load_template_texts())
+
+    @router.post("/proposals/{proposal_id}/revise")
+    async def revise_approved_proposal(request: Request, proposal_id: str, body: Revision):
+        """
+        Fill or correct the catalogue columns of an approved row before it is
+        written to the sheet.
+
+        The verdict stands. Only the columns change, and only while the row has
+        not reached the catalogue.
+        """
+        require_admin(request)
+        try:
+            revised = revise_approved(proposal_id, body.fields)
+        except ProposalError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return _proposal_to_dict(revised, load_template_texts())
 
     @router.get("/evidence/{day_key:path}")
     async def get_evidence_day(request: Request, day_key: str):

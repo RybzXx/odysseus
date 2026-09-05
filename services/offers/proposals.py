@@ -295,6 +295,63 @@ def queue_summary() -> dict:
     return counts
 
 
+# The columns a row must carry before it is worth writing to the catalogue. A
+# row without them builds into an itinerary and prices at zero. `included_sites`
+# and `overnight_city` are not here: two catalogue rows legitimately hold
+# neither, so demanding them would call a correct row unready.
+REQUIRED_TO_PUSH = ("code", "title", "city", "region", "pricing_tags_json")
+
+
+def is_ready_to_push(proposal: TemplateProposal) -> bool:
+    """
+    Post: True when every column the catalogue needs carries a value.
+
+    Read rather than stored, because a reviewer fills the boxes one at a time
+    and a stored flag would go stale between two edits.
+    """
+    for name in REQUIRED_TO_PUSH:
+        value = proposal.fields.get(name)
+        if isinstance(value, str) and not value.strip():
+            return False
+        if value in (None, "", [], "[]"):
+            return False
+    return True
+
+
+def revise_approved(proposal_id: str, fields: dict) -> TemplateProposal:
+    """
+    Change the catalogue columns of an approved proposal before it is written.
+
+    Pre:  the proposal is approved and not yet applied. `fields` names only
+          catalogue columns.
+    Post: those columns hold the new values. The verdict, its time and the
+          proposal id are untouched.
+
+    Blame: revising an applied proposal is a caller bug and raises. That row is
+    already in the sheet, and changing the record here would make the two
+    disagree with nothing to say which is right.
+    """
+    proposal = load(proposal_id)
+    if proposal is None:
+        raise ProposalError(f"no such proposal: {proposal_id}")
+    if proposal.status != STATUS_APPROVED:
+        raise ProposalError(f"{proposal_id} is {proposal.status}, not approved")
+    if proposal.applied_at:
+        raise ProposalError(f"{proposal_id} already reached the catalogue")
+
+    unknown = [name for name in fields if name not in TEMPLATE_FIELDS]
+    if unknown:
+        raise ProposalError(f"not catalogue fields: {', '.join(unknown)}")
+    proposal.fields.update(fields)
+
+    target = _path(proposal_id)
+    temporary = target + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as fh:
+        json.dump(asdict(proposal), fh, ensure_ascii=False, indent=2)
+    os.replace(temporary, target)
+    return proposal
+
+
 def record_suggestion(proposal_id: str, suggestion: dict) -> TemplateProposal:
     """
     Store what a model proposed for one pending proposal.
