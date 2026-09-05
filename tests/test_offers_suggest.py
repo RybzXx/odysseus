@@ -229,3 +229,22 @@ def test_canon_carries_no_formatting_fault_for_a_cleaner_to_fix():
         assert "\n\n\n" not in text, code
         assert not re.search(r"[ \t]+\n", text), code
         assert not re.search(r"\s[,.;:]", text), code
+
+
+def test_the_cleaned_wording_is_withheld_while_the_gate_fails():
+    """
+    Spec 4.1 gates the cleaner on a round trip through canon. Measured on
+    2026-09-05 with gemma4:31b-cloud: 11 of 28 unchanged. Until that passes the
+    card shows the day as sent, whatever the model returned.
+    """
+    from services.offers import suggest_row
+    assert suggest_row.CLEANING_ENABLED is False
+    parsed = parse_answer(_answer(cleaned_text="A completely rewritten day."), DAY, "Mosul")
+    assert parsed["cleaned_text"] == DAY
+
+
+def test_the_fields_still_arrive_while_the_wording_is_withheld():
+    """The two halves ship apart, so a failing cleaner costs no fields."""
+    parsed = parse_answer(_answer(cleaned_text="rewritten"), DAY, "Mosul")
+    assert parsed["title"] == "Old Mosul"
+    assert parsed["city"] == "Mosul"

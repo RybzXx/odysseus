@@ -42,6 +42,19 @@ SUGGEST_TIMEOUT_SECONDS = 120
 CONFIDENCE_HIGH = "high"
 CONFIDENCE_LOW = "low"
 
+# The cleaned wording is withheld until the model can leave correct text alone.
+# Spec 4.1 gates it on a round trip through the catalogue: pass canon's own 28
+# texts back through the cleaner and count what returns unchanged.
+#
+# Measured 2026-09-05 with gemma4:31b-cloud: 11 of 28 unchanged, 17 altered.
+# Many of the 17 are real corrections — "Sholgi" to "Shulgi", "stationary
+# market" to "stationery", "world heritage" to "World Heritage". Some are not:
+# BG1 gained a colon after "8 AM" and had a clause rebuilt.
+#
+# The fields and the wording ship apart for this reason (spec 4.5). Set this
+# True and re-run the gate to reconsider.
+CLEANING_ENABLED = False
+
 # How many canon rows go into the prompt as the style reference. Enough to show
 # the shape of a title and the size of a site list, short enough to leave room
 # for the day itself.
@@ -180,7 +193,9 @@ def parse_answer(raw: str, day_text: str, overnight_city: str = "") -> dict:
         confidence = {}
 
     cleaned = answer.get("cleaned_text")
-    if not isinstance(cleaned, str) or not cleaned.strip():
+    if not CLEANING_ENABLED or not isinstance(cleaned, str) or not cleaned.strip():
+        # Returning the day as sent, rather than nothing, keeps one shape for the
+        # card to read. The card shows no accept button when the two agree.
         cleaned = day_text
 
     return {
