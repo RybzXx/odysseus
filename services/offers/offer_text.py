@@ -50,7 +50,12 @@ _LOOSE_TRAILER_MARKER_RE = re.compile(
 # extraction can flatten a whole itinerary onto one line, with the day marker
 # buried mid-sentence and its spacing doubled. The strict form is preferred
 # because it cannot mistake prose for a heading; the loose form covers the rest.
-_DAY_HEADER_RE = re.compile(r"(?im)^\s*Day\s*(\d+)\b")
+# `(?!\d)` rather than `\b` after the number. A word boundary demands a
+# non-word character next, but spaceless extractions run the heading straight
+# into what follows — "Day1SaturdayMarch1" — so a boundary never appears. The
+# lookahead accepts a letter while still reading "Day12" as twelve, because the
+# digits are matched greedily first.
+_DAY_HEADER_RE = re.compile(r"(?im)^\s*Day\s*(\d+)(?!\d)")
 
 # Deliberately case-sensitive, and deliberately without a leading word boundary.
 # Some PDF extractions drop every space, so an offer arrives as
@@ -58,7 +63,7 @@ _DAY_HEADER_RE = re.compile(r"(?im)^\s*Day\s*(\d+)\b")
 # boundary before it. Requiring a capital D is what separates a heading from a
 # weekday — every weekday ends in a lowercase "day", so "Sunday 12" and
 # "Monday, 24" cannot match, while "Day1" and "DAY 1" can.
-_LOOSE_DAY_HEADER_RE = re.compile(r"(?:Day|DAY)\s{0,4}(\d{1,2})\b")
+_LOOSE_DAY_HEADER_RE = re.compile(r"(?:Day|DAY)\s{0,4}(\d{1,2})(?!\d)")
 
 _WHITESPACE_RUN_RE = re.compile(r"\s+")
 _OVERNIGHT_RE = re.compile(r"(?i)Overnight:\s*([^/\n]+?)\s*(?:/|night|$)")

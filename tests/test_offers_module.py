@@ -808,7 +808,34 @@ def test_a_weekday_is_never_read_as_a_day_heading():
     assert split_days(prose) == []
 
 
-@pytest.mark.parametrize("heading", ["Day 1", "Day1", "DAY 1", "day 1"])
+@pytest.mark.parametrize("heading", ["Day 1", "Day1", "DAY 1", "day 1", "Day1Saturday"])
 def test_every_written_form_of_a_first_day_is_recognised(heading):
     text = f"{heading}\nArrive in Baghdad.\nDay 2\nDepart."
     assert [d.day_number for d in split_days(text)] == [1, 2]
+
+
+def test_a_day_number_running_into_a_weekday_is_still_read():
+    """
+    A third spaceless variant: "Day1SaturdayMarch1". A word boundary after the
+    number demands a non-word character next, and there is none here, so every
+    offer in this format parsed as zero days and was rejected as holding no
+    itinerary.
+    """
+    bullet = "◆"
+    text = ("BaghdadandTheSouth\n"
+            f"Day1SaturdayMarch1{bullet}Meet and greet.Overnight: Baghdad / night 1.\n"
+            f"Day2SundayMarch2{bullet}Old Baghdad tour.\n"
+            f"Day3MondayMarch3{bullet}Drive to Babylon.")
+    days = split_days(text)
+    assert [d.day_number for d in days] == [1, 2, 3]
+    assert days[0].overnight_city == "Baghdad"
+
+
+def test_a_two_digit_day_is_not_split_into_a_single_digit():
+    """
+    The guard that replaced the word boundary is the greedy digit match, not
+    the boundary — so "Day10SundayMay4" is day ten, not day one.
+    """
+    bullet = "◆"
+    text = "".join(f"Day{n}SundayMay{n}{bullet}Visit site {n}.\n" for n in range(1, 13))
+    assert [d.day_number for d in split_days(text)] == list(range(1, 13))
