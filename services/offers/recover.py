@@ -18,16 +18,65 @@ import logging
 import os
 import sqlite3
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from src.constants import APP_DB, OFFER_CORPUS_DIR, RECOVERY_FAILURES_FILE
 
-from services.offers.offer_store import build_routes_json, reparse_stored
+from services.offers.offer_store import (
+    build_routes_json,
+    corpus_fingerprint,
+    reparse_stored,
+)
 from services.offers.sent_offers import fetch_sent_offers
 
 # Only Bil Weekend's own accounts hold sent offers; the two personal accounts on
 # this instance are out of scope by ws-03 WP0.8.
 OFFER_ACCOUNTS = ("book@bilweekend.com", "mahdi@bilweekend.iq")
+
+
+def write_failure_record(failures: list, scope: dict, path: str | None = None) -> str:
+    """
+    Post: the record on disk holds this run's rejections, the corpus the run
+          left behind, and the scope the run covered. Written atomically.
+
+    The scope is not decoration. This write replaces the whole file, so a run
+    over one account replaces a full-corpus record with a partial one. Before
+    the scope was recorded, nothing on disk said which of the two a reader held.
+
+    The path is resolved at call time. A default argument would capture the
+    constant at import and make the location impossible to redirect, which is
+    how a test comes to overwrite the real record.
+    """
+    path = path or RECOVERY_FAILURES_FILE
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    record = {"corpus": corpus_fingerprint(), "scope": scope, "failures": failures}
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as fh:
+        json.dump(record, fh, ensure_ascii=False, indent=2)
+    os.replace(temporary, path)
+    return path
+
+
+def load_failure_record(path: str | None = None) -> dict | None:
+    """
+    Post: {"corpus": …, "scope": …, "failures": [...]}, or None when no record
+          exists.
+
+    A record written before this shape existed is a bare list. It loads with a
+    corpus and a scope of None, which reads as unknown provenance. It does not
+    read as a record of the current corpus.
+    """
+    path = path or RECOVERY_FAILURES_FILE
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            loaded = json.load(fh)
+    except (json.JSONDecodeError, OSError):
+        return None
+    if isinstance(loaded, list):
+        return {"corpus": None, "scope": None, "failures": loaded}
+    return loaded
 
 
 def _accounts(only: str | None) -> list[tuple]:
@@ -74,17 +123,23 @@ def main(argv=None) -> int:
         from services.offers.propose import propose_new_templates, propose_revisions
         from services.offers import analyse_catalogue_gap, iter_offers, load_template_texts
 
+        # Stamped before the analysis, not after. A stamp taken afterwards would
+        # describe the corpus at the end of a pass that takes minutes, and would
+        # claim the run measured offers it never saw.
+        corpus = corpus_fingerprint()
         offers = [offer for offer in iter_offers() if offer.day_count]
         if not offers:
             print("the offer corpus is empty - recover it first", file=sys.stderr)
             return 2
         texts = load_template_texts()
-        print(f"measuring {len(offers)} offers against {len(texts)} templates...", flush=True)
+        print(f"measuring {len(offers)} offers against {len(texts)} templates "
+              f"(corpus {corpus['fingerprint']}, {corpus['count']} stored)...", flush=True)
         report = analyse_catalogue_gap(offers, texts)
-        drafted = propose_revisions(offers, report, texts) + propose_new_templates(report, texts)
+        drafted = (propose_revisions(offers, report, texts, corpus=corpus)
+                   + propose_new_templates(report, texts, corpus=corpus))
         for proposal in drafted:
             save(proposal)
-        save_summary(summarise(report, len(offers)))
+        save_summary(summarise(report, len(offers), corpus=corpus))
         print(f"days {report.total_days}: matched {report.matched} "
               f"({report.coverage:.1%}), edited {report.near_miss}, "
               f"uncovered {report.unmatched}")
@@ -109,6 +164,7 @@ def main(argv=None) -> int:
         print("no matching enabled account", file=sys.stderr)
         return 2
 
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     totals = {"scanned": 0, "stored": 0, "skipped": 0, "failed": 0}
     all_failures = []
     for account_id, owner, imap_user in accounts:
@@ -140,15 +196,23 @@ def main(argv=None) -> int:
     print(f"\ntotals: {totals}")
     print(f"corpus: {OFFER_CORPUS_DIR}")
 
-    if all_failures:
-        # In full, never truncated. The console list is capped at 20 per
-        # account, and that cap once hid 369 of 409 rejections. Of the 40 that
-        # happened to be visible, 25 were real offers a parser fix later
-        # recovered — evidence that only existed because the cap missed them.
-        os.makedirs(os.path.dirname(RECOVERY_FAILURES_FILE) or ".", exist_ok=True)
-        with open(RECOVERY_FAILURES_FILE, "w", encoding="utf-8") as fh:
-            json.dump(all_failures, fh, ensure_ascii=False, indent=2)
-        print(f"failures: {len(all_failures)} recorded in {RECOVERY_FAILURES_FILE}")
+    # In full, never truncated, and written even when the list is empty. The
+    # console list is capped at 20 per account, and that cap once hid 369 of 409
+    # rejections. Of the 40 that happened to be visible, 25 were real offers a
+    # parser fix later recovered — evidence that only existed because the cap
+    # missed them. A run that finds nothing writes an empty list, because a
+    # skipped write leaves an old record that no reader can tell from a new one.
+    written = write_failure_record(all_failures, {
+        "months": args.months,
+        "accounts": [imap_user for _, _, imap_user in accounts],
+        "since": since.isoformat(),
+        "before": before.isoformat(),
+        "started_at": started_at,
+        "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "dry_run": bool(args.dry_run),
+        "refetch": bool(args.refetch),
+    })
+    print(f"failures: {len(all_failures)} recorded in {written}")
 
     if args.routes_json and not args.dry_run:
         print(f"routes.json: {build_routes_json(args.routes_json)} routes")

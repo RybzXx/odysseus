@@ -21,7 +21,7 @@ the catalogue's owner can assign, so naming is left to the review.
 """
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable, Optional
 
 from services.offers.day_match import rank_templates, reordered_templates
 from services.offers.gap_report import cluster_days, day_key
@@ -59,11 +59,13 @@ def _index_days(offers: Iterable[SentOffer]) -> dict:
 
 
 def propose_revisions(offers: Iterable[SentOffer], report: GapReport,
-                      template_texts: dict) -> list[TemplateProposal]:
+                      template_texts: dict,
+                      corpus: Optional[dict] = None) -> list[TemplateProposal]:
     """
     One proposal per template whose sent wording has drifted from the catalogue.
 
-    Pre:  `report` came from `analyse_catalogue_gap` over these same offers.
+    Pre:  `report` came from `analyse_catalogue_gap` over these same offers;
+          `corpus` is the stamp of the corpus those offers came from, or None.
     Post: for each template with near-miss days, a KIND_REVISION proposal whose
           `full_text` is the dominant variant among those days, carrying every
           near-miss day key as evidence. A template whose near misses do not
@@ -95,15 +97,18 @@ def propose_revisions(offers: Iterable[SentOffer], report: GapReport,
             target_code=code,
             nearest_code=code,
             nearest_score=_score_against(dominant.representative_text, code, template_texts),
+            corpus=corpus,
         ))
     return proposals
 
 
 def propose_new_templates(report: GapReport, template_texts: dict,
-                          min_occurrences: int = MIN_OCCURRENCES_FOR_NEW) -> list[TemplateProposal]:
+                          min_occurrences: int = MIN_OCCURRENCES_FOR_NEW,
+                          corpus: Optional[dict] = None) -> list[TemplateProposal]:
     """
     One proposal per recurring day the catalogue cannot express.
 
+    Pre:  `corpus` is the stamp of the corpus `report` measured, or None.
     Post: proposals ordered by evidence, each naming the nearest existing
           template and its score so a near-duplicate is visible before it is
           created. Patterns below `min_occurrences` are left bespoke.
@@ -130,6 +135,7 @@ def propose_new_templates(report: GapReport, template_texts: dict,
             nearest_code=nearest.code if nearest else None,
             nearest_score=nearest.score if nearest else 0.0,
             reordered_codes=[code for code, _, _ in mirrors],
+            corpus=corpus,
         ))
     return proposals
 

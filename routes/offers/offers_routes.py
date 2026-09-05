@@ -38,6 +38,7 @@ from services.offers import (
     queue_summary,
     record_verdict,
 )
+from services.offers.offer_store import corpus_fingerprint, corpus_provenance
 from services.offers.gap_report import load_summary as load_gap_summary
 from services.offers.gap_report import save_summary as save_gap_summary
 from services.offers.gap_report import summarise as summarise_gap
@@ -121,7 +122,12 @@ def setup_offers_routes() -> APIRouter:
         if summary is None:
             return {"measured": False,
                     "detail": "the gap has not been measured yet — re-derive from corpus"}
-        return {"measured": True, **summary}
+        # The figure is returned even when it is stale, and the provenance says
+        # so beside it. Withholding it would hide the one number that tells a
+        # reviewer how far the queue has drifted from the corpus.
+        return {"measured": True,
+                "provenance": corpus_provenance(summary.get("corpus")),
+                **summary}
 
     @router.post("/proposals/rebuild")
     async def rebuild_proposals(request: Request):
@@ -132,17 +138,18 @@ def setup_offers_routes() -> APIRouter:
         already carrying a verdict is left exactly as the reviewer left it.
         """
         require_admin(request)
+        corpus = corpus_fingerprint()
         offers = list(iter_offers())
         if not offers:
             raise HTTPException(409, "the offer corpus is empty — recover it first")
 
         template_texts = load_template_texts()
         report = analyse_catalogue_gap(offers, template_texts)
-        drafted = (propose_revisions(offers, report, template_texts)
-                   + propose_new_templates(report, template_texts))
+        drafted = (propose_revisions(offers, report, template_texts, corpus=corpus)
+                   + propose_new_templates(report, template_texts, corpus=corpus))
         for proposal in drafted:
             save_proposal(proposal)
-        summary = summarise_gap(report, len(offers))
+        summary = summarise_gap(report, len(offers), corpus=corpus)
         save_gap_summary(summary)
         return {"drafted": len(drafted), "queue": queue_summary(), "gap": summary}
 
@@ -156,10 +163,19 @@ def setup_offers_routes() -> APIRouter:
             raise HTTPException(422, f"unknown kind: {kind}")
 
         template_texts = load_template_texts()
-        items = [_proposal_to_dict(p, template_texts)
-                 for p in iter_proposals(status)
-                 if kind is None or p.kind == kind]
-        return {"count": len(items), "queue": queue_summary(), "proposals": items}
+        # One live fingerprint for the whole queue. Judging each proposal on its
+        # own would stat the corpus once per proposal for an answer that cannot
+        # change inside one request.
+        live = corpus_fingerprint()
+        items = []
+        for proposal in iter_proposals(status):
+            if kind is not None and proposal.kind != kind:
+                continue
+            item = _proposal_to_dict(proposal, template_texts)
+            item["provenance"] = corpus_provenance(proposal.corpus, live)
+            items.append(item)
+        return {"count": len(items), "queue": queue_summary(),
+                "corpus": live, "proposals": items}
 
     @router.get("/proposals/{proposal_id}")
     async def get_proposal(request: Request, proposal_id: str):

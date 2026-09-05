@@ -62,6 +62,10 @@ class TemplateProposal:
     reordered_codes: list = field(default_factory=list)
     status: str = STATUS_PENDING
     reviewer_note: str = ""
+    # The corpus this proposal was derived from, as `corpus_fingerprint()` saw
+    # it. None on a proposal written before stamping existed, which reads as
+    # unknown provenance rather than as current.
+    corpus: Optional[dict] = None
     created_at: str = ""
     decided_at: Optional[str] = None
     # Set once the approved change actually reached the catalogue sheet. Kept
@@ -108,11 +112,17 @@ def build_proposal(
     nearest_code: Optional[str] = None,
     nearest_score: float = 0.0,
     reordered_codes: Optional[list] = None,
+    corpus: Optional[dict] = None,
 ) -> TemplateProposal:
     """
     Pre:  `kind` is KIND_NEW or KIND_REVISION; `fields` covers TEMPLATE_FIELDS;
-          a KIND_REVISION names `target_code`.
+          a KIND_REVISION names `target_code`; `corpus` is the stamp of the
+          corpus the evidence came from, or None.
     Post: a pending proposal whose id is determined by its content.
+
+    The stamp is not part of the id. Two runs over two corpora that find the
+    same day must still produce one proposal, because the reviewer decided
+    about the day and not about the run.
 
     Blame: a missing field or a revision without a target is a caller bug and
     raises — a proposal that cannot be applied must never reach the queue.
@@ -136,6 +146,7 @@ def build_proposal(
         nearest_code=nearest_code,
         nearest_score=nearest_score,
         reordered_codes=list(reordered_codes or []),
+        corpus=corpus,
         created_at=_now(),
     )
 

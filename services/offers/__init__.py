@@ -46,6 +46,8 @@ from services.offers.offer_text import (
 from services.offers.offer_store import (
     OfferStoreError,
     build_routes_json,
+    corpus_fingerprint,
+    corpus_provenance,
     is_stored,
     iter_offers,
     load_offer,
@@ -113,6 +115,8 @@ __all__ = [
     "trim_trailer",
     "OfferStoreError",
     "build_routes_json",
+    "corpus_fingerprint",
+    "corpus_provenance",
     "is_stored",
     "iter_offers",
     "load_offer",

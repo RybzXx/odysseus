@@ -54,9 +54,13 @@ def open_gate(monkeypatch):
 
 @pytest.fixture
 def queue(tmp_path, monkeypatch):
-    from services.offers import gap_report
+    from services.offers import gap_report, offer_store
     monkeypatch.setattr(prop, "TEMPLATE_PROPOSAL_DIR", str(tmp_path / "proposals"))
     monkeypatch.setattr(gap_report, "GAP_SUMMARY_FILE", str(tmp_path / "catalogue_gap.json"))
+    # The handlers stamp what they derive, and the stamp reads the corpus
+    # directory. Without this the fingerprint is taken over the real corpus and
+    # the result depends on the machine the tests run on.
+    monkeypatch.setattr(offer_store, "OFFER_CORPUS_DIR", str(tmp_path / "offer_corpus"))
     return tmp_path
 
 

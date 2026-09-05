@@ -228,9 +228,22 @@ def format_gap_report(report: GapReport, top_patterns: int = 15) -> str:
     return "\n".join(lines)
 
 
-def summarise(report: GapReport, offer_count: int) -> dict:
-    """The report reduced to what a reviewer needs, in a form that survives JSON."""
+def summarise(report: GapReport, offer_count: int,
+              corpus: Optional[dict] = None) -> dict:
+    """
+    The report reduced to what a reviewer needs, in a form that survives JSON.
+
+    Pre:  `corpus` is the stamp from `corpus_fingerprint()` taken over the same
+          offers this report measured, or None.
+    Post: the summary carries that stamp under "corpus".
+
+    The caller supplies the stamp for the same reason it supplies
+    `offer_count`: this function measures nothing and reads no file. A stamp
+    taken here would describe the corpus at write time, not the corpus the
+    report came from, and those differ exactly when it matters.
+    """
     return {
+        "corpus": corpus,
         "offers": offer_count,
         "total_days": report.total_days,
         "matched": report.matched,

@@ -23,7 +23,7 @@ import json
 import os
 import re
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterator, Optional
 
 from src.constants import OFFER_CORPUS_DIR
@@ -34,6 +34,11 @@ _UNSAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _OFFER_RECORD = "offer.json"
 _OFFER_TEXT = "text.txt"
 _SOURCE_STEM = "source"
+
+# What a corpus stamp on a derived artifact can say about that artifact.
+PROVENANCE_CURRENT = "current"    # derived from the corpus that is on disk now
+PROVENANCE_STALE = "stale"        # derived from a different corpus
+PROVENANCE_UNKNOWN = "unknown"    # the artifact carries no stamp
 
 
 class OfferStoreError(Exception):
@@ -160,6 +165,67 @@ def load_offer(message_id: str, attachment_name: str = "") -> Optional[SentOffer
         return None
     with open(path, encoding="utf-8") as fh:
         return _offer_from_dict(json.load(fh))
+
+
+def corpus_fingerprint() -> dict:
+    """
+    Identity of the corpus as it stands on disk now.
+
+    Post: {"count": int, "fingerprint": str, "stamped_at": ISO-8601 UTC}. The
+          fingerprint changes when an offer is added, removed, or rewritten. It
+          does not change when the corpus is only read.
+
+    Stat, not content. `reparse_stored` rewrites offer.json in place and leaves
+    the set of offers unchanged, so a hash of the membership alone cannot tell a
+    reparsed corpus from the corpus it replaced. Size and modification time
+    catch that for the cost of a stat instead of a read of every record.
+
+    A restore that keeps the content but moves the modification time reports a
+    corpus that changed when it did not. That error direction is the safe one. A
+    derived artifact is then called stale while it is current. It is never
+    called current while it is stale.
+    """
+    digest = hashlib.sha256()
+    count = 0
+    if os.path.isdir(OFFER_CORPUS_DIR):
+        for name in sorted(os.listdir(OFFER_CORPUS_DIR)):
+            record = os.path.join(OFFER_CORPUS_DIR, name, _OFFER_RECORD)
+            try:
+                stat = os.stat(record)
+            except OSError:
+                continue
+            digest.update(f"{name}\t{stat.st_size}\t{stat.st_mtime_ns}\n".encode("utf-8"))
+            count += 1
+    return {
+        "count": count,
+        "fingerprint": digest.hexdigest()[:16],
+        "stamped_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def corpus_provenance(stamp: Optional[dict], live: Optional[dict] = None) -> dict:
+    """
+    Whether a derived artifact came from the corpus that is on disk now.
+
+    Pre:  `stamp` is the corpus block the artifact carries, or None when the
+          artifact was written before stamping existed.
+    Post: {"state": current | stale | unknown, "stored": stamp, "live": live}.
+
+    `live` is a parameter so a caller that judges many artifacts computes the
+    live fingerprint one time rather than one time per artifact.
+
+    Blame: an unstamped artifact is unknown, never current. A caller that reads
+    unknown as current removes the only reason to stamp.
+    """
+    live = live or corpus_fingerprint()
+    recorded = (stamp or {}).get("fingerprint")
+    if not recorded:
+        state = PROVENANCE_UNKNOWN
+    elif recorded == live.get("fingerprint"):
+        state = PROVENANCE_CURRENT
+    else:
+        state = PROVENANCE_STALE
+    return {"state": state, "stored": stamp or None, "live": live}
 
 
 def iter_offers() -> Iterator[SentOffer]:
