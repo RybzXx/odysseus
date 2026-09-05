@@ -23,13 +23,29 @@ Remote `daily-driver` on `github.com/RybzXx/odysseus`.
 **Five commits are unpushed**: `d12dbfb`, `de66b5a`, `2dd1180`, `0b2d970`,
 `5a1ea4c`. Everything through `c446240` is on the remote.
 
-The repository reaches outside itself nowhere. The Bil Weekend pipeline is
+No code or data path reaches outside the repository. The Bil Weekend pipeline is
 vendored at `services/itinerary/pipeline`; the day catalogue is vendored at
 `services/offers/data`. `BILWEEKEND_REPO_ROOT` is gone.
 
-The standalone `WebOperationsBilW` checkout still exists and received two
-changes early in this work (the autojunk fix and the ranked matcher). Odysseus
-is now the authoritative copy; that checkout is legacy by the owner's decision.
+**One file must be placed by hand on a new machine.** The vendored pipeline
+reads a Google service account from `data/bilweekend_service_account.json`, or
+from the path in `BILWEEKEND_GOOGLE_CREDENTIALS`. That file is gitignored and
+does not travel with a clone. Without it, template and pricing loading still
+work — they read the vendored data — but anything touching Google Docs or
+Sheets fails. On the machine this was built on it was copied from the
+`WebOperationsBilW` checkout's `mahdi1.json`.
+
+The standalone `WebOperationsBilW` checkout is a separate git repo and received
+two changes early in this work: the autojunk fix and the ranked matcher, with
+its near-miss band and ambiguity margin. They are committed there as `c4170ae`
+on `master`, unpushed. Odysseus is the authoritative copy of that logic now —
+`services/offers/day_match` is the single implementation, and the vendored
+`itinerary_reader` imports it — but that checkout is what Render deploys, so the
+fix matters there on its own account.
+
+That repo also carries two unrelated modified files, `data/pricing/entry_tickets.json`
+and `data/pricing/new_hotels.json`, which predate this work and were deliberately
+left uncommitted.
 
 ## State as of this handover
 
@@ -151,3 +167,13 @@ unreferenced.
 **"Failures are now recorded in full."** The write block never reached the file;
 a patch had not matched. The claim appeared in a commit message and in a report
 to the owner while the behaviour was unchanged. Fixed in `0b2d970`.
+
+**"Moved the workstream record into the repository it describes."** `c446240`
+copied the spec rather than moving it, and left a duplicate in the outer working
+directory. Both copies were identical, so nothing had diverged, but a second
+copy of a living document is a copy that will. The duplicate was deleted on
+2026-09-05; `docs/workstreams/` in the outer directory still holds
+`00-PROTOCOL.md` and `ws-01`, which predate this work.
+
+The pattern in all three: a claim was made from the intent of an edit rather
+than from its result. Checking the file afterwards would have caught every one.
