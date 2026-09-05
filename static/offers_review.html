@@ -40,6 +40,7 @@
   .tag.new { color: var(--accent); border-color: var(--accent); }
   .tag.revision { color: var(--warn); border-color: var(--warn); }
   .tag.stale { color: var(--gone); border-color: var(--gone); }
+  .tag.rare { color: var(--accent); border-color: var(--accent); }
   .grow { flex: 1; }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
   @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
@@ -70,6 +71,7 @@
   .diff del { background: var(--del); padding: 0 2px; }
   .grouping { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .grouping input { width: 120px; }
+  .sep { color: var(--line); padding: 0 2px; }
   .group { border: 1px solid var(--warn); border-radius: 10px; padding: 8px; margin-top: 14px; }
   .group-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
                 padding: 4px 6px 10px; }
@@ -84,6 +86,11 @@
     <button id="f-pending" class="primary">Pending</button>
     <button id="f-approved">Approved</button>
     <button id="f-rejected">Rejected</button>
+    <button id="f-retired">Retired</button>
+    <span class="sep">|</span>
+    <button id="q-rare" class="primary">Rare</button>
+    <button id="q-recurring">Recurring</button>
+    <button id="q-all">All</button>
     <span class="grow"></span>
     <label class="grouping">Group near-duplicates
       <input type="range" id="grouping" min="50" max="95" step="5" value="70">
@@ -97,6 +104,6 @@
 
 <div id="more" class="bar"></div>
 
-<script src="/static/js/offersReview.js?v=20260905group2"></script>
+<script src="/static/js/offersReview.js?v=20260905rare1"></script>
 </body>
 </html>

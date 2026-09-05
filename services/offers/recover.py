@@ -146,7 +146,7 @@ def main(argv=None) -> int:
         # timeout over it. A gap pass costs about 3 minutes on a full corpus,
         # which no HTTP handler should hold open.
         from services.offers.gap_report import save_summary, summarise
-        from services.offers.proposals import queue_summary, save
+        from services.offers.proposals import queue_summary, retire_undrafted, save
         from services.offers.propose import propose_new_templates, propose_revisions
         from services.offers import analyse_catalogue_gap, iter_offers, load_template_texts
 
@@ -163,16 +163,23 @@ def main(argv=None) -> int:
               f"(corpus {corpus['fingerprint']}, {corpus['count']} stored)...", flush=True)
         report = analyse_catalogue_gap(
             offers, texts, on_progress=_print_stage_progress(time.monotonic()))
+        counts = {}
         drafted = (propose_revisions(offers, report, texts, corpus=corpus)
-                   + propose_new_templates(report, texts, corpus=corpus))
+                   + propose_new_templates(report, texts, corpus=corpus, counts=counts))
         for proposal in drafted:
             save(proposal)
+        # After every draft is on disk, never before. A proposal retired first
+        # and drafted second would be counted as retired and then read as
+        # pending, and the printed numbers would disagree with the queue.
+        retired = retire_undrafted(p.proposal_id for p in drafted)
         save_summary(summarise(report, len(offers), corpus=corpus))
         print(f"days {report.total_days}: matched {report.matched} "
               f"({report.coverage:.1%}), edited {report.near_miss}, "
               f"uncovered {report.unmatched}")
         print(f"patterns {len(report.patterns)}, recurring {len(report.recurring_patterns)}")
-        print(f"drafted {len(drafted)} proposals; queue {queue_summary()}")
+        print(f"patterns rare {counts['rare']}, far from canon {counts['far_from_canon']}, "
+              f"both {counts['rare_and_far']}, recurring drafted {counts['recurring']}")
+        print(f"drafted {len(drafted)} proposals, retired {retired}; queue {queue_summary()}")
         return 0
 
     if args.reextract:

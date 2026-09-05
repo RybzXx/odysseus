@@ -27,6 +27,9 @@ from services.offers import (
     STATUS_APPROVED,
     STATUS_PENDING,
     STATUS_REJECTED,
+    STATUS_RETIRED,
+    FREQUENCY_RARE,
+    FREQUENCY_RECURRING,
     ProposalError,
     analyse_catalogue_gap,
     iter_offers,
@@ -37,6 +40,7 @@ from services.offers import (
     propose_revisions,
     queue_summary,
     record_verdict,
+    retire_undrafted,
 )
 from services.offers.offer_store import (
     corpus_fingerprint,
@@ -102,6 +106,7 @@ def _proposal_to_dict(proposal, template_texts: dict) -> dict:
         "evidence_day_keys": proposal.evidence_day_keys,
         "internal_notes": proposal.fields.get("internal_notes", ""),
         "fields": proposal.fields,
+        "frequency": proposal.frequency,
         "reviewer_note": proposal.reviewer_note,
         "created_at": proposal.created_at,
         "decided_at": proposal.decided_at,
@@ -149,22 +154,30 @@ def setup_offers_routes() -> APIRouter:
 
         template_texts = load_template_texts()
         report = analyse_catalogue_gap(offers, template_texts)
+        counts = {}
         drafted = (propose_revisions(offers, report, template_texts, corpus=corpus)
-                   + propose_new_templates(report, template_texts, corpus=corpus))
+                   + propose_new_templates(report, template_texts, corpus=corpus,
+                                           counts=counts))
         for proposal in drafted:
             save_proposal(proposal)
+        retired = retire_undrafted(p.proposal_id for p in drafted)
         summary = summarise_gap(report, len(offers), corpus=corpus)
         save_gap_summary(summary)
-        return {"drafted": len(drafted), "queue": queue_summary(), "gap": summary}
+        return {"drafted": len(drafted), "retired": retired, "patterns": counts,
+                "queue": queue_summary(), "gap": summary}
 
     @router.get("/proposals")
     async def list_proposals(request: Request, status: Optional[str] = None,
-                             kind: Optional[str] = None):
+                             kind: Optional[str] = None,
+                             frequency: Optional[str] = None):
         require_admin(request)
-        if status and status not in (STATUS_PENDING, STATUS_APPROVED, STATUS_REJECTED):
+        if status and status not in (STATUS_PENDING, STATUS_APPROVED,
+                                     STATUS_REJECTED, STATUS_RETIRED):
             raise HTTPException(422, f"unknown status: {status}")
         if kind and kind not in (KIND_NEW, KIND_REVISION):
             raise HTTPException(422, f"unknown kind: {kind}")
+        if frequency and frequency not in (FREQUENCY_RARE, FREQUENCY_RECURRING):
+            raise HTTPException(422, f"unknown frequency: {frequency}")
 
         template_texts = load_template_texts()
         # One live fingerprint for the whole queue. Judging each proposal on its
@@ -172,7 +185,7 @@ def setup_offers_routes() -> APIRouter:
         # change inside one request.
         live = corpus_fingerprint()
         items = []
-        for proposal in iter_proposals(status):
+        for proposal in iter_proposals(status, frequency=frequency):
             if kind is not None and proposal.kind != kind:
                 continue
             item = _proposal_to_dict(proposal, template_texts)

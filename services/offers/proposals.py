@@ -30,11 +30,22 @@ from services.offers.catalogue import TEMPLATE_FIELDS
 KIND_NEW = "new"                 # a day the catalogue cannot express at all
 KIND_REVISION = "revision"       # an existing template whose text has drifted
 
-# Where a proposal stands. Only PENDING is not terminal.
+# Where a proposal stands.
 STATUS_PENDING = "pending"
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
+# A rebuild no longer draws this day out of the corpus. It leaves the reviewer's
+# queue and stays on disk. Deliberately not terminal: a proposal id is its
+# content, so a later analysis that finds the day again returns it to pending.
+# Treating it as terminal would bury a day the corpus still writes.
+STATUS_RETIRED = "retired"
 TERMINAL_STATUSES = (STATUS_APPROVED, STATUS_REJECTED)
+
+# How often the corpus wrote the day behind a proposal. The reviewer reads the
+# two apart: a rare day earns a new row, and a recurring one usually restates a
+# row the catalogue already holds.
+FREQUENCY_RARE = "rare"
+FREQUENCY_RECURRING = "recurring"
 
 
 class ProposalError(Exception):
@@ -61,6 +72,9 @@ class TemplateProposal:
     # template for a journey the catalogue already describes.
     reordered_codes: list = field(default_factory=list)
     status: str = STATUS_PENDING
+    # Set when the proposal is drafted, from the evidence behind it. Stored
+    # rather than derived, so the page filters without measuring anything.
+    frequency: str = FREQUENCY_RECURRING
     reviewer_note: str = ""
     # The corpus this proposal was derived from, as `corpus_fingerprint()` saw
     # it. None on a proposal written before stamping existed, which reads as
@@ -113,6 +127,7 @@ def build_proposal(
     nearest_score: float = 0.0,
     reordered_codes: Optional[list] = None,
     corpus: Optional[dict] = None,
+    frequency: str = FREQUENCY_RECURRING,
 ) -> TemplateProposal:
     """
     Pre:  `kind` is KIND_NEW or KIND_REVISION; `fields` covers TEMPLATE_FIELDS;
@@ -147,6 +162,7 @@ def build_proposal(
         nearest_score=nearest_score,
         reordered_codes=list(reordered_codes or []),
         corpus=corpus,
+        frequency=frequency,
         created_at=_now(),
     )
 
@@ -181,12 +197,19 @@ def load(proposal_id: str) -> Optional[TemplateProposal]:
         return None
 
 
-def iter_proposals(status: Optional[str] = None) -> Iterator[TemplateProposal]:
+def iter_proposals(status: Optional[str] = None,
+                   frequency: Optional[str] = None) -> Iterator[TemplateProposal]:
     """
-    Yield proposals, most-evidenced first.
+    Yield proposals in the order their own list is read.
 
     Post: a proposal whose file is unreadable is skipped rather than raised —
           one bad file must not empty the reviewer's queue.
+
+    Two lists, two orders. A rare list is ordered by distance from the
+    catalogue, farthest first, because the day the catalogue understands least
+    is the one that most clearly earns a row. A recurring list is ordered by
+    weight, because there the argument is repetition. Ordering the rare list by
+    weight would put the least rare day at the top of a list of rare days.
     """
     if not os.path.isdir(TEMPLATE_PROPOSAL_DIR):
         return
@@ -197,9 +220,15 @@ def iter_proposals(status: Optional[str] = None) -> Iterator[TemplateProposal]:
         proposal = load(name[:-5])
         if proposal is None:
             continue
-        if status is None or proposal.status == status:
-            found.append(proposal)
-    found.sort(key=lambda p: (-p.weight, -p.occurrences, p.proposal_id))
+        if status is not None and proposal.status != status:
+            continue
+        if frequency is not None and proposal.frequency != frequency:
+            continue
+        found.append(proposal)
+    if frequency == FREQUENCY_RARE:
+        found.sort(key=lambda p: (p.nearest_score, -p.occurrences, p.proposal_id))
+    else:
+        found.sort(key=lambda p: (-p.weight, -p.occurrences, p.proposal_id))
     yield from found
 
 
@@ -248,10 +277,41 @@ def record_verdict(
 
 def queue_summary() -> dict:
     """Counts by status, for a panel header or a log line."""
-    counts = {STATUS_PENDING: 0, STATUS_APPROVED: 0, STATUS_REJECTED: 0}
+    counts = {STATUS_PENDING: 0, STATUS_APPROVED: 0,
+              STATUS_REJECTED: 0, STATUS_RETIRED: 0}
     for proposal in iter_proposals():
         counts[proposal.status] = counts.get(proposal.status, 0) + 1
     return counts
+
+
+def retire_undrafted(drafted_ids) -> int:
+    """
+    Retire every pending proposal that this rebuild did not draft.
+
+    Pre:  `drafted_ids` holds every id from one complete rebuild over the whole
+          corpus. A partial set retires proposals the corpus still writes.
+    Post: a pending proposal outside that set reads `retired`. Its file stays on
+          disk and nothing else about it changes. Returns how many were retired.
+
+    Blame: passing the ids of a narrowed run is a caller bug. The proposals it
+    did not reach are not gone from the corpus, only from that run.
+
+    Approved and rejected proposals are never touched. A verdict is the one
+    thing this queue exists to collect, and a rebuild must not undo it.
+    """
+    drafted = set(drafted_ids)
+    retired = 0
+    for proposal in iter_proposals(status=STATUS_PENDING):
+        if proposal.proposal_id in drafted:
+            continue
+        proposal.status = STATUS_RETIRED
+        target = _path(proposal.proposal_id)
+        temporary = target + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as fh:
+            json.dump(asdict(proposal), fh, ensure_ascii=False, indent=2)
+        os.replace(temporary, target)
+        retired += 1
+    return retired
 
 
 def mark_applied(proposal_id: str) -> TemplateProposal:

@@ -23,19 +23,25 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from services.offers.day_match import rank_templates, reordered_templates
+from services.offers.day_match import NEAR_MISS_FLOOR, rank_templates, reordered_templates
 from services.offers.gap_report import cluster_days, day_key
 from services.offers.models import GapReport, SentOffer
 from services.offers.proposals import (
+    FREQUENCY_RARE,
+    FREQUENCY_RECURRING,
     KIND_NEW,
     KIND_REVISION,
     TemplateProposal,
     build_proposal,
 )
 
-# A recurring day is worth a template; a day written once is bespoke. ws-03
-# WP1.8 leaves the singleton tail alone by default.
+# A recurring day must be written at least this many times to earn a template.
 MIN_OCCURRENCES_FOR_NEW = 2
+
+# At or below this, the day is rare: written once or twice, usually for one
+# client. Above it, the day recurs and the catalogue mostly already speaks for
+# it. The two sets meet at this line and do not overlap.
+MAX_OCCURRENCES_FOR_RARE = 2
 
 
 def _blank_fields(full_text: str, overnight_city: str, note: str) -> dict:
@@ -104,22 +110,61 @@ def propose_revisions(offers: Iterable[SentOffer], report: GapReport,
 
 def propose_new_templates(report: GapReport, template_texts: dict,
                           min_occurrences: int = MIN_OCCURRENCES_FOR_NEW,
-                          corpus: Optional[dict] = None) -> list[TemplateProposal]:
+                          corpus: Optional[dict] = None,
+                          counts: Optional[dict] = None) -> list[TemplateProposal]:
     """
-    One proposal per recurring day the catalogue cannot express.
+    One proposal per day the catalogue cannot express, rare and recurring alike.
 
     Pre:  `corpus` is the stamp of the corpus `report` measured, or None.
+          `counts`, when given, is filled with what each test admitted.
     Post: proposals ordered by evidence, each naming the nearest existing
           template and its score so a near-duplicate is visible before it is
-          created. Patterns below `min_occurrences` are left bespoke.
+          created. Every proposal carries the frequency of the day behind it.
+
+    A day written once or twice is rare, and a rare day earns a row only when
+    the catalogue is far from it. The owner asked for exactly those: the days
+    that do not show usually, which canon cannot express. A rare day close to a
+    row is an edit to that row, not a new one, so it is left out.
+
+    A recurring day keeps the older rule and only has to clear
+    `min_occurrences`. The two sets do not overlap, because rare stops at
+    MAX_OCCURRENCES_FOR_RARE and recurring starts above it.
     """
     proposals = []
+    tally = counts if counts is not None else {}
+    tally.setdefault("rare", 0)
+    tally.setdefault("far_from_canon", 0)
+    tally.setdefault("rare_and_far", 0)
+    tally.setdefault("recurring", 0)
+
     for pattern in report.patterns:
-        if pattern.occurrences < min_occurrences:
-            continue
         ranked = rank_templates(pattern.representative_text, template_texts)
         nearest = ranked[0] if ranked else None
+        nearest_score = nearest.score if nearest else 0.0
+
         mirrors = reordered_templates(pattern.representative_text, template_texts)
+
+        is_rare = pattern.occurrences <= MAX_OCCURRENCES_FOR_RARE
+        # A mirror is far from canon whatever it scores. Token overlap is blind
+        # to order and carries half the score, so a route driven the other way
+        # reads as 0.836 against the row it reverses. The catalogue still cannot
+        # express it: a reordered pair is neither a match nor an edit. Judging it
+        # by score alone would drop the very day this warning exists to catch.
+        is_far = nearest_score < NEAR_MISS_FLOOR or bool(mirrors)
+        tally["rare"] += int(is_rare)
+        tally["far_from_canon"] += int(is_far)
+
+        if is_rare:
+            if not is_far:
+                continue
+            tally["rare_and_far"] += 1
+            frequency = FREQUENCY_RARE
+        else:
+            if pattern.occurrences < min_occurrences:
+                continue
+            tally["recurring"] += 1
+            frequency = FREQUENCY_RECURRING
+
         note = (f"Written {pattern.occurrences} times across sent offers with no template "
                 f"that expresses it. Age-weighted evidence: {pattern.weight:.1f}.")
         if mirrors:
@@ -133,9 +178,10 @@ def propose_new_templates(report: GapReport, template_texts: dict,
             occurrences=pattern.occurrences,
             weight=pattern.weight,
             nearest_code=nearest.code if nearest else None,
-            nearest_score=nearest.score if nearest else 0.0,
+            nearest_score=nearest_score,
             reordered_codes=[code for code, _, _ in mirrors],
             corpus=corpus,
+            frequency=frequency,
         ))
     return proposals
 

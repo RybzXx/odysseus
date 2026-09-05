@@ -475,3 +475,140 @@ def test_the_analysis_stays_silent_when_no_callback_is_given():
                         days=[OfferDay(1, "a day in Mosul with the old city", "Mosul")])]
     report = analyse_catalogue_gap(offers, {"MO1": "a day in Mosul with the old city"})
     assert report.total_days == 1
+
+
+# --- rare days and retirement ----------------------------------------------
+
+def _pattern(text, occurrences, city="Mosul"):
+    from services.offers.models import DayPattern
+    return DayPattern(pattern_id=f"p-{abs(hash(text)) % 10**8}", representative_text=text,
+                      occurrences=occurrences, weight=float(occurrences),
+                      overnight_city=city, member_keys=[f"<{occurrences}@x>#1"])
+
+
+def _report(patterns):
+    from services.offers.models import GapReport
+    report = GapReport()
+    report.patterns = patterns
+    return report
+
+
+CANON = ("8 AM Start the day with discovering the reconstruction of the old city, "
+         "especially Al-Nuri Mosque and Al Hadbaa Minaret. Walk through the area "
+         "where the last and most intensive battle took place.")
+FAR = ("Board a wooden mashoof at dawn and glide through the reed channels of the "
+       "Ahwar, where buffalo graze between the islands and herons lift off the water.")
+
+
+def test_a_rare_day_far_from_canon_is_proposed():
+    from services.offers.propose import propose_new_templates
+    from services.offers.proposals import FREQUENCY_RARE
+    drafted = propose_new_templates(_report([_pattern(FAR, 1)]), {"MO1": CANON})
+    assert len(drafted) == 1
+    assert drafted[0].frequency == FREQUENCY_RARE
+
+
+def test_a_rare_day_close_to_canon_is_not_proposed():
+    """A rare day the catalogue nearly expresses is an edit to that row."""
+    from services.offers.propose import propose_new_templates
+    drafted = propose_new_templates(_report([_pattern(CANON, 1)]), {"MO1": CANON})
+    assert drafted == []
+
+
+def test_a_recurring_day_is_proposed_and_marked_recurring():
+    from services.offers.propose import propose_new_templates
+    from services.offers.proposals import FREQUENCY_RECURRING
+    drafted = propose_new_templates(_report([_pattern(FAR, 7)]), {"MO1": CANON})
+    assert len(drafted) == 1
+    assert drafted[0].frequency == FREQUENCY_RECURRING
+
+
+def test_the_two_frequency_sets_do_not_overlap():
+    """Rare stops at two occurrences and recurring starts above it."""
+    from services.offers.propose import MAX_OCCURRENCES_FOR_RARE, propose_new_templates
+    from services.offers.proposals import FREQUENCY_RARE, FREQUENCY_RECURRING
+    patterns = [_pattern(FAR + f" Variant {n}.", n) for n in (1, 2, 3, 9)]
+    drafted = propose_new_templates(_report(patterns), {"MO1": CANON})
+    by_occurrence = {p.occurrences: p.frequency for p in drafted}
+    assert by_occurrence[1] == FREQUENCY_RARE
+    assert by_occurrence[MAX_OCCURRENCES_FOR_RARE] == FREQUENCY_RARE
+    assert by_occurrence[3] == FREQUENCY_RECURRING
+    assert by_occurrence[9] == FREQUENCY_RECURRING
+
+
+def test_the_run_reports_what_each_test_admitted():
+    from services.offers.propose import propose_new_templates
+    counts = {}
+    propose_new_templates(_report([_pattern(FAR, 1), _pattern(CANON, 1),
+                                   _pattern(FAR + " Again.", 8)]),
+                          {"MO1": CANON}, counts=counts)
+    assert counts["rare"] == 2
+    assert counts["rare_and_far"] == 1
+    assert counts["recurring"] == 1
+
+
+def test_the_rare_list_is_ordered_by_distance_from_canon(tmp_path, monkeypatch):
+    from services.offers import proposals as prop
+    from services.offers.proposals import FREQUENCY_RARE, build_proposal, iter_proposals, save
+    monkeypatch.setattr(prop, "TEMPLATE_PROPOSAL_DIR", str(tmp_path / "proposals"))
+    for score, weight in ((0.65, 9.0), (0.20, 1.0), (0.45, 5.0)):
+        save(build_proposal(kind="new", fields=_fields(f"a day scoring {score}"),
+                            evidence_day_keys=["<1@x>#1"], occurrences=1, weight=weight,
+                            nearest_score=score, frequency=FREQUENCY_RARE))
+    scores = [p.nearest_score for p in iter_proposals(frequency=FREQUENCY_RARE)]
+    assert scores == sorted(scores), "farthest from canon must come first"
+
+
+def test_a_rebuild_retires_a_pending_proposal_it_no_longer_drafts(tmp_path, monkeypatch):
+    from services.offers import proposals as prop
+    from services.offers.proposals import (
+        STATUS_PENDING, STATUS_RETIRED, build_proposal, load, retire_undrafted, save)
+    monkeypatch.setattr(prop, "TEMPLATE_PROPOSAL_DIR", str(tmp_path / "proposals"))
+    kept = build_proposal(kind="new", fields=_fields("a day still written"),
+                          evidence_day_keys=["<1@x>#1"])
+    gone = build_proposal(kind="new", fields=_fields("a day nobody writes now"),
+                          evidence_day_keys=["<2@x>#1"])
+    save(kept)
+    save(gone)
+    assert retire_undrafted([kept.proposal_id]) == 1
+    assert load(kept.proposal_id).status == STATUS_PENDING
+    assert load(gone.proposal_id).status == STATUS_RETIRED
+
+
+def test_retiring_never_touches_a_decided_proposal(tmp_path, monkeypatch):
+    from services.offers import proposals as prop
+    from services.offers.proposals import (
+        STATUS_APPROVED, build_proposal, load, record_verdict, retire_undrafted, save)
+    monkeypatch.setattr(prop, "TEMPLATE_PROPOSAL_DIR", str(tmp_path / "proposals"))
+    decided = build_proposal(kind="new", fields=_fields("a day already judged"),
+                             evidence_day_keys=["<1@x>#1"])
+    save(decided)
+    record_verdict(decided.proposal_id, STATUS_APPROVED, edited_fields={"code": "XX1"})
+    assert retire_undrafted([]) == 0
+    assert load(decided.proposal_id).status == STATUS_APPROVED
+
+
+def test_a_retired_proposal_returns_to_pending_when_it_is_drafted_again(tmp_path, monkeypatch):
+    """
+    A proposal id is its content. Retirement must not be terminal, or a day the
+    corpus starts writing again would stay buried.
+    """
+    from services.offers import proposals as prop
+    from services.offers.proposals import (
+        STATUS_PENDING, STATUS_RETIRED, build_proposal, load, retire_undrafted, save)
+    monkeypatch.setattr(prop, "TEMPLATE_PROPOSAL_DIR", str(tmp_path / "proposals"))
+    proposal = build_proposal(kind="new", fields=_fields("a day that comes back"),
+                              evidence_day_keys=["<1@x>#1"])
+    save(proposal)
+    retire_undrafted([])
+    assert load(proposal.proposal_id).status == STATUS_RETIRED
+    save(build_proposal(kind="new", fields=_fields("a day that comes back"),
+                        evidence_day_keys=["<1@x>#1"]))
+    assert load(proposal.proposal_id).status == STATUS_PENDING
+
+
+def _fields(text):
+    from services.offers.catalogue import TEMPLATE_FIELDS
+    blank = {name: "" for name in TEMPLATE_FIELDS}
+    blank["full_text"] = text
+    return blank

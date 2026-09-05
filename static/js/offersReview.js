@@ -11,6 +11,10 @@
  */
 const $ = (id) => document.getElementById(id);
 let filter = "pending";
+// The rare list holds days written once or twice that no catalogue row covers.
+// It is ordered by distance from the catalogue, farthest first, and the server
+// sends it in that order. The page must not re-sort it.
+let frequency = "rare";
 
 // The queue holds hundreds of proposals after a full-corpus rebuild, and each
 // card carries the whole proposed text. Building them all in one write locks a
@@ -57,11 +61,11 @@ function groupByLikeness(proposals, threshold) {
     if (!byRoot.has(root)) byRoot.set(root, []);
     byRoot.get(root).push(p);
   });
-  // Strongest evidence first, both between groups and inside one.
-  const groups = [...byRoot.values()];
-  groups.forEach((g) => g.sort((x, y) => (y.weight ?? 0) - (x.weight ?? 0)));
-  groups.sort((x, y) => (y[0].weight ?? 0) - (x[0].weight ?? 0));
-  return groups;
+  // The server's order is kept. It sorts a rare list by distance from the
+  // catalogue and a recurring list by weight, and only the server knows which
+  // list this is. Re-sorting here by weight would put the least rare day at the
+  // top of a list of rare days.
+  return [...byRoot.values()];
 }
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -127,12 +131,17 @@ function card(p) {
   const stale = p.provenance && p.provenance !== "current"
     ? `<span class="tag stale">${esc(p.provenance)} corpus</span>`
     : "";
+  // A rare day is ranked by how far the catalogue is from it, so the reviewer
+  // reads the distance that put it where it is.
+  const rarity = p.frequency === "rare"
+    ? `<span class="tag rare">rare · ${(1 - (p.nearest_score || 0)).toFixed(2)} from canon</span>`
+    : "";
 
   return `
   <div class="card" data-id="${esc(p.proposal_id)}">
     <div class="row">
       <span class="tag ${esc(p.kind)}">${esc(p.kind)}</span>
-      ${stale}
+      ${stale}${rarity}
       <strong>${heading}</strong>
       <span class="grow"></span>
       <span class="note">written ${p.occurrences}× · weighted ${(p.weight ?? 0).toFixed(1)} · ${nearest}</span>
@@ -338,7 +347,9 @@ async function render() {
   lastFetched = [];
   shown = 0;
   try {
-    const data = await api(`/api/offers/proposals?status=${encodeURIComponent(filter)}`);
+    const query = `status=${encodeURIComponent(filter)}`
+      + (frequency ? `&frequency=${encodeURIComponent(frequency)}` : "");
+    const data = await api(`/api/offers/proposals?${query}`);
     const q = data.queue;
     $("summary").textContent =
       `${q.pending} pending · ${q.approved} approved · ${q.rejected} rejected`;
@@ -360,11 +371,21 @@ $("grouping").addEventListener("input", (ev) => {
   if (lastFetched.length) regroup();
 });
 
-for (const status of ["pending", "approved", "rejected"]) {
+for (const status of ["pending", "approved", "rejected", "retired"]) {
   $(`f-${status}`).addEventListener("click", () => {
     filter = status;
-    for (const s of ["pending", "approved", "rejected"]) {
+    for (const s of ["pending", "approved", "rejected", "retired"]) {
       $(`f-${s}`).classList.toggle("primary", s === status);
+    }
+    render();
+  });
+}
+
+for (const [id, value] of [["q-rare", "rare"], ["q-recurring", "recurring"], ["q-all", ""]]) {
+  $(id).addEventListener("click", () => {
+    frequency = value;
+    for (const other of ["q-rare", "q-recurring", "q-all"]) {
+      $(other).classList.toggle("primary", other === id);
     }
     render();
   });

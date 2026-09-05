@@ -537,9 +537,25 @@ def test_a_recurring_unmatched_day_becomes_a_new_template_proposal(queue):
     assert sorted(proposal.evidence_day_keys) == ["<1@x>#3", "<2@x>#1"]
 
 
-def test_a_day_written_once_is_left_bespoke(queue):
+def test_a_day_written_once_and_far_from_canon_is_proposed_as_rare(queue):
+    """
+    The owner reversed the old rule on 2026-09-05. A day written once used to be
+    left bespoke. The catalogue already speaks for the common days, so the rare
+    ones are what a new row is for. The day must still be far from every row.
+    """
+    from services.offers.proposals import FREQUENCY_RARE
     single = [SentOffer(message_id="<solo@x>", subject="s", sent_at=None,
                         days=[OfferDay(1, TEXT_MARSHES, "Nasiriyah")])]
+    report = analyse_catalogue_gap(single, {"MO1": TEXT_MOSUL})
+    drafted = propose_new_templates(report, {"MO1": TEXT_MOSUL})
+    assert len(drafted) == 1
+    assert drafted[0].frequency == FREQUENCY_RARE
+
+
+def test_a_day_written_once_that_the_catalogue_nearly_holds_is_left_bespoke(queue):
+    """A rare day close to a row is an edit to that row, not a new one."""
+    single = [SentOffer(message_id="<solo@x>", subject="s", sent_at=None,
+                        days=[OfferDay(1, TEXT_MOSUL, "Mosul")])]
     report = analyse_catalogue_gap(single, {"MO1": TEXT_MOSUL})
     assert propose_new_templates(report, {"MO1": TEXT_MOSUL}) == []
 
