@@ -477,20 +477,40 @@ The warning was reworded. `335 offers then, 335 now` reads as no change at all,
 so a stale artifact whose count is unchanged now says the text has changed
 instead.
 
+### What the repair was worth
+
+**Coverage went from 35.6% to 49.5%.** The rebuild took 17 minutes over the
+repaired corpus.
+
+| | Before the repair | After |
+|---|---|---|
+| Days | 2424 | 2449 |
+| Matched | 863 (35.6%) | **1213 (49.5%)** |
+| Edited | 138 | 180 |
+| Uncovered | 1423 | 1056 |
+| Patterns | 738, 220 recurring | 562, 177 recurring |
+
+The figure recorded before the run as the inference to test was about 47.5%. The
+measured result is 49.5%.
+
+**The queue grew rather than shrank.** The rebuild drafted 195 proposals, and the
+queue holds 338 pending: 195 stamped current, 122 stale from the pre-repair run,
+and 21 unstamped from the 68-offer run. A proposal that a later analysis does not
+re-propose stays on disk, because no verdict was ever given on it. The queue has
+gone 48, then 257, then 338 across three rebuilds.
+
+The stamps make each group visible on the page, and the reviewer sees which
+corpus each proposal came from.
+
 ### State at the time of writing
 
 | | |
 |---|---|
 | Corpus | 335 offers, 2449 days, 1 day still unspaced |
 | Tests | 172 across five `tests/test_offers_*.py` files |
-| Commits | `50ca3b8`, `06b63a1`, on `main`, not yet pushed |
-| Review queue | 257 pending, marked stale on the page |
-| Gap summary | 35.6% over the pre-repair corpus, marked stale |
-| Rebuild | running, 14 minutes in, not finished |
-
-**Coverage after the repair is unmeasured.** The inference to test is about
-47.5%, on the reasoning that repaired days match at the rate spaced days do. It
-is falsified if they match materially below 53%.
+| Review queue | 338 pending — 195 current, 122 stale, 21 unknown |
+| Gap summary | 49.5% over 2449 days, stamped and current |
+| Commits | `50ca3b8`, `06b63a1`, `b79c6da` |
 
 ### Owner items, disposition
 
