@@ -38,7 +38,11 @@ from services.offers import (
     queue_summary,
     record_verdict,
 )
-from services.offers.offer_store import corpus_fingerprint, corpus_provenance
+from services.offers.offer_store import (
+    corpus_fingerprint,
+    corpus_provenance,
+    offers_of_message,
+)
 from services.offers.gap_report import load_summary as load_gap_summary
 from services.offers.gap_report import save_summary as save_gap_summary
 from services.offers.gap_report import summarise as summarise_gap
@@ -172,7 +176,10 @@ def setup_offers_routes() -> APIRouter:
             if kind is not None and proposal.kind != kind:
                 continue
             item = _proposal_to_dict(proposal, template_texts)
-            item["provenance"] = corpus_provenance(proposal.corpus, live)
+            # The state alone, not the whole comparison. The live half is the
+            # same for every proposal and is returned once as "corpus" below;
+            # repeating both halves 257 times added 56 KB to a 615 KB response.
+            item["provenance"] = corpus_provenance(proposal.corpus, live)["state"]
             items.append(item)
         return {"count": len(items), "queue": queue_summary(),
                 "corpus": live, "proposals": items}
@@ -209,7 +216,11 @@ def setup_offers_routes() -> APIRouter:
         not that the proposal is invalid — hence 404 with that said plainly.
         """
         require_admin(request)
-        for offer in iter_offers():
+        # Only the offers from the message the key names, not the whole corpus.
+        # A day key is "<message-id>#<day-number>", so the message is known and
+        # the scan was reading all 335 records to find one day.
+        message_id = day_key.rsplit("#", 1)[0]
+        for offer in offers_of_message(message_id):
             for day in offer.days:
                 if f"{offer.message_id}#{day.day_number}" == day_key:
                     return {

@@ -77,6 +77,10 @@ def corpus(monkeypatch):
                   days=[OfferDay(1, TEXT_MARSHES, "Nasiriyah")]),
     ]
     monkeypatch.setattr(offers_routes, "iter_offers", lambda: iter(offers))
+    # The evidence handler looks up one message rather than walking the corpus,
+    # so the fixture answers that lookup from the same offers.
+    monkeypatch.setattr(offers_routes, "offers_of_message",
+                        lambda message_id: [o for o in offers if o.message_id == message_id])
     monkeypatch.setattr(offers_routes, "load_template_texts", lambda: {"MO1": TEXT_MOSUL})
     return offers
 

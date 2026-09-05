@@ -53,6 +53,7 @@ from services.offers.offer_store import (
     load_offer,
     offer_dir,
     offer_slug,
+    offers_of_message,
     store_offer,
 )
 from services.offers.proposals import (
@@ -122,6 +123,7 @@ __all__ = [
     "load_offer",
     "offer_dir",
     "offer_slug",
+    "offers_of_message",
     "store_offer",
     "analyse_catalogue_gap",
     "classify_days",

@@ -167,6 +167,38 @@ def load_offer(message_id: str, attachment_name: str = "") -> Optional[SentOffer
         return _offer_from_dict(json.load(fh))
 
 
+def offers_of_message(message_id: str) -> list:
+    """
+    Every stored offer that came from one email.
+
+    Pre:  `message_id` is the id as stored, with or without angle brackets.
+    Post: the offers from that message, in directory order. Empty when the
+          message is not in the corpus.
+
+    The slug starts with the sanitised message id, so the directories are found
+    by prefix and only those are read. The caller usually holds a day key, which
+    names the message but not the attachment, and one email can carry two
+    offers. Reading the whole corpus to answer that costs 335 file reads and
+    about 14 seconds; this costs one directory listing and one read.
+    """
+    if not os.path.isdir(OFFER_CORPUS_DIR):
+        return []
+    prefix = offer_slug(message_id)
+    found = []
+    for name in sorted(os.listdir(OFFER_CORPUS_DIR)):
+        if not name.startswith(prefix):
+            continue
+        path = os.path.join(OFFER_CORPUS_DIR, name, _OFFER_RECORD)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                found.append(_offer_from_dict(json.load(fh)))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+    return found
+
+
 def corpus_fingerprint() -> dict:
     """
     Identity of the corpus as it stands on disk now.

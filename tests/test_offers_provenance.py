@@ -102,6 +102,32 @@ def test_fingerprint_of_an_absent_corpus_is_empty_not_an_error(tmp_path, monkeyp
     assert stamp["fingerprint"]
 
 
+# --- finding one message's offers ------------------------------------------
+
+def test_a_message_lookup_returns_every_offer_that_message_carried(corpus_root, monkeypatch):
+    """
+    One email can carry a group offer and an individual one. The evidence
+    handler holds a day key, which names the message but not the attachment, so
+    the lookup must return both.
+    """
+    from services.offers.models import OfferDay, SentOffer
+    from services.offers.offer_store import offers_of_message, store_offer
+    monkeypatch.setattr(offer_store, "OFFER_CORPUS_DIR", str(corpus_root))
+    for attachment in ("group.pdf", "individual.pdf"):
+        store_offer(
+            SentOffer(message_id="<1@x>", subject="Iraq", sent_at=None,
+                      attachment_name=attachment, days=[OfferDay(1, "day one", "Mosul")]),
+            b"%PDF-", "day one",
+        )
+    assert len(offers_of_message("<1@x>")) == 2
+
+
+def test_a_message_lookup_reads_nothing_for_an_unknown_message(corpus_root):
+    from services.offers.offer_store import offers_of_message
+    _store_record(corpus_root, "a")
+    assert offers_of_message("<nobody@x>") == []
+
+
 # --- reading a stamp -------------------------------------------------------
 
 def test_a_stamp_from_this_corpus_reads_as_current(corpus_root):
