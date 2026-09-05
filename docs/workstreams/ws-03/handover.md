@@ -315,3 +315,66 @@ whose JavaScript a browser had always refused to run.
 **A slow page is not always a slow server.** The measurements said 0.03 s for
 the page and 0.46 s for the queue, from the phone, while the page showed
 "loading" forever.
+
+---
+
+## Owner input — 2026-09-05, after the second pass
+
+Four items the owner raised after reading the rebuilt queue. Recorded as given.
+None is designed or built.
+
+### 1. Remove the dates from day text
+
+The owner wants the dates out.
+
+**They are in the text now.** A proposed template in the queue starts
+`Sunday April 20`, and the `MO1` revision diff strikes `Sunday Feb 1` as the
+difference between the catalogue text and the sent day. A date that changes on
+every offer makes the same day look like a new one.
+
+This file already lists embedded dates as one of three things a model would
+strip, with prices and client names. Invariant 1.4 forbids a model over the
+corpus before the owner's verdict, so a date rule and a model pass are two
+different questions.
+
+Not decided: whether the date is removed at parse time, at proposal time, or
+only from what a reviewer sees.
+
+### 2. Group days by similarity, and merge the ones that match
+
+The owner wants similar itinerary days categorised and merged.
+
+**Clustering exists and grouping already happens.** The last rebuild reported
+738 patterns and 220 recurring ones over 2424 days, and `cluster_days` picks a
+dominant variant inside a near-miss group. The queue still came out at 257
+proposals.
+
+Not decided: what counts as the same day for merging, whether merging joins
+proposals or joins the days behind them, and what happens to the evidence keys
+of a merged pair.
+
+### 3. Propose the catalogue code for each day
+
+The owner wants the system to suggest the code, not only the text.
+
+**The reviewer types it by hand today.** The card carries an empty Code box with
+the placeholder `e.g. MO2`, and a proposal cannot be approved without one. The
+nearest existing template and its score are already shown beside every card.
+
+Not decided: what a code is derived from, and how a suggestion avoids colliding
+with a code the catalogue already holds.
+
+### 4. Some itinerary days carry no spaces at all
+
+The owner reports day text with every space missing.
+
+**Space loss is known and partly handled.** Commit `2dd1180` recovers offers
+whose PDF lost every space, and this file records three variants found by
+opening rejected files by name: `Day 1` spaced, `TheOriginalTourDay1` glued to a
+title, and `Day1SaturdayMarch1` glued to a weekday. That work made the day
+*number* readable.
+
+The owner's report is about the day *text*, which is a different thing from the
+day number that a splitter looks for.
+
+Not decided: whether the spaceless text is repaired, flagged, or left as it is.
