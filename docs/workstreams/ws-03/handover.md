@@ -378,3 +378,125 @@ The owner's report is about the day *text*, which is a different thing from the
 day number that a splitter looks for.
 
 Not decided: whether the spaceless text is repaired, flagged, or left as it is.
+
+---
+
+## Third pass — 2026-09-05 evening
+
+The owner's items 2 and 4 were designed and built. Items 1 and 3 were not
+started. Recorded while the rebuild that measures the result is still running.
+
+### The spaceless days are repaired
+
+**543 of 2424 days had lost every space.** They arrived as
+`Meetandgreet,andfasttrackvisafromtheairport`. Not one could match a template:
+0 of a 70-day sample reached the 0.80 threshold, against 53% of days that kept
+their spaces. That was 38% of everything the catalogue did not cover.
+
+**pypdf drops the spaces on some files and reads the rest correctly.** PyMuPDF
+reads the same files with spaces, on 12 of 12 sampled documents. It was already
+installed, so nothing new was required.
+
+pypdf stays the first reader. PyMuPDF is asked only about a document whose text
+looks unspaced, and its answer is taken only when it is better. Reading every
+file twice would change text that is already right, and every proposal id with
+it.
+
+`python -m services.offers.recover --reextract` reads the stored attachments
+again. This is what invariant 1.1 is for: `source.<ext>` is kept for the life of
+the corpus and never written, so every derivative of it can be made again.
+
+| | Before | After |
+|---|---|---|
+| Unspaced days | 543 of 2424 | 1 of 2449 |
+| Median space ratio | 0.161 | 0.165 |
+| Days found | 2424 | 2449 |
+
+The 25 extra days appeared because re-splitting better text finds day headings
+the mangled text hid.
+
+**One day resists both readers.** `ATC Nowruz Itinerary - March 2025.pdf` day 3
+loses spaces irregularly — `Visit theSulaymaniyahMuseum, atreasuretroveof
+Kurdishhistory` — and pypdf and PyMuPDF return it the same way. It is named in
+the run's report rather than guessed at. One day in 2449 did not justify the
+word-list segmenter the design had held in reserve.
+
+### Two corrections came from running it
+
+**The first test asked about the whole document, and the day is the unit that
+gets matched.** One document scores 0.094 across the whole file while its third
+day is unreadable. One damaged day now sends the document back to its
+attachment.
+
+**A day reading `Arrival` has no spaces because it is one word.** Five such days
+in one `.docx` were sent for repair by a ratio test that judged text too short to
+judge. The test now says nothing about text under 80 characters. The shortest
+damaged day measured is 196.
+
+### Near-duplicates group in the queue
+
+**Nothing is merged.** All 257 proposals stay, no id changes, and no rebuild is
+needed. Near-duplicates render as one block with an optional single verdict, and
+a control on the page moves the line while a reviewer reads.
+
+| Threshold | Blocks | Groups |
+|---|---|---|
+| 0.95 | 254 | 3 |
+| 0.80 | 242 | 13 |
+| 0.70 (default) | 223 | 17 |
+| 0.60 | 188 | 26 |
+| 0.50 | 144 | 27 |
+
+It is computed in the page. The response already carries every proposal's text,
+so the server would send the same bytes and answer one threshold.
+
+**A group verdict decides one proposal at a time.** Each still needs its own
+code, and a proposal the server refuses does not take the others down with it.
+
+### A gap pass now says how far it has got
+
+**It printed one line, then nothing, for about fifteen minutes.** The only sign
+it was alive was CPU time climbing.
+
+`gap_report` measures and never prints, so the caller supplies a callback. The
+command prints it; the HTTP handler passes nothing.
+
+**An estimate appears only for scoring.** Every day costs the same to score, so
+the time left is a straight extrapolation. Clustering compares each day against
+every pattern found so far, so its cost per day rises as it runs. The pattern
+count is printed instead, because a rising count is what explains the slowdown.
+
+### The provenance work caught its own change
+
+Re-extraction rewrote 90 records and left the count at 335. The fingerprint moved
+from `05070bcc80d845de` to `610ffc253276eb19` while the count did not, and the
+page said so. A hash over membership alone would have called that corpus
+unchanged.
+
+The warning was reworded. `335 offers then, 335 now` reads as no change at all,
+so a stale artifact whose count is unchanged now says the text has changed
+instead.
+
+### State at the time of writing
+
+| | |
+|---|---|
+| Corpus | 335 offers, 2449 days, 1 day still unspaced |
+| Tests | 172 across five `tests/test_offers_*.py` files |
+| Commits | `50ca3b8`, `06b63a1`, on `main`, not yet pushed |
+| Review queue | 257 pending, marked stale on the page |
+| Gap summary | 35.6% over the pre-repair corpus, marked stale |
+| Rebuild | running, 14 minutes in, not finished |
+
+**Coverage after the repair is unmeasured.** The inference to test is about
+47.5%, on the reasoning that repaired days match at the rate spaced days do. It
+is falsified if they match materially below 53%.
+
+### Owner items, disposition
+
+| Item | State |
+|---|---|
+| 1. Remove the dates | Not started. The owner's reason is catalogue text quality, not matching: removing the date line moved the mean score by +0.004 and moved no day across the threshold |
+| 2. Group similar days | Built as a view |
+| 3. Suggest the code | Not started. The code abbreviates the places named in a template's title, and a new proposal has no title |
+| 4. Spaceless days | Repaired, 543 to 1 |
