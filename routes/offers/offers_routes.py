@@ -32,6 +32,7 @@ from services.offers import (
     FREQUENCY_RECURRING,
     ProposalError,
     analyse_catalogue_gap,
+    catalogue_regions,
     iter_offers,
     iter_proposals,
     load_template_texts,
@@ -194,8 +195,11 @@ def setup_offers_routes() -> APIRouter:
             # repeating both halves 257 times added 56 KB to a 615 KB response.
             item["provenance"] = corpus_provenance(proposal.corpus, live)["state"]
             items.append(item)
+        # The regions the catalogue uses, sent once. The reviewer picks from
+        # them rather than typing one, so a new row lands in a region the sheet
+        # already knows.
         return {"count": len(items), "queue": queue_summary(),
-                "corpus": live, "proposals": items}
+                "corpus": live, "regions": catalogue_regions(), "proposals": items}
 
     @router.get("/proposals/{proposal_id}")
     async def get_proposal(request: Request, proposal_id: str):

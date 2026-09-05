@@ -23,6 +23,7 @@ from services.offers.models import (
 from services.offers.catalogue import (
     TEMPLATE_FIELDS,
     active_template_texts,
+    catalogue_regions,
     load_template_texts,
     load_templates,
 )
@@ -105,6 +106,7 @@ __all__ = [
     "TemplateMatch",
     "TEMPLATE_FIELDS",
     "active_template_texts",
+    "catalogue_regions",
     "load_template_texts",
     "load_templates",
     "AMBIGUITY_MARGIN",

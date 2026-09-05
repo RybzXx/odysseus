@@ -15,6 +15,9 @@ let filter = "pending";
 // It is ordered by distance from the catalogue, farthest first, and the server
 // sends it in that order. The page must not re-sort it.
 let frequency = "rare";
+// The regions the catalogue uses, sent with the queue. The reviewer picks one
+// rather than typing it, so a new row lands in a region the sheet already knows.
+let regions = [];
 
 // The queue holds hundreds of proposals after a full-corpus rebuild, and each
 // card carries the whole proposed text. Building them all in one write locks a
@@ -116,6 +119,19 @@ async function loadGap() {
   }
 }
 
+function regionSelect(current, decided) {
+  // A value the catalogue no longer lists is kept and marked. Dropping it would
+  // silently change a choice a reviewer already made.
+  const known = regions.includes(current);
+  const options = [`<option value=""${current ? "" : " selected"}></option>`]
+    .concat(regions.map((r) =>
+      `<option value="${esc(r)}"${r === current ? " selected" : ""}>${esc(r)}</option>`));
+  if (current && !known) {
+    options.push(`<option value="${esc(current)}" selected>${esc(current)} (not in the catalogue)</option>`);
+  }
+  return `<select class="region" ${decided ? "disabled" : ""}>${options.join("")}</select>`;
+}
+
 function card(p) {
   const isRevision = p.kind === "revision";
   const heading = isRevision
@@ -173,8 +189,7 @@ function card(p) {
     <div class="fields">
       <label>Code <input type="text" class="code" value="${esc(p.fields.code || p.target_code || "")}"
              placeholder="e.g. MO2" ${decided ? "disabled" : ""}></label>
-      <label>Region <input type="text" class="region" value="${esc(p.fields.region || "")}"
-             placeholder="Central Iraq" ${decided ? "disabled" : ""}></label>
+      <label>Region ${regionSelect(p.fields.region || "", decided)}</label>
       <label>Overnight <input type="text" class="overnight"
              value="${esc(p.fields.overnight_city || "")}" ${decided ? "disabled" : ""}></label>
     </div>
@@ -358,6 +373,7 @@ async function render() {
       $("grouping-count").textContent = "";
       return;
     }
+    regions = data.regions || [];
     lastFetched = data.proposals;
     regroup();
   } catch (e) {

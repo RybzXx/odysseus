@@ -612,3 +612,28 @@ def _fields(text):
     blank = {name: "" for name in TEMPLATE_FIELDS}
     blank["full_text"] = text
     return blank
+
+
+# --- the region list --------------------------------------------------------
+
+def test_the_catalogue_names_its_own_regions(monkeypatch):
+    """
+    The page picks from this list rather than holding a typed copy. A region the
+    sheet stops using disappears without a code change.
+    """
+    from services.offers import catalogue
+    monkeypatch.setattr(catalogue, "_cache", {
+        "MO1": {"code": "MO1", "region": "Northern Iraq"},
+        "BB": {"code": "BB", "region": "Central Iraq"},
+        "BA1": {"code": "BA1", "region": "Southern Iraq"},
+        "KA": {"code": "KA", "region": "Central Iraq"},
+        "XX": {"code": "XX", "region": ""},
+    })
+    assert catalogue.catalogue_regions() == [
+        "Central Iraq", "Northern Iraq", "Southern Iraq"]
+
+
+def test_a_catalogue_with_no_regions_yields_an_empty_list(monkeypatch):
+    from services.offers import catalogue
+    monkeypatch.setattr(catalogue, "_cache", {"MO1": {"code": "MO1"}})
+    assert catalogue.catalogue_regions() == []

@@ -55,6 +55,22 @@ def load_templates(refresh: bool = False) -> dict:
     return templates
 
 
+def catalogue_regions(refresh: bool = False) -> list:
+    """
+    The regions the catalogue uses, sorted.
+
+    Post: distinct non-empty `region` values across every template row. Today
+          that is Central Iraq, Northern Iraq and Southern Iraq.
+
+    The catalogue owns this list, so it is read here rather than typed into the
+    review page. A region the sheet stops using disappears from the page on the
+    next load, and a region it adds appears without a code change.
+    """
+    return sorted({(row.get("region") or "").strip()
+                   for row in load_templates(refresh).values()
+                   if (row.get("region") or "").strip()})
+
+
 def load_template_texts(refresh: bool = False) -> dict:
     """Return {code: full_text} — the shape day_match.rank_templates expects."""
     return {code: (t.get("full_text") or "") for code, t in load_templates(refresh).items()}
