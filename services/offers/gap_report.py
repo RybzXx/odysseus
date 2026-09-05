@@ -88,18 +88,39 @@ def _pattern_id(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
 
 
-def classify_days(offers: Iterable[SentOffer], template_texts: dict) -> list[tuple]:
+# How often a stage reports how far it has got. Small enough that a fifteen
+# minute pass says something every few seconds, large enough that the reporting
+# costs nothing against the scoring it interrupts.
+PROGRESS_EVERY = 100
+
+STAGE_SCORING = "scoring"        # every day against every template
+STAGE_CLUSTERING = "clustering"  # unmatched days against each other
+
+
+def classify_days(offers: Iterable[SentOffer], template_texts: dict,
+                  on_progress=None) -> list[tuple]:
     """
     Score every day in every offer against the catalogue, in place.
 
-    Pre:  `template_texts` maps template code to full text.
+    Pre:  `template_texts` maps template code to full text. `on_progress`, when
+          given, takes (stage, done, total, note) and returns nothing.
     Post: each OfferDay carries `best_score`, `band`, and either `matched_code`
           (band match) or `near_miss_code` (band near miss). Returns
           [(offer, day)] for days in no band above no-match, in corpus order.
+
+    This module measures and never prints. A caller that wants to say how far a
+    pass has got supplies the callback: a command-line run prints it, and an
+    HTTP handler passes nothing.
     """
+    offers = list(offers)
+    total = sum(len(offer.days) for offer in offers)
+    done = 0
     unmatched = []
     for offer in offers:
         for day in offer.days:
+            done += 1
+            if on_progress and done % PROGRESS_EVERY == 0:
+                on_progress(STAGE_SCORING, done, total, f"{len(unmatched)} unmatched so far")
             ranked = rank_templates(day.text, template_texts)
             best = ranked[0] if ranked else None
             day.best_score = best.score if best else 0.0
@@ -108,10 +129,12 @@ def classify_days(offers: Iterable[SentOffer], template_texts: dict) -> list[tup
             day.near_miss_code = best.code if best and best.band == BAND_NEAR_MISS else None
             if day.matched_code is None and day.near_miss_code is None:
                 unmatched.append((offer, day))
+    if on_progress:
+        on_progress(STAGE_SCORING, total, total, f"{len(unmatched)} unmatched")
     return unmatched
 
 
-def cluster_days(day_pairs: list[tuple]) -> list[DayPattern]:
+def cluster_days(day_pairs: list[tuple], on_progress=None) -> list[DayPattern]:
     """
     Group days that say the same thing into one pattern each.
 
@@ -125,7 +148,14 @@ def cluster_days(day_pairs: list[tuple]) -> list[DayPattern]:
     and minutes at corpus scale.
     """
     representatives: list[dict] = []
-    for offer, day in day_pairs:
+    total = len(day_pairs)
+    for done, (offer, day) in enumerate(day_pairs, start=1):
+        if on_progress and done % PROGRESS_EVERY == 0:
+            # The representative count is the reason this stage slows down. Each
+            # new day is compared against every representative held so far, so a
+            # rising count is a rising cost per day, not a stall.
+            on_progress(STAGE_CLUSTERING, done, total,
+                        f"{len(representatives)} patterns so far")
         normalized = normalize_day_text(day.text)
         if not normalized:
             continue
@@ -149,6 +179,9 @@ def cluster_days(day_pairs: list[tuple]) -> list[DayPattern]:
                 "weight": recency_weight(offer.sent_at),
             })
 
+    if on_progress:
+        on_progress(STAGE_CLUSTERING, total, total, f"{len(representatives)} patterns")
+
     patterns = [
         DayPattern(
             pattern_id=_pattern_id(rep["normalized"]),
@@ -167,16 +200,20 @@ def cluster_days(day_pairs: list[tuple]) -> list[DayPattern]:
     return patterns
 
 
-def analyse_catalogue_gap(offers: Iterable[SentOffer], template_texts: dict) -> GapReport:
+def analyse_catalogue_gap(offers: Iterable[SentOffer], template_texts: dict,
+                          on_progress=None) -> GapReport:
     """
     Full pass: classify every day, group what the catalogue cannot express.
 
+    Pre:  `on_progress`, when given, takes (stage, done, total, note). It is
+          called at most once per PROGRESS_EVERY items per stage, and once more
+          when each stage ends.
     Post: `report.total_days` equals every day in every offer, and
           `matched + near_miss + unmatched` equals it exactly — no day is
           counted twice and none is dropped.
     """
     offers = list(offers)
-    unmatched_pairs = classify_days(offers, template_texts)
+    unmatched_pairs = classify_days(offers, template_texts, on_progress=on_progress)
 
     report = GapReport()
     for offer in offers:
@@ -192,7 +229,7 @@ def analyse_catalogue_gap(offers: Iterable[SentOffer], template_texts: dict) -> 
             else:
                 report.unmatched += 1
 
-    report.patterns = cluster_days(unmatched_pairs)
+    report.patterns = cluster_days(unmatched_pairs, on_progress=on_progress)
 
     matched_codes = {day.matched_code for offer in offers for day in offer.days if day.matched_code}
     referenced = matched_codes | set(report.near_miss_by_code)

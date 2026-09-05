@@ -430,3 +430,48 @@ def test_reextraction_follows_one_damaged_day_in_a_document_that_reads_well(
     outcome = reextract_stored()
     assert outcome["unspaced"] == 1
     assert outcome["repaired"] == 1
+
+
+# --- progress reporting ----------------------------------------------------
+
+def test_the_analysis_reports_how_far_each_stage_has_got():
+    """
+    A full pass takes about fifteen minutes and printed one line before it, then
+    nothing. The module measures and never prints, so the caller supplies the
+    callback and a handler that wants silence passes none.
+    """
+    from services.offers.gap_report import (
+        PROGRESS_EVERY,
+        STAGE_CLUSTERING,
+        STAGE_SCORING,
+        analyse_catalogue_gap,
+    )
+    from services.offers.models import OfferDay, SentOffer
+
+    day_text = ("Drive south to the marshes, board a mashoof through the reed "
+                "channels, and return to the hotel before sunset.")
+    offers = [SentOffer(message_id=f"<{n}@x>", subject="Iraq", sent_at=None,
+                        attachment_name="offer.pdf",
+                        days=[OfferDay(1, f"{day_text} Variant {n}.", "Nasiriyah")])
+              for n in range(PROGRESS_EVERY * 2 + 5)]
+
+    seen = []
+    analyse_catalogue_gap(offers, {"MO1": "an unrelated day in Mosul"},
+                          on_progress=lambda *args: seen.append(args))
+    stages = {stage for stage, _, _, _ in seen}
+    assert STAGE_SCORING in stages
+    assert STAGE_CLUSTERING in stages
+    for stage in (STAGE_SCORING, STAGE_CLUSTERING):
+        last = [row for row in seen if row[0] == stage][-1]
+        assert last[1] == last[2], f"{stage} must report its own completion"
+
+
+def test_the_analysis_stays_silent_when_no_callback_is_given():
+    """An HTTP handler passes none, and the module must print nothing."""
+    from services.offers.gap_report import analyse_catalogue_gap
+    from services.offers.models import OfferDay, SentOffer
+    offers = [SentOffer(message_id="<1@x>", subject="Iraq", sent_at=None,
+                        attachment_name="offer.pdf",
+                        days=[OfferDay(1, "a day in Mosul with the old city", "Mosul")])]
+    report = analyse_catalogue_gap(offers, {"MO1": "a day in Mosul with the old city"})
+    assert report.total_days == 1

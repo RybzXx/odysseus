@@ -18,6 +18,7 @@ import logging
 import os
 import sqlite3
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from src.constants import APP_DB, OFFER_CORPUS_DIR, RECOVERY_FAILURES_FILE
@@ -80,6 +81,28 @@ def load_failure_record(path: str | None = None) -> dict | None:
     return loaded
 
 
+def _print_stage_progress(started_at: float):
+    """
+    Post: a callback for `analyse_catalogue_gap` that prints how far a stage has
+          got, on one line per report.
+
+    Scoring costs the same for every day, so the time left is a straight
+    extrapolation and is printed. Clustering compares each day against every
+    pattern found so far, so its cost per day rises as it runs. Extrapolating
+    that would under-state the wait every time, so the pattern count is printed
+    instead and no estimate is given.
+    """
+    def report(stage: str, done: int, total: int, note: str) -> None:
+        elapsed = time.monotonic() - started_at
+        share = done / total if total else 1.0
+        line = f"  {stage} {done}/{total} ({share:.0%}) after {elapsed:.0f}s - {note}"
+        if stage == "scoring" and done and done < total:
+            line += f"; about {elapsed / done * (total - done):.0f}s left in this stage"
+        print(line, flush=True)
+
+    return report
+
+
 def _accounts(only: str | None) -> list[tuple]:
     """
     Post: [(account_id, owner, imap_user)] for the enabled Bil Weekend accounts,
@@ -138,7 +161,8 @@ def main(argv=None) -> int:
         texts = load_template_texts()
         print(f"measuring {len(offers)} offers against {len(texts)} templates "
               f"(corpus {corpus['fingerprint']}, {corpus['count']} stored)...", flush=True)
-        report = analyse_catalogue_gap(offers, texts)
+        report = analyse_catalogue_gap(
+            offers, texts, on_progress=_print_stage_progress(time.monotonic()))
         drafted = (propose_revisions(offers, report, texts, corpus=corpus)
                    + propose_new_templates(report, texts, corpus=corpus))
         for proposal in drafted:
