@@ -52,6 +52,7 @@ from services.offers.gap_report import load_summary as load_gap_summary
 from services.offers.gap_report import save_summary as save_gap_summary
 from services.offers.gap_report import summarise as summarise_gap
 from services.offers.proposals import load as load_proposal
+from services.offers.proposals import record_suggestion
 from services.offers.proposals import save as save_proposal
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ def _proposal_to_dict(proposal, template_texts: dict) -> dict:
         "internal_notes": proposal.fields.get("internal_notes", ""),
         "fields": proposal.fields,
         "frequency": proposal.frequency,
+        "suggested": proposal.suggested,
         "reviewer_note": proposal.reviewer_note,
         "created_at": proposal.created_at,
         "decided_at": proposal.decided_at,
@@ -215,6 +217,37 @@ def setup_offers_routes() -> APIRouter:
         if proposal is None:
             raise HTTPException(404, "no such proposal")
         return _proposal_to_dict(proposal, load_template_texts())
+
+    @router.post("/proposals/{proposal_id}/suggest")
+    async def suggest_row_for_proposal(request: Request, proposal_id: str):
+        """
+        Ask the configured model to complete the columns the draft leaves empty.
+
+        The answer is stored as machine text under `suggested` and is never
+        merged into the proposal's fields. Only the reviewer's accept moves a
+        value across, through the verdict path.
+
+        Blame: an unreachable model is reported as 502 and the card stays
+        usable. A suggestion is an offer, never a requirement.
+        """
+        require_admin(request)
+        from services.offers.suggest_row import SuggestionError, suggest_catalogue_row
+
+        proposal = load_proposal(proposal_id)
+        if proposal is None:
+            raise HTTPException(404, "no such proposal")
+        try:
+            suggestion = await suggest_catalogue_row(
+                proposal.fields.get("full_text", ""),
+                proposal.fields.get("overnight_city", ""),
+            )
+        except SuggestionError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        try:
+            record_suggestion(proposal_id, suggestion)
+        except ProposalError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return _proposal_to_dict(load_proposal(proposal_id), load_template_texts())
 
     @router.post("/proposals/{proposal_id}/verdict")
     async def decide_proposal(request: Request, proposal_id: str, body: Verdict):

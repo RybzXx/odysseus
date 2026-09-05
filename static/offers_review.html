@@ -41,6 +41,11 @@
   .tag.revision { color: var(--warn); border-color: var(--warn); }
   .tag.stale { color: var(--gone); border-color: var(--gone); }
   .tag.rare { color: var(--accent); border-color: var(--accent); }
+  .tag.machine { color: var(--warn); border-color: var(--warn); }
+  .tag.low { color: var(--gone); border-color: var(--gone); }
+  .suggest { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--warn);
+             border-radius: 9px; }
+  pre.cleaned { background: var(--add); }
   .grow { flex: 1; }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
   @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
@@ -108,6 +113,6 @@
 
 <div id="more" class="bar"></div>
 
-<script src="/static/js/offersReview.js?v=20260905search1"></script>
+<script src="/static/js/offersReview.js?v=20260905suggest1"></script>
 </body>
 </html>

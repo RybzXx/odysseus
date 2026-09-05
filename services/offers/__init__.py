@@ -72,6 +72,7 @@ from services.offers.proposals import (
     build_proposal,
     iter_proposals,
     queue_summary,
+    record_suggestion,
     retire_undrafted,
     record_verdict,
 )
@@ -149,6 +150,7 @@ __all__ = [
     "build_proposal",
     "iter_proposals",
     "queue_summary",
+    "record_suggestion",
     "retire_undrafted",
     "STATUS_RETIRED",
     "FREQUENCY_RARE",

@@ -380,3 +380,81 @@ def test_apply_reports_a_refusal_rather_than_failing_silently(monkeypatch):
         _call("apply_to_catalogue", body=ApplyRequest())
     assert caught.value.status_code == 502
     assert "merged cells" in caught.value.detail
+
+
+# ── Suggesting the missing fields ─────────────────────────────────────────────
+
+def _suggest_returns(monkeypatch, answer=None, error=None):
+    from services.offers import suggest_row
+
+    async def fake(day_text, overnight_city="", owner=None):
+        if error:
+            raise suggest_row.SuggestionError(error)
+        return answer or {"title": "Old Mosul", "city": "Mosul",
+                          "included_sites": [], "pricing_tags": ["guide_day"],
+                          "cleaned_text": day_text, "confidence": {},
+                          "dropped_sites": [], "model": "test-model",
+                          "endpoint": "http://x/v1", "suggested_at": "2026-09-05T00:00:00+00:00"}
+
+    monkeypatch.setattr(suggest_row, "suggest_catalogue_row", fake)
+
+
+def test_a_suggestion_is_stored_and_returned_without_touching_the_fields(
+        queue, corpus, monkeypatch):
+    _suggest_returns(monkeypatch)
+    _call("rebuild_proposals")
+    pending = _call("list_proposals", status=prop.STATUS_PENDING, kind=None)["proposals"][0]
+    before = dict(prop.load(pending["proposal_id"]).fields)
+
+    shown = _call("suggest_row_for_proposal", proposal_id=pending["proposal_id"])
+    assert shown["suggested"]["title"] == "Old Mosul"
+    assert prop.load(pending["proposal_id"]).fields == before
+
+
+def test_a_model_that_does_not_answer_is_a_502_and_leaves_the_card_usable(
+        queue, corpus, monkeypatch):
+    _suggest_returns(monkeypatch, error="the model did not answer: timed out")
+    _call("rebuild_proposals")
+    pending = _call("list_proposals", status=prop.STATUS_PENDING, kind=None)["proposals"][0]
+    with pytest.raises(HTTPException) as raised:
+        _call("suggest_row_for_proposal", proposal_id=pending["proposal_id"])
+    assert raised.value.status_code == 502
+    assert prop.load(pending["proposal_id"]).suggested is None
+
+
+def test_suggesting_on_a_missing_proposal_is_a_404(queue, corpus, monkeypatch):
+    _suggest_returns(monkeypatch)
+    with pytest.raises(HTTPException) as raised:
+        _call("suggest_row_for_proposal", proposal_id="new-nothing")
+    assert raised.value.status_code == 404
+
+
+def test_suggesting_on_a_decided_proposal_is_a_409(queue, corpus, monkeypatch):
+    _suggest_returns(monkeypatch)
+    _call("rebuild_proposals")
+    pending = _call("list_proposals", status=prop.STATUS_PENDING, kind=None)["proposals"][0]
+    _call("decide_proposal", proposal_id=pending["proposal_id"],
+          body=offers_routes.Verdict(status=prop.STATUS_REJECTED))
+    with pytest.raises(HTTPException) as raised:
+        _call("suggest_row_for_proposal", proposal_id=pending["proposal_id"])
+    assert raised.value.status_code == 409
+
+
+def test_the_reviewer_can_carry_the_suggested_columns_into_a_verdict(queue, corpus):
+    """
+    The page has no input for title, city, sites or tags. Accepting holds them
+    on the card and the verdict carries them, so what is approved is what can
+    later be applied.
+    """
+    _call("rebuild_proposals")
+    pending = _call("list_proposals", status=prop.STATUS_PENDING, kind=None)["proposals"][0]
+    decided = _call("decide_proposal", proposal_id=pending["proposal_id"],
+                    body=offers_routes.Verdict(
+                        status=prop.STATUS_APPROVED,
+                        edited_fields={"code": "MO2", "title": "Old Mosul",
+                                       "city": "Mosul",
+                                       "included_sites_json": '["MO_NM"]',
+                                       "pricing_tags_json": '["guide_day"]'}))
+    stored = prop.load(decided["proposal_id"]).fields
+    assert stored["title"] == "Old Mosul"
+    assert stored["included_sites_json"] == '["MO_NM"]'

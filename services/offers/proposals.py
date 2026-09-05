@@ -80,6 +80,10 @@ class TemplateProposal:
     # it. None on a proposal written before stamping existed, which reads as
     # unknown provenance rather than as current.
     corpus: Optional[dict] = None
+    # What a model proposed for the columns the analysis leaves empty, marked as
+    # machine text. Never merged into `fields` by any code. Only the reviewer's
+    # accept moves a value across, through record_verdict.
+    suggested: Optional[dict] = None
     created_at: str = ""
     decided_at: Optional[str] = None
     # Set once the approved change actually reached the catalogue sheet. Kept
@@ -177,6 +181,13 @@ def save(proposal: TemplateProposal) -> str:
     existing = load(proposal.proposal_id)
     if existing is not None and existing.status in TERMINAL_STATUSES:
         return _path(proposal.proposal_id)
+
+    # A rebuild redraws every proposal and would otherwise erase a suggestion
+    # with it. The reviewer works through hundreds of cards across sittings, and
+    # rebuilds happen in between. A freshly drafted proposal carries none, so
+    # the one already on disk is kept.
+    if existing is not None and existing.suggested and not proposal.suggested:
+        proposal.suggested = existing.suggested
 
     target = _path(proposal.proposal_id)
     temporary = target + ".tmp"
@@ -282,6 +293,34 @@ def queue_summary() -> dict:
     for proposal in iter_proposals():
         counts[proposal.status] = counts.get(proposal.status, 0) + 1
     return counts
+
+
+def record_suggestion(proposal_id: str, suggestion: dict) -> TemplateProposal:
+    """
+    Store what a model proposed for one pending proposal.
+
+    Pre:  the proposal exists and is pending. `suggestion` came from
+          `suggest_catalogue_row` and names its model, endpoint and time.
+    Post: the proposal carries the suggestion under `suggested`, and `fields` is
+          byte-identical to what it held before. A second suggestion replaces
+          the first, so the block holds one answer.
+
+    Blame: suggesting on a decided proposal is a caller bug and raises. A
+    verdict is the one thing this queue exists to collect.
+    """
+    proposal = load(proposal_id)
+    if proposal is None:
+        raise ProposalError(f"no such proposal: {proposal_id}")
+    if not proposal.is_pending:
+        raise ProposalError(f"{proposal_id} is already {proposal.status}")
+
+    proposal.suggested = suggestion
+    target = _path(proposal_id)
+    temporary = target + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as fh:
+        json.dump(asdict(proposal), fh, ensure_ascii=False, indent=2)
+    os.replace(temporary, target)
+    return proposal
 
 
 def retire_undrafted(drafted_ids) -> int:

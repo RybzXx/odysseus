@@ -145,6 +145,45 @@ function regionSelect(current, decided) {
   return `<select class="region" ${decided ? "disabled" : ""}>${options.join("")}</select>`;
 }
 
+// A suggestion is machine text until you accept it. Two accepts, not one: a bad
+// rewrite must not cost you a good set of fields.
+function suggestionBlock(p) {
+  const sg = p.suggested;
+  if (!sg) {
+    return `<div class="suggest"><button class="ask-suggest">Suggest the missing fields</button>
+      <span class="note">title, city, sites and a cleaned wording</span>
+      <span class="msg note"></span></div>`;
+  }
+  const mark = (key) => sg.confidence && sg.confidence[key] === "low"
+    ? ` <span class="tag low">unsure</span>` : "";
+  const dropped = (sg.dropped_sites || []).length
+    ? `<div class="warn">The model named ${sg.dropped_sites.length} site code(s) the
+       catalogue does not hold. They were dropped: ${esc(sg.dropped_sites.join(", "))}.</div>`
+    : "";
+  const textChanged = (sg.cleaned_text || "") !== (p.proposed_text || "");
+  return `<div class="suggest">
+    <div class="row"><span class="tag machine">suggested by ${esc(sg.model || "a model")}</span>
+      <span class="note">${esc(sg.suggested_at || "")}</span>
+      <span class="grow"></span>
+      <button class="ask-suggest">Suggest again</button>
+      <span class="msg note"></span></div>
+    ${dropped}
+    <div class="note">Title: <strong>${esc(sg.title)}</strong>${mark("title")}</div>
+    <div class="note">City: <strong>${esc(sg.city)}</strong>${mark("city")}</div>
+    <div class="note">Sites: <strong>${esc((sg.included_sites || []).join(", ") || "none")}</strong>${mark("included_sites")}</div>
+    <div class="note">Pricing tags: <strong>${esc((sg.pricing_tags || []).join(", "))}</strong>
+      <span class="note">by rule, not by the model</span></div>
+    <div class="actions"><button class="take-fields">Accept these fields</button></div>
+    ${textChanged
+      ? `<div class="col" style="margin-top:10px">
+           <h4>Cleaned wording</h4>
+           <pre class="cleaned">${esc(sg.cleaned_text)}</pre>
+           <div class="actions"><button class="take-text">Accept this wording</button></div>
+         </div>`
+      : `<div class="note">The wording came back unchanged.</div>`}
+  </div>`;
+}
+
 function card(p) {
   const isRevision = p.kind === "revision";
   const heading = isRevision
@@ -206,6 +245,7 @@ function card(p) {
       <label>Overnight <input type="text" class="overnight"
              value="${esc(p.fields.overnight_city || "")}" ${decided ? "disabled" : ""}></label>
     </div>
+    ${decided ? "" : suggestionBlock(p)}
     <details class="evidence">
       <summary>${p.evidence_day_keys.length} sent day(s) behind this</summary>
       <div class="days"></div>
@@ -238,6 +278,49 @@ function wire(el, p) {
     }
   });
 
+  el.querySelector(".ask-suggest")?.addEventListener("click", async (ev) => {
+    const msg = ev.target.parentElement.querySelector(".msg") || el.querySelector(".msg");
+    ev.target.disabled = true;
+    msg.textContent = "asking the model…";
+    try {
+      const updated = await api(
+        `/api/offers/proposals/${encodeURIComponent(p.proposal_id)}/suggest`,
+        { method: "POST" });
+      Object.assign(p, updated);
+      const fresh = document.createElement("div");
+      fresh.innerHTML = card(p);
+      el.replaceWith(fresh.firstElementChild);
+      wire(fresh.firstElementChild, p);
+    } catch (e) {
+      ev.target.disabled = false;
+      msg.innerHTML = `<span class="err">${esc(e.message)}</span>`;
+    }
+  });
+
+  // Accepting holds the four columns on the card until the verdict carries
+  // them. The page has no input for title, city, sites or tags: you take the
+  // model's values or you leave them, and nothing is stored either way until
+  // you approve. City is not region — canon keeps them apart, and the region
+  // select stays yours.
+  el.querySelector(".take-fields")?.addEventListener("click", (ev) => {
+    const sg = p.suggested || {};
+    el.dataset.acceptedFields = JSON.stringify({
+      title: sg.title || "",
+      city: sg.city || "",
+      included_sites_json: JSON.stringify(sg.included_sites || []),
+      pricing_tags_json: JSON.stringify(sg.pricing_tags || []),
+    });
+    ev.target.textContent = "fields accepted";
+    ev.target.disabled = true;
+  });
+
+  el.querySelector(".take-text")?.addEventListener("click", (ev) => {
+    const text = el.querySelector(".text");
+    if (text && p.suggested) text.value = p.suggested.cleaned_text;
+    ev.target.textContent = "wording accepted";
+    ev.target.disabled = true;
+  });
+
   const decide = async (status) => {
     const msg = el.querySelector(".msg");
     const code = el.querySelector(".code").value.trim();
@@ -254,6 +337,7 @@ function wire(el, p) {
           status,
           reviewer_note: el.querySelector(".why").value,
           edited_fields: {
+            ...(el.dataset.acceptedFields ? JSON.parse(el.dataset.acceptedFields) : {}),
             code,
             full_text: el.querySelector(".text").value,
             region: el.querySelector(".region").value.trim(),
@@ -304,6 +388,7 @@ function wireGroup(container, group, index) {
             status,
             reviewer_note: el?.querySelector(".why")?.value || "",
             edited_fields: {
+              ...(el && el.dataset.acceptedFields ? JSON.parse(el.dataset.acceptedFields) : {}),
               code,
               full_text: el?.querySelector(".text")?.value,
               region: el?.querySelector(".region")?.value.trim(),
