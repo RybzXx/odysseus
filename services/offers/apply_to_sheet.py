@@ -214,3 +214,70 @@ def apply_approved(
         logger.error("catalogue write verified %d of %d rows",
                      plan["verified"], plan["written"])
     return plan
+
+
+def format_plan(plan: dict) -> str:
+    """The plan as a reviewer reads it before agreeing to a write."""
+    lines = []
+    if plan["dry_run"]:
+        lines.append("DRY RUN - nothing was written")
+    lines.append(f"append {len(plan['appends'])} new rows, "
+                 f"update {len(plan['updates'])} existing rows, "
+                 f"skip {len(plan['skipped'])}")
+    for entry in plan["appends"]:
+        lines.append(f"  + {entry['code']}")
+    for entry in plan["updates"]:
+        lines.append(f"  ~ {entry['code']} at sheet row {entry['sheet_row']}")
+    for entry in plan["skipped"]:
+        lines.append(f"  ! {entry['proposal_id']}: {entry['reason']}")
+    if not plan["dry_run"]:
+        lines.append(f"wrote {plan['written']} rows, verified {plan['verified']}")
+    return "\n".join(lines)
+
+
+def main(argv=None) -> int:
+    """
+    Command line entry to the only code here that changes the catalogue.
+
+        python -m services.offers.apply_to_sheet             # plan only
+        python -m services.offers.apply_to_sheet --write     # plan, then write
+
+    A dry run is the default, and `--write` is the whole safety gate. The sheet
+    id comes from the pipeline config, never from an argument: pointing this at
+    another spreadsheet by mistake writes rows nobody expects.
+    """
+    import argparse
+
+    from services.itinerary.pipeline import config
+
+    parser = argparse.ArgumentParser(
+        description="Write approved catalogue proposals to the templates tab.")
+    parser.add_argument("--write", action="store_true",
+                        help="write to the sheet; without it the plan is printed and nothing changes")
+    parser.add_argument("--only", nargs="*", help="restrict to these proposal ids")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    sheet_id = config.JSON_DB_SHEET_ID
+
+    plan = apply_approved(sheet_id, dry_run=True, only=args.only)
+    print(format_plan(plan))
+    if not args.write:
+        print("\nnothing was written; add --write to apply this plan")
+        return 0
+    if not plan["appends"] and not plan["updates"]:
+        print("\nnothing to write")
+        return 0
+
+    # Planned twice on purpose. The first plan is what a person read; the second
+    # runs against the sheet as it is at the moment of writing. A row added by
+    # someone else in between changes the plan, and writing the older one would
+    # overwrite their work.
+    print("\nwriting...")
+    written = apply_approved(sheet_id, dry_run=False, only=args.only)
+    print(format_plan(written))
+    return 0 if written["written"] == written["verified"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

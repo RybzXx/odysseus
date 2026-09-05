@@ -537,3 +537,49 @@ against the catalogue this workstream already loads.
 
 **The queue is too long and too repetitive.** 338 pending, and the owner asked
 for it shorter.
+
+---
+
+## Owner decision — 2026-09-05, evening: a model may read the corpus
+
+**Invariant 1.4 is lifted.** It forbade running any model over the corpus before
+the owner agreed. The owner agreed today. No model had run until now, and the
+workstream was built so that none had to.
+
+**Two properties are traded away, both knowingly.**
+
+The proposed wording stops being a sent day. `propose.py` states the old
+property: every proposed wording is a verbatim day a human actually sent, so the
+evidence trail is exact. A cleaned text is derived from a sent day rather than
+being one. The card shows both, so the original is not lost.
+
+The day text leaves the machine. The owner chose the app default,
+`gemma4:31b-cloud`, reached through the local endpoint at
+`100.82.8.53:11434/v1`. The `-cloud` suffix says Ollama relays it to their
+servers. Read from the name, not tested. The day text carries client names,
+dates and prices. A local model was available and was not chosen.
+
+**What the model is asked for.** Four things: `title`, `city`,
+`included_sites`, and a cleaned wording. Nothing else.
+
+**What it is not asked for.** Pricing tags follow a rule. Canon carries
+`guide_day` on 28 of 28 rows, `transport_day` on 28 of 28, and `hotel_night` on
+26 of 28 — the two without it are the two with no overnight city. That is a
+rule, and asking a model for it only adds a way to be wrong.
+
+**Where the answer lives.** A `suggested` block on the proposal, beside the
+drafted fields and marked as machine text. Nothing merges it into `fields`. Only
+the owner's accept moves a value across, through the verdict path that already
+exists.
+
+**Two accepts, not one.** The fields and the cleaned text are accepted
+separately, so a bad rewrite does not cost a good set of fields.
+
+**The cleaner is gated.** Canon's 28 texts carry no formatting faults: no
+leading or trailing space, no double space, no carriage return, no triple
+newline, no space before a newline or before punctuation. A correct cleaner has
+nothing to change in them. It ships only when all 28 come back unchanged, so the
+fields half and the text half ship independently.
+
+**Unsure fields are filled and marked.** Each suggested field carries `high` or
+`low` confidence. The owner chose a marked guess over an empty box.

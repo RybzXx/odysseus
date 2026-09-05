@@ -18,6 +18,9 @@ let frequency = "rare";
 // The regions the catalogue uses, sent with the queue. The reviewer picks one
 // rather than typing it, so a new row lands in a region the sheet already knows.
 let regions = [];
+// Typed words narrow the list the page already holds. 493 rare proposals is not
+// a scrolling problem once a day can be found by its own words.
+let searchTerms = [];
 
 // The queue holds hundreds of proposals after a full-corpus rebuild, and each
 // card carries the whole proposed text. Building them all in one write locks a
@@ -117,6 +120,16 @@ async function loadGap() {
   } catch (e) {
     $("gap").innerHTML = `<span class="err">${esc(e.message)}</span>`;
   }
+}
+
+function matchesSearch(p) {
+  if (!searchTerms.length) return true;
+  // Every word must appear somewhere in the proposal. Words rather than one
+  // phrase, so "marshes mashoof" finds a day that says both in any order.
+  const haystack = [p.proposed_text, p.internal_notes, p.nearest_code,
+                    p.target_code, p.overnight_city, p.fields && p.fields.code]
+    .join(" ").toLowerCase();
+  return searchTerms.every((term) => haystack.includes(term));
 }
 
 function regionSelect(current, decided) {
@@ -347,11 +360,19 @@ function regroup() {
   const list = $("list");
   $("more").innerHTML = "";
   shown = 0;
-  loaded = groupByLikeness(lastFetched, groupThreshold);
+  const found = lastFetched.filter(matchesSearch);
+  loaded = groupByLikeness(found, groupThreshold);
   const grouped = loaded.filter((g) => g.length > 1).length;
+  const scope = found.length === lastFetched.length
+    ? `${lastFetched.length} proposals`
+    : `${found.length} of ${lastFetched.length} proposals match`;
   $("grouping-count").textContent =
-    `${loaded.length} blocks from ${lastFetched.length} proposals · ${grouped} grouped`;
+    `${loaded.length} blocks from ${scope} · ${grouped} grouped`;
   list.innerHTML = "";
+  if (!found.length) {
+    list.innerHTML = `<div class="empty">nothing matches ${esc(searchTerms.join(" "))}</div>`;
+    return;
+  }
   appendBatch();
 }
 
@@ -381,6 +402,11 @@ async function render() {
   }
 }
 
+$("search").addEventListener("input", (ev) => {
+  searchTerms = ev.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+  if (lastFetched.length) regroup();
+});
+
 $("grouping").addEventListener("input", (ev) => {
   groupThreshold = Number(ev.target.value) / 100;
   $("grouping-value").textContent = groupThreshold.toFixed(2);
@@ -406,6 +432,56 @@ for (const [id, value] of [["q-rare", "rare"], ["q-recurring", "recurring"], ["q
     render();
   });
 }
+
+// Two clicks, never one. The first plans and shows what would land in the
+// catalogue. The second writes it. A single button next to Approve is one
+// mis-click away from changing a sheet other people read.
+let applyPlanned = null;
+
+function describePlan(plan) {
+  const parts = [];
+  if (plan.appends.length) {
+    parts.push(`append ${plan.appends.length}: `
+      + plan.appends.map((e) => esc(e.code)).join(", "));
+  }
+  if (plan.updates.length) {
+    parts.push(`update ${plan.updates.length}: `
+      + plan.updates.map((e) => esc(e.code)).join(", "));
+  }
+  if (plan.skipped.length) {
+    parts.push(`skip ${plan.skipped.length}: `
+      + plan.skipped.map((e) => esc(e.reason)).join("; "));
+  }
+  return parts.join(" · ") || "nothing to write";
+}
+
+$("apply").addEventListener("click", async () => {
+  const box = $("apply-plan");
+  try {
+    if (!applyPlanned) {
+      box.textContent = "planning…";
+      applyPlanned = await api("/api/offers/apply", {
+        method: "POST", body: JSON.stringify({ write: false }),
+      });
+      const writable = applyPlanned.appends.length + applyPlanned.updates.length;
+      box.innerHTML = esc(describePlan(applyPlanned))
+        + (writable ? ` <strong>Press again to write ${writable} rows.</strong>`
+                    : "");
+      if (!writable) applyPlanned = null;
+      return;
+    }
+    box.textContent = "writing…";
+    const done = await api("/api/offers/apply", {
+      method: "POST", body: JSON.stringify({ write: true }),
+    });
+    box.textContent = `wrote ${done.written} rows, verified ${done.verified}`;
+    applyPlanned = null;
+    await render();
+  } catch (e) {
+    applyPlanned = null;
+    box.innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  }
+});
 
 $("rebuild").addEventListener("click", async (ev) => {
   ev.target.disabled = true;

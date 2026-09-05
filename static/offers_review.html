@@ -71,6 +71,7 @@
   .diff del { background: var(--del); padding: 0 2px; }
   .grouping { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .grouping input { width: 120px; }
+  .search { width: 220px; }
   .sep { color: var(--line); padding: 0 2px; }
   .group { border: 1px solid var(--warn); border-radius: 10px; padding: 8px; margin-top: 14px; }
   .group-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -91,12 +92,15 @@
     <button id="q-rare" class="primary">Rare</button>
     <button id="q-recurring">Recurring</button>
     <button id="q-all">All</button>
+    <input type="text" id="search" class="search" placeholder="search the proposals…">
     <span class="grow"></span>
     <label class="grouping">Group near-duplicates
       <input type="range" id="grouping" min="50" max="95" step="5" value="70">
       <span id="grouping-value">0.70</span></label>
     <button id="rebuild">Re-derive from corpus</button>
+    <button id="apply">Apply approved to the catalogue</button>
   </div>
+  <div class="sub" id="apply-plan"></div>
   <div class="sub" id="gap"></div>
   <div class="sub" id="grouping-count"></div>
 </header>
@@ -104,6 +108,6 @@
 
 <div id="more" class="bar"></div>
 
-<script src="/static/js/offersReview.js?v=20260905region1"></script>
+<script src="/static/js/offersReview.js?v=20260905search1"></script>
 </body>
 </html>

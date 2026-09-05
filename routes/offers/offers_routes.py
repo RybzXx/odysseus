@@ -57,6 +57,13 @@ from services.offers.proposals import save as save_proposal
 logger = logging.getLogger(__name__)
 
 
+class ApplyRequest(BaseModel):
+    # A write to the catalogue must be asked for in words. The default plans and
+    # writes nothing, so a request that forgets the field cannot change the sheet.
+    write: bool = False
+    only: Optional[list] = None
+
+
 class Verdict(BaseModel):
     status: str
     reviewer_note: str = ""
@@ -250,6 +257,37 @@ def setup_offers_routes() -> APIRouter:
                         "text": day.text,
                     }
         raise HTTPException(404, "no such day in the current corpus")
+
+    @router.post("/apply")
+    async def apply_to_catalogue(request: Request, body: ApplyRequest):
+        """
+        Plan, and on request write, the approved proposals into the templates tab.
+
+        This is the only handler that changes the catalogue. It plans by default.
+        The sheet id comes from the pipeline config and is never taken from the
+        request, so no caller can aim this at another spreadsheet.
+
+        Blame: a proposal approved without a code is reported as skipped, not
+        written under a blank name. That is a review omission, not an error here.
+        """
+        require_admin(request)
+        from services.itinerary.pipeline import config
+        from services.offers.apply_to_sheet import apply_approved
+
+        sheet_id = config.JSON_DB_SHEET_ID
+        try:
+            plan = apply_approved(sheet_id, dry_run=True, only=body.only)
+            if not body.write:
+                return plan
+            if not plan["appends"] and not plan["updates"]:
+                return plan
+            # Planned again against the sheet as it is now. A row someone else
+            # added between the two calls changes the plan, and writing the
+            # older one would overwrite their work.
+            return apply_approved(sheet_id, dry_run=False, only=body.only)
+        except Exception as exc:
+            logger.exception("catalogue write refused")
+            raise HTTPException(502, f"the catalogue write did not run: {exc}") from exc
 
     @router.get("/templates")
     async def list_catalogue(request: Request):

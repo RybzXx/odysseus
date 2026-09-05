@@ -299,3 +299,84 @@ def test_a_proposal_shows_the_mirror_template_it_may_reverse(queue, corpus):
     prop.save(proposal)
     shown = _call("get_proposal", proposal_id=proposal.proposal_id)
     assert shown["reordered_codes"] == ["URUKNA"]
+
+
+# ── Applying to the catalogue ─────────────────────────────────────────────────
+
+class _FakeApply:
+    """Records how apply_approved was called, and what it was told to do."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, sheet_id, dry_run=True, service=None, only=None):
+        self.calls.append({"sheet_id": sheet_id, "dry_run": dry_run, "only": only})
+        return {"appends": [{"proposal_id": "new-1", "code": "MO2", "row": []}],
+                "updates": [], "skipped": [], "dry_run": dry_run,
+                "written": 0 if dry_run else 1, "verified": 0 if dry_run else 1}
+
+
+def _patch_apply(monkeypatch):
+    from services.offers import apply_to_sheet
+    fake = _FakeApply()
+    monkeypatch.setattr(apply_to_sheet, "apply_approved", fake)
+    return fake
+
+
+def test_apply_plans_and_writes_nothing_by_default(monkeypatch):
+    """A write to the catalogue must be asked for in words."""
+    fake = _patch_apply(monkeypatch)
+    from routes.offers.offers_routes import ApplyRequest
+    plan = _call("apply_to_catalogue", body=ApplyRequest())
+    assert plan["dry_run"] is True
+    assert [c["dry_run"] for c in fake.calls] == [True]
+
+
+def test_apply_plans_again_before_it_writes(monkeypatch):
+    """
+    The first plan is what a person read. The second runs against the sheet as
+    it is at the moment of writing, so a row someone else added in between is
+    not overwritten.
+    """
+    fake = _patch_apply(monkeypatch)
+    from routes.offers.offers_routes import ApplyRequest
+    result = _call("apply_to_catalogue", body=ApplyRequest(write=True))
+    assert [c["dry_run"] for c in fake.calls] == [True, False]
+    assert result["written"] == 1
+
+
+def test_apply_never_takes_the_sheet_id_from_the_request(monkeypatch):
+    from services.itinerary.pipeline import config
+    fake = _patch_apply(monkeypatch)
+    from routes.offers.offers_routes import ApplyRequest
+    _call("apply_to_catalogue", body=ApplyRequest(write=True))
+    assert {c["sheet_id"] for c in fake.calls} == {config.JSON_DB_SHEET_ID}
+
+
+def test_apply_with_an_empty_plan_does_not_write(monkeypatch):
+    from services.offers import apply_to_sheet
+    calls = []
+
+    def empty(sheet_id, dry_run=True, service=None, only=None):
+        calls.append(dry_run)
+        return {"appends": [], "updates": [], "skipped": [], "dry_run": dry_run,
+                "written": 0, "verified": 0}
+
+    monkeypatch.setattr(apply_to_sheet, "apply_approved", empty)
+    from routes.offers.offers_routes import ApplyRequest
+    _call("apply_to_catalogue", body=ApplyRequest(write=True))
+    assert calls == [True], "an empty plan must not reach the sheet"
+
+
+def test_apply_reports_a_refusal_rather_than_failing_silently(monkeypatch):
+    from services.offers import apply_to_sheet
+
+    def refuse(sheet_id, dry_run=True, service=None, only=None):
+        raise RuntimeError("merged cells in the target range")
+
+    monkeypatch.setattr(apply_to_sheet, "apply_approved", refuse)
+    from routes.offers.offers_routes import ApplyRequest
+    with pytest.raises(HTTPException) as caught:
+        _call("apply_to_catalogue", body=ApplyRequest())
+    assert caught.value.status_code == 502
+    assert "merged cells" in caught.value.detail
