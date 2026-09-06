@@ -89,6 +89,21 @@ def _resolve_hotel_tier(val: Any) -> str:
     return HOTEL_TIER_MAP.get(s, "3star")
 
 
+def unmapped_regions(regions: list[str]) -> list[str]:
+    """
+    Post: the region names REGION_NAME_MAP has no word for.
+
+    Pre: `regions` is the output of `_normalize_regions`, so a mapped name is
+         already one of the catalogue's own.
+
+    Blame: an unrecognised region is kept rather than dropped, and it then
+    matches no route. Silence about it would read as a weak match instead of a
+    request the catalogue cannot answer. The caller records it as a warning.
+    """
+    known = set(REGION_NAME_MAP.values())
+    return [r for r in regions if r not in known]
+
+
 def _normalize_regions(raw_regions: Any) -> list[str]:
     if not raw_regions:
         return ["Central Iraq"]
@@ -152,6 +167,9 @@ def normalize_curated_record(key: str, data: dict) -> NormalizedRequest:
     if data.get("hotelChangePreference"):
         special_notes.append(f"Hotel change preference: {data['hotelChangePreference']}")
 
+    for region in unmapped_regions(regions):
+        special_notes.append(f"Region not in the catalogue: {region}")
+
     return NormalizedRequest(
         key=key,
         source="curated",
@@ -168,6 +186,8 @@ def normalize_curated_record(key: str, data: dict) -> NormalizedRequest:
         travel_month=travel_month,
         travel_year=travel_year,
         special_notes=special_notes,
+        parse_warnings=[f"the catalogue has no region called {r}"
+                        for r in unmapped_regions(regions)],
         raw_record=data,
     )
 

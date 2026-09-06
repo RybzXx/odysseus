@@ -166,9 +166,15 @@ def test_a_distant_second_above_threshold_is_not_ambiguous():
 
 
 def test_every_vendored_template_recovers_itself():
-    """The invariant every threshold in this module rests on."""
+    """
+    The invariant every threshold in this module rests on.
+
+    The count is pinned so that a snapshot refresh is a decision rather than an
+    accident. It went 28 to 60 on 2026-09-06, when the 32 approved rows reached
+    the sheet and services/offers/refresh_snapshot.py brought them to disk.
+    """
     texts = load_template_texts()
-    assert len(texts) == 28
+    assert len(texts) == 60
     for code, full_text in texts.items():
         if not full_text.strip():
             continue

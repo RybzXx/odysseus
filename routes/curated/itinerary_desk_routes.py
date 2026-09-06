@@ -18,8 +18,9 @@ from pydantic import BaseModel
 
 from core.middleware import require_admin
 
-from services.curated.drafts import (
+from services.itinerary.drafts import (
     ORIGIN_SHEET,
+    draft_id_for,
     ORIGIN_TYPED,
     SOURCE_MODEL,
     SOURCE_RULES,
@@ -32,10 +33,11 @@ from services.curated.drafts import (
     save,
     sequences_agree,
 )
-from services.curated.normalize import normalize_row
-from services.curated.propose_sequence import (
+from services.itinerary.normalizer import normalize_from_dict
+from services.itinerary.propose_sequence import (
     ProposalError,
     active_day_templates,
+    field_of,
     propose_by_model,
     propose_by_rules,
 )
@@ -105,7 +107,7 @@ def setup_itinerary_desk_routes() -> APIRouter:
         """
         require_admin(request)
         try:
-            normalized = normalize_row(body.row, 0)
+            normalized = normalize_from_dict(draft_id_for(body.row), body.row, source=body.origin)
         except Exception as exc:
             raise HTTPException(422, f"the request could not be read: {exc}") from exc
 
@@ -142,7 +144,7 @@ def setup_itinerary_desk_routes() -> APIRouter:
                 raise HTTPException(409, str(exc)) from exc
 
         previous = getattr(draft.latest.get(SOURCE_MODEL), "day_codes", [])
-        normalized = normalize_row(draft.request_row, 0)
+        normalized = normalize_from_dict(draft.draft_id, draft.request_row, source=draft.origin)
         try:
             sequence = await propose_by_model(
                 normalized, active_day_templates(),
@@ -160,8 +162,7 @@ def setup_itinerary_desk_routes() -> APIRouter:
         the proposer whose sequence produced it.
         """
         require_admin(request)
-        from services.curated.request_builder import build_request
-        from services.itinerary.pipeline.app_core import generate_document
+        from services.itinerary.generator import execute_generation
 
         draft = load(draft_id)
         if draft is None:
@@ -172,24 +173,22 @@ def setup_itinerary_desk_routes() -> APIRouter:
         if chosen is None or not chosen.day_codes:
             raise HTTPException(409, f"the {body.source} proposer has no sequence yet")
 
-        normalized = normalize_row(draft.request_row, 0)
+        normalized = normalize_from_dict(draft.draft_id, draft.request_row,
+                                         source=draft.origin)
         try:
-            tour = build_request(normalized, list(chosen.day_codes),
-                                 draft.request_id, _exchange_rate())
-            built = generate_document(tour)
+            built = execute_generation(normalized, day_codes=list(chosen.day_codes))
         except Exception as exc:
             logger.exception("generation failed")
             raise HTTPException(502, f"the document was not generated: {exc}") from exc
 
-        if not built.get("ok"):
-            return {"ok": False, "errors": built.get("errors", []),
-                    "warnings": built.get("warnings", []), **_draft_to_dict(draft)}
+        if built.status != "success":
+            return {"ok": False, "errors": [built.error_message or "generation failed"],
+                    **_draft_to_dict(draft)}
 
         draft.generated_from = body.source
-        draft.doc_url = built.get("doc_url") or ""
+        draft.doc_url = built.doc_url or ""
         save(draft)
-        return {"ok": True, "warnings": built.get("warnings", []),
-                **_draft_to_dict(draft)}
+        return {"ok": True, "warnings": [], **_draft_to_dict(draft)}
 
     @router.get("/templates")
     async def list_active_codes(request: Request):
@@ -198,27 +197,11 @@ def setup_itinerary_desk_routes() -> APIRouter:
         rows = active_day_templates()
         return {"count": len(rows),
                 "codes": [{"code": code,
-                           "title": row.get("title", ""),
-                           "city": row.get("city", ""),
-                           "overnight_city": row.get("overnight_city", ""),
-                           "region": row.get("region", "")}
+                           "title": field_of(row, "title"),
+                           "city": field_of(row, "city"),
+                           "overnight_city": field_of(row, "overnight_city"),
+                           "region": field_of(row, "region")}
                           for code, row in sorted(rows.items())]}
 
     return router
 
-
-def _exchange_rate() -> float:
-    """
-    Post: IQD per 1 USD, from the pipeline's own pricing data.
-
-    Blame: a missing or zero rate is a data fault, not a caller fault, and it
-    raises rather than pricing a tour at an invented rate.
-    """
-    from services.itinerary.pipeline.loader import load_pricing
-
-    pricing = load_pricing()
-    settings_block = (pricing or {}).get("settings") or {}
-    rate = float(settings_block.get("exchange_rate") or 0)
-    if rate <= 0:
-        raise HTTPException(503, "no exchange rate is configured in the pricing data")
-    return rate

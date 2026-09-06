@@ -224,13 +224,26 @@ def preview_itinerary(req: NormalizedRequest) -> ItineraryPreviewResult:
     )
 
 
-def execute_generation(req: NormalizedRequest) -> ItineraryGenerationResult:
+def execute_generation(req: NormalizedRequest,
+                       day_codes: Optional[list[str]] = None) -> ItineraryGenerationResult:
+    """
+    Build the document for one request.
+
+    Pre:  `day_codes`, when given, is the sequence a reviewer chose. Every code
+          must name an active template.
+    Post: the document holds exactly that sequence. Without it, the matcher and
+          the binder choose, as they always did.
+
+    Blame: a caller that holds a chosen sequence and does not pass it gets an
+    itinerary built from a different one, and nothing on the result would say
+    so. That is why the argument exists.
+    """
     global _PIPELINE
     if not _PIPELINE:
         _PIPELINE = _ensure_pipeline_imported()
     preview = preview_itinerary(req)
 
-    if not preview.bound_day_codes:
+    if not (day_codes or preview.bound_day_codes):
         return ItineraryGenerationResult(
             key=req.key,
             status="error",
@@ -247,7 +260,7 @@ def execute_generation(req: NormalizedRequest) -> ItineraryGenerationResult:
         )
 
     try:
-        tour_req = build_tour_request(req, preview.bound_day_codes)
+        tour_req = build_tour_request(req, list(day_codes or preview.bound_day_codes))
         gen_res = _PIPELINE["generate_document"](tour_req)
 
         if not gen_res.get("ok"):

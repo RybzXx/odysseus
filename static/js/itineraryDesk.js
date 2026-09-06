@@ -12,24 +12,28 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-// The columns normalize_row reads. Multi-value cells are pipe separated, and
-// the vocabularies are fixed, so the page states them rather than letting a
-// typed value fall silently to a default.
+// The keys services/itinerary/normalizer.py reads for a curated request. These
+// are the live web form's own key names, not sheet headers: a typed card here
+// must reach the normalizer as the same payload a real request does, or it
+// silently normalizes to the defaults and builds a trip nobody asked for.
+//
+// Regions separate on a comma. The vocabularies below are the ones the mapper
+// knows. A word outside them is kept and matches no route, which the desk shows
+// rather than hides.
 const REQUEST_FIELDS = [
-  ["Customize", "Request id", "cr-0001"],
   ["name", "Client name", ""],
-  ["pax", "Party size", "2"],
-  ["days", "Days", "8"],
-  ["type", "Tour type", "individual"],
-  ["hotel", "Hotel", "4_star"],
-  ["transportation", "Transport", "suv"],
-  ["regions", "Regions (pipe separated)", "central iraq & middle euphrates | iraqi kurdistan"],
-  ["interests", "Interests (pipe separated)", "history | food"],
-  ["range/exact", "Date mode", "range"],
-  ["exact date", "Exact date", ""],
-  ["month", "Month", "April"],
-  ["year", "Year", "2026"],
-  ["extra comments", "Comments", ""],
+  ["email", "Email", ""],
+  ["numberOfPeople", "Party size", "2"],
+  ["tripDays", "Days", "8"],
+  ["accommodation", "Hotel (3 star | 4 star | 5 star)", "4 star"],
+  ["regions", "Regions (comma separated)", "central iraq, kurdistan"],
+  ["travelDateMode", "Date mode (range | exact)", "range"],
+  ["exactDate", "Exact date (YYYY-MM-DD)", ""],
+  ["travelMonth", "Month", "April"],
+  ["travelYear", "Year", "2026"],
+  ["comments", "Comments", ""],
+  ["dietaryNeeds", "Dietary needs", ""],
+  ["heatWalkingComfort", "Mobility and pacing", ""],
 ];
 
 let current = null;
@@ -224,7 +228,7 @@ async function loadDrafts() {
     list.innerHTML = `<option value="">${data.count} open request(s)</option>`
       + data.drafts.map((d) =>
           `<option value="${esc(d.draft_id)}">${esc(d.request_id || d.draft_id)}
-             — ${esc((d.request_row || {}).days || "?")} days</option>`).join("");
+             — ${esc((d.request_row || {}).tripDays || "?")} days</option>`).join("");
     $("summary").textContent = `${data.count} request(s) on the desk`;
   } catch (e) {
     $("summary").innerHTML = `<span class="err">${esc(e.message)}</span>`;

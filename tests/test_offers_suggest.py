@@ -231,6 +231,43 @@ def test_canon_carries_no_formatting_fault_for_a_cleaner_to_fix():
         assert not re.search(r"\s[,.;:]", text), code
 
 
+def test_an_hour_at_the_head_of_a_day_survives_the_cleaner():
+    """
+    The date rule once made every part optional, so its trailing year matched a
+    bare number on its own. "7 AM Start the day" became "AM Start the day", and
+    MaMEB reached the sheet on 2026-09-06 with its hour gone.
+
+    A number at the head of a day is a start time far more often than a year.
+    """
+    from services.offers.catalogue import as_catalogue_text
+    assert as_catalogue_text("7 AM Start the day.") == "7 AM Start the day."
+    assert as_catalogue_text("8 AM After breakfast we go.") == "8 AM After breakfast we go."
+    assert as_catalogue_text("2026 was a good year.") == "2026 was a good year."
+
+
+@pytest.mark.parametrize("sent, wanted", [
+    ("Monday, 5 April 2026, Visit Babylon.", "Visit Babylon."),
+    ("5 April 2026 Visit Babylon.", "Visit Babylon."),
+    ("April 5, 2026 Visit Babylon.", "Visit Babylon."),
+    ("Tuesday Visit Babylon.", "Visit Babylon."),
+])
+def test_a_real_date_is_still_stripped(sent, wanted):
+    """The rule narrowed to protect the hour. It must still do its own job."""
+    from services.offers.catalogue import as_catalogue_text
+    assert as_catalogue_text(sent) == wanted
+
+
+def test_a_space_before_a_mark_is_closed_up():
+    """
+    ArrSU carried "Monastery ," and KANJ carried "rest ." and "check -in". All
+    three came from the sent offers, where a line was edited and the space
+    stayed. Removing one changes no word, so it belongs to form.
+    """
+    from services.offers.catalogue import as_catalogue_text
+    assert as_catalogue_text("Visit the Monastery , and rest .") == "Visit the Monastery, and rest."
+    assert as_catalogue_text("We check -in to the hotel.") == "We check-in to the hotel."
+
+
 def test_the_cleaned_wording_is_withheld_while_the_gate_fails():
     """
     Spec 4.1 gates the cleaner on a round trip through canon. Measured on

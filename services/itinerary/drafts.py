@@ -1,5 +1,5 @@
 """
-services/curated/drafts.py
+services/itinerary/drafts.py
 
 One request, the day-code sequences proposed for it, and the conversation that
 produced them.

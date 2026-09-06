@@ -1,0 +1,22 @@
+{
+  "code": "MUCTAGKDHBG",
+  "title": "Iraq Museum, Taq Kasra & Dur-Kurigalzu",
+  "city": "Baghdad / Salman Pak",
+  "region": "Central Iraq",
+  "overnight_city": "Baghdad",
+  "full_text": "Visit the Iraq Museum and explore its national treasures.\nVisit Taq Kasra, the last remains of the city Ctesiphon.\nHead to the Ziggurat of Dur-Kurigallzu, the tallest ziggurat in Iraq standing at a height of 52 meters.\nVisit the shrines of Kadhimiya at night.",
+  "internal_notes": "Written 1 times across sent offers with no template that expresses it. Age-weighted evidence: 0.9.",
+  "included_sites": [
+    "BG_MUSE",
+    "BG_CT_KESRA",
+    "BG_AGIRQUF",
+    "BG_KADHM"
+  ],
+  "pricing_tags": [
+    "guide_day",
+    "transport_day",
+    "hotel_night"
+  ],
+  "active": true,
+  "needs_review": false
+}

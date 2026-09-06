@@ -33,14 +33,26 @@ _MONTH = (r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?"
 # The date at the head of a day, stripped as a prefix rather than by dropping
 # the whole line. A heading can carry a real note beside its date, such as
 # "(Lunch OR Dinner is included)", and that note is content.
+#
+# A weekday or a month name must be present. An earlier form made every part
+# optional, so the trailing year alone could match, and it ate the hour from
+# "7 AM Start the day" and left "AM Start the day". A bare number at the head of
+# a day is a start time far more often than a year.
 _DATE_PREFIX_RE = re.compile(
-    rf"^\s*(?:{_WEEKDAY}\b\s*,?\s*)?"
-    rf"(?:\d{{1,2}}\s*{_MONTH}\b|{_MONTH}\b\s*\d{{0,2}})?"
-    rf"\s*,?\s*\d{{0,4}}\s*,?\s*", re.I)
+    rf"^\s*(?:"
+    rf"{_WEEKDAY}\b[\s,]*(?:\d{{1,2}}\s*{_MONTH}\b|{_MONTH}\b\s*\d{{0,2}})?"
+    rf"|(?:\d{{1,2}}\s*{_MONTH}\b|{_MONTH}\b\s*\d{{1,2}})"
+    rf")[\s,]*\d{{0,4}}[\s,]*", re.I)
 
 _OVERNIGHT_TRAILER_RE = re.compile(
     r"\s*Overnight\s*(?::\s*|\s+in\s+)[^.\n]*?(?:/\s*(?:night|Night)\s*\d+)?\s*\.?\s*$",
     re.I | re.M)
+
+# A space before a mark, and a space inside a hyphenated word. Both come from
+# the sent offers, where a line was edited and the space was left behind. Neither
+# changes a word, so removing them stays inside this function's promise.
+_SPACE_BEFORE_MARK_RE = re.compile(r"\s+([,.;:!?])")
+_SPACE_IN_HYPHEN_RE = re.compile(r"(?<=\w)\s+-\s*(?=\w)")
 
 # A period does not always end a sentence. "approx." and "Intl." carry one and
 # continue, and a period inside a number is no break at all. Splitting on either
@@ -78,6 +90,8 @@ def as_catalogue_text(day_text: str) -> str:
     out = []
     for line in joined.splitlines():
         line = re.sub(r"\s{2,}", " ", line).strip()
+        line = _SPACE_IN_HYPHEN_RE.sub("-", line)
+        line = _SPACE_BEFORE_MARK_RE.sub(r"\1", line)
         if not line:
             continue
         parts, buffer = [], ""

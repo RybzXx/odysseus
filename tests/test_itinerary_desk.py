@@ -20,8 +20,8 @@ ODYSSEUS_ROOT = str(Path(__file__).resolve().parent.parent)
 if ODYSSEUS_ROOT not in sys.path:
     sys.path.insert(0, ODYSSEUS_ROOT)
 
-from services.curated import drafts  # noqa: E402
-from services.curated.drafts import (  # noqa: E402
+from services.itinerary import drafts  # noqa: E402
+from services.itinerary.drafts import (  # noqa: E402
     SOURCE_MODEL,
     SOURCE_RULES,
     DraftError,
@@ -33,15 +33,17 @@ from services.curated.drafts import (  # noqa: E402
     open_draft,
     sequences_agree,
 )
-from services.curated.normalize import normalize_row  # noqa: E402
-from services.curated.propose_sequence import ProposalError, parse_answer  # noqa: E402
+from services.itinerary.normalizer import normalize_from_dict  # noqa: E402
+from services.itinerary.propose_sequence import ProposalError, parse_answer  # noqa: E402
 
+# The live curated form's own keys. A sheet-header shape normalizes to the
+# defaults instead, which is how a desk can quietly build a 5-day trip for an
+# 8-day request. These tests hold the desk to the payload it really receives.
 ROW = {
-    "Customize": "cr-0001", "name": "Test Client", "pax": "2", "days": "8",
-    "hotel": "4_star", "transportation": "suv",
-    "regions": "iraqi kurdistan | central iraq & middle euphrates",
-    "interests": "history | food",
-    "range/exact": "range", "month": "April", "year": "2026",
+    "name": "Test Client", "numberOfPeople": "2", "tripDays": "8",
+    "accommodation": "4 star",
+    "regions": "kurdistan, central iraq",
+    "travelDateMode": "range", "travelMonth": "April", "travelYear": "2026",
 }
 
 TEMPLATES = {"ARRBG": {}, "BG1": {}, "BBKA": {}, "NJ": {}}
@@ -56,12 +58,12 @@ def desk(tmp_path, monkeypatch):
 # --- reading a request ------------------------------------------------------
 
 def test_a_request_row_normalises_to_the_generation_inputs():
-    req = normalize_row(ROW, 2)
+    req = normalize_from_dict("k", ROW, source="curated")
     assert req.day_count == 8
     assert req.pax == 2
     assert req.hotel_tier == "4star"
-    assert req.vehicle == "LARGE_CAR"
-    assert set(req.regions) == {"Northern Iraq", "Central Iraq"}
+    assert req.vehicle_type == "SMALL_CAR"
+    assert set(req.requested_regions) == {"Northern Iraq", "Central Iraq"}
 
 
 def test_an_unmapped_region_is_warned_about_and_passed_through():
@@ -70,8 +72,8 @@ def test_an_unmapped_region_is_warned_about_and_passed_through():
     It then matches no route, which is honest: the request said something the
     catalogue has no word for, and silence would hide that.
     """
-    req = normalize_row({**ROW, "regions": "Atlantis"}, 2)
-    assert req.regions == ["Atlantis"]
+    req = normalize_from_dict("k", {**ROW, "regions": "Atlantis"}, source="curated")
+    assert req.requested_regions == ["Atlantis"]
     assert any("Atlantis" in w for w in req.parse_warnings)
 
 
@@ -87,7 +89,7 @@ def test_reopening_the_same_request_returns_the_same_thread(desk):
 
 def test_a_draft_id_is_stable_for_one_request():
     assert draft_id_for(ROW) == draft_id_for(dict(ROW))
-    assert draft_id_for(ROW) != draft_id_for({**ROW, "days": "9"})
+    assert draft_id_for(ROW) != draft_id_for({**ROW, "tripDays": "9"})
 
 
 def test_a_thread_keeps_every_answer_with_the_comment_that_caused_it(desk):
@@ -206,20 +208,38 @@ def test_only_active_templates_may_be_proposed(monkeypatch):
     An inactive row cannot be built, so a reviewer reading it would be reading
     an itinerary that cannot be generated.
     """
-    from services.offers import catalogue
-    from services.curated.propose_sequence import active_day_templates
-    monkeypatch.setattr(catalogue, "_cache", {
+    from services.itinerary import propose_sequence
+    from services.itinerary import generator
+    monkeypatch.setattr(generator, "load_templates", lambda: {
         "LIVE": {"code": "LIVE", "active": True},
         "PENDING": {"code": "PENDING", "active": False},
     })
-    assert set(active_day_templates()) == {"LIVE"}
+    assert set(propose_sequence.active_day_templates()) == {"LIVE"}
+
+
+def test_a_template_field_reads_the_same_from_a_dict_and_an_object():
+    """
+    The pipeline hands out objects and the catalogue hands out dicts. A reader
+    that knows one shape returns an empty overnight city for the other, and an
+    empty overnight city binds no day at all, without saying so.
+    """
+    from services.itinerary.propose_sequence import field_of
+
+    class Row:
+        overnight_city = "Baghdad"
+        region = None
+
+    assert field_of({"overnight_city": "Baghdad"}, "overnight_city") == "Baghdad"
+    assert field_of(Row(), "overnight_city") == "Baghdad"
+    assert field_of(Row(), "region") == ""
+    assert field_of({}, "active", True) is True
 
 
 def test_the_prompt_carries_the_codes_and_the_request(monkeypatch):
-    from services.curated import propose_sequence
+    from services.itinerary import propose_sequence
     monkeypatch.setattr(propose_sequence, "_route_examples", lambda days, limit=4: [])
     messages = propose_sequence.build_prompt(
-        normalize_row(ROW, 2),
+        normalize_from_dict("k", ROW, source="curated"),
         {"ARRBG": {"title": "Arrival", "city": "Baghdad",
                    "overnight_city": "Baghdad", "region": "Central Iraq"}})
     assert "ARRBG" in messages[0]["content"]

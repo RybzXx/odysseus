@@ -1,0 +1,19 @@
+{
+  "code": "EB",
+  "title": "Erbil City Tour & Farewell Dinner",
+  "city": "Erbil",
+  "region": "Northern Iraq",
+  "overnight_city": "Erbil",
+  "full_text": "City tour of Erbil, visiting the Erbil Citadel and the surrounding markets.\nVisit the Syriac Heritage Museum, Choli Minaret, and the Jalil Khayat Mosque in Erbil.\nFarewell Dinner in the city.",
+  "internal_notes": "Written 1 times across sent offers with no template that expresses it. Age-weighted evidence: 0.4.",
+  "included_sites": [
+    "ERB_CITD"
+  ],
+  "pricing_tags": [
+    "guide_day",
+    "transport_day",
+    "hotel_night"
+  ],
+  "active": true,
+  "needs_review": false
+}
