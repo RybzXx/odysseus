@@ -368,7 +368,7 @@ def reextract_stored() -> dict:
         split_days,
     )
 
-    outcome = {"examined": 0, "unspaced": 0, "repaired": 0,
+    outcome = {"examined": 0, "unspaced": 0, "repaired": 0, "respaced": 0,
                "still_unspaced": [], "unreadable": []}
     if not os.path.isdir(OFFER_CORPUS_DIR):
         return outcome
@@ -411,8 +411,21 @@ def reextract_stored() -> dict:
             continue
 
         if looks_unspaced(new_text):
-            outcome["still_unspaced"].append(offer.attachment_name)
-            continue
+            # Both readers returned run-together text, so no third reading will
+            # separate those words. Put the spaces back from the corpus's own
+            # lexicon instead. Only spaces are inserted, and a run the lexicon
+            # cannot explain is left alone rather than guessed at.
+            from services.offers.word_split import letters_of, respace
+
+            respaced = respace(new_text)
+            if letters_of(respaced) != letters_of(new_text):
+                raise OfferStoreError(
+                    f"the repair changed the letters of {offer.attachment_name}")
+            if looks_unspaced(respaced):
+                outcome["still_unspaced"].append(offer.attachment_name)
+                continue
+            new_text = respaced
+            outcome["respaced"] += 1
 
         offer.days = split_days(new_text)
         # A document can read well while one day inside it does not. One PDF

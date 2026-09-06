@@ -186,7 +186,9 @@ def main(argv=None) -> int:
         outcome = reextract_stored()
         print(f"examined {outcome['examined']} stored offers; "
               f"{outcome['unspaced']} had text that lost its spaces")
-        print(f"repaired {outcome['repaired']}")
+        print(f"repaired {outcome['repaired']}"
+              + (f", of which {outcome['respaced']} needed the spaces put back"
+                 if outcome.get("respaced") else ""))
         if outcome["still_unspaced"]:
             print(f"still unspaced after a second read: {len(outcome['still_unspaced'])}")
             for name in outcome["still_unspaced"][:20]:

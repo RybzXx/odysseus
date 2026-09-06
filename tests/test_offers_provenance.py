@@ -411,10 +411,14 @@ def test_reextraction_follows_one_damaged_day_in_a_document_that_reads_well(
 
     monkeypatch.setattr(offer_store, "OFFER_CORPUS_DIR", str(corpus_root))
     good_day = ("Meet and greet at the airport, then drive to the hotel and rest "
-                "before the first full day of the tour begins tomorrow morning.")
-    bad_day = ("VisittheSulaymaniyahMuseum,atreasuretroveofKurdishhistory,thenwalk"
-               "throughthebazaarandreturntothehotelbeforesunsetfortheevening.")
-    whole = good_day + "\n" + good_day + "\n" + bad_day
+                "before the first full day of the tour begins tomorrow morning. "
+                "The evening is free to walk the old city and eat where the locals do.")
+    # One unbroken run: no spaces, no capitals, no punctuation. It reads as a
+    # single very long word, so the document around it shows only one sign and
+    # keeps a healthy space ratio. Only a per-day test finds this.
+    bad_day = ("visitthesulaymaniyahmuseumatreasuretroveofkurdishhistorythenwalk"
+               "throughthebazaarandreturntothehotelbeforesunsetfortheevening")
+    whole = "\n".join([good_day] * 8 + [bad_day])
     store_offer(
         SentOffer(message_id="<4@x>", subject="Iraq", sent_at=None,
                   attachment_name="offer.pdf",
@@ -637,3 +641,66 @@ def test_a_catalogue_with_no_regions_yields_an_empty_list(monkeypatch):
     from services.offers import catalogue
     monkeypatch.setattr(catalogue, "_cache", {"MO1": {"code": "MO1"}})
     assert catalogue.catalogue_regions() == []
+
+
+# --- putting the spaces back ------------------------------------------------
+
+def test_partial_space_loss_is_detected_not_only_total_loss():
+    """
+    A ratio alone misses this. One document reads at 0.12 overall and still
+    holds "Meet andGreet andtransfer fromtheairport", which no ratio can see.
+    """
+    from services.offers.offer_text import looks_unspaced
+    partly = ("Meet andGreet andtransfer fromtheairport tothehotel. "
+              "Introductorytour of thecityof Erbil, and then a walk around the "
+              "old streets before dinner at a place the guide knows well.")
+    assert looks_unspaced(partly)
+
+
+def test_a_healthy_day_is_not_called_run_together():
+    from services.offers.offer_text import looks_unspaced
+    assert not looks_unspaced(
+        "Meet and greet at the airport, then drive to the hotel and rest before "
+        "the first full day of the tour begins tomorrow morning at nine.")
+
+
+def test_the_repair_inserts_spaces_and_changes_no_letter():
+    """
+    The invariant that makes this safe to run over a corpus. A repair that can
+    add or drop a letter is a rewrite, and a rewrite needs a reviewer.
+    """
+    from services.offers.word_split import letters_of, respace
+    lexicon = {"from": -3.0, "the": -2.0, "airport": -5.0, "and": -2.5,
+               "transfer": -6.0, "hotel": -4.0, "to": -2.0}
+    source = "Meet andtransfer fromtheairport tothehotel."
+    repaired = respace(source, lexicon)
+    assert letters_of(repaired) == letters_of(source)
+    assert "from the airport" in repaired
+
+
+def test_a_run_the_lexicon_cannot_explain_is_left_alone():
+    """A bad split puts invented words into a row a client reads. Refuse it."""
+    from services.offers.word_split import respace
+    lexicon = {"the": -2.0, "and": -2.5}
+    assert respace("qwertyuiopasdfgh", lexicon) == "qwertyuiopasdfgh"
+
+
+def test_a_real_word_is_not_split_into_known_pieces():
+    """
+    "within" is "with" plus "in" and must survive. Measured: lowering the run
+    threshold to six repaired no day more and broke this word.
+    """
+    from services.offers.word_split import respace
+    lexicon = {"with": -3.0, "in": -2.0, "famous": -5.0}
+    assert respace("It is within reach.", lexicon) == "It is within reach."
+
+
+def test_the_lexicon_refuses_to_learn_run_together_text():
+    """
+    A lexicon that learns "fromtheairport" as a word can never split it again.
+    This is the fault that made the first repair pass do nothing.
+    """
+    from services.offers.word_split import build_lexicon
+    lexicon = build_lexicon(["from the airport to the hotel and back again"])
+    assert "airport" in lexicon
+    assert "fromtheairport" not in lexicon

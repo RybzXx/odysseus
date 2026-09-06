@@ -109,20 +109,51 @@ MIN_SPACE_RATIO = 0.05
 # below anything the test needs to catch.
 MIN_LENGTH_TO_JUDGE = 80
 
+# A reader can lose every space, or only some. The ratio catches the first: a
+# day at 0.011 has nothing left. It cannot catch the second, because a document
+# at 0.12 reads as normal while holding "Meet andGreet andtransfer
+# fromtheairport". Two shapes give that away.
+#
+# An eaten boundary: a lowercase run straight into a capitalised word, anchored
+# at a word start so "MondayMar" splits at "Monday", not at "onday".
+_EATEN_BOUNDARY_RE = re.compile(r"\b[A-Za-z][a-z]+[A-Z][a-z]{2,}")
+# A run of letters longer than almost any English word. Thirteen, measured over
+# the corpus: at fourteen the test finds 4 damaged days, at thirteen it finds 11,
+# and at twelve it finds 216 because real words start there — "accommodation"
+# and "approximately" are twelve. Three signs are still required together, so a
+# genuine long word on its own never triggers a repair.
+_OVERLONG_WORD_RE = re.compile(r"[A-Za-z]{13,}")
+# One of either can be a proper name or a compound. Three together is a reader
+# that lost boundaries.
+MIN_LOST_BOUNDARY_SIGNS = 3
+
+
+def lost_boundary_signs(text: str) -> int:
+    """Post: how many run-together words the text shows."""
+    return (len(_EATEN_BOUNDARY_RE.findall(text or ""))
+            + len(_OVERLONG_WORD_RE.findall(text or "")))
+
 
 def looks_unspaced(text: str) -> bool:
     """
     True when an extraction dropped the word boundaries rather than the text
     lacking them.
 
-    Post: False for text shorter than MIN_LENGTH_TO_JUDGE, and for empty text.
+    Post: True for text that lost every space, and for text that lost some.
+          False for text shorter than MIN_LENGTH_TO_JUDGE, and for empty text.
           Nothing can be said about a string too short to hold a sentence, and
           calling it broken would send it for repair on every pass, forever.
+
+    Both losses matter, and for different readers. A repair pass needs to find
+    them, and a lexicon built from the corpus must exclude them — a lexicon that
+    learns "fromtheairport" as a word can never split it again.
     """
     stripped = (text or "").strip()
     if len(stripped) < MIN_LENGTH_TO_JUDGE:
         return False
-    return stripped.count(" ") / len(stripped) < MIN_SPACE_RATIO
+    if stripped.count(" ") / len(stripped) < MIN_SPACE_RATIO:
+        return True
+    return lost_boundary_signs(stripped) >= MIN_LOST_BOUNDARY_SIGNS
 
 
 def _pdf_text_pypdf(data: bytes) -> str:
