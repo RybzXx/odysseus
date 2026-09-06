@@ -1,7 +1,7 @@
 # ws-03 handover — 2026-09-05
 
 For an agent starting with no memory of this work. Read `spec.md` beside this
-file for the full record; this is what you need to resume.
+file for the full record. This is what you need to resume.
 
 > **Superseded in part, later the same day.** An audit tested every claim below
 > against the artifacts on disk. Four did not hold. Read
@@ -30,7 +30,7 @@ Remote `daily-driver` on `github.com/RybzXx/odysseus`.
 `5a1ea4c`. Everything through `c446240` is on the remote.
 
 No code or data path reaches outside the repository. The Bil Weekend pipeline is
-vendored at `services/itinerary/pipeline`; the day catalogue is vendored at
+vendored at `services/itinerary/pipeline`. The day catalogue is vendored at
 `services/offers/data`. `BILWEEKEND_REPO_ROOT` is gone.
 
 **One file must be placed by hand on a new machine.** The vendored pipeline
@@ -42,12 +42,12 @@ Sheets fails. On the machine this was built on it was copied from the
 `WebOperationsBilW` checkout's `mahdi1.json`.
 
 The standalone `WebOperationsBilW` checkout is a separate git repo and received
-two changes early in this work: the autojunk fix and the ranked matcher, with
+two changes early in this work: the autojunk repair and the ranked matcher, with
 its near-miss band and ambiguity margin. They are committed there as `c4170ae`
 on `master`, unpushed. Odysseus is the authoritative copy of that logic now —
 `services/offers/day_match` is the single implementation, and the vendored
 `itinerary_reader` imports it — but that checkout is what Render deploys, so the
-fix matters there on its own account.
+repair matters there on its own account.
 
 That repo also carries two unrelated modified files, `data/pricing/entry_tickets.json`
 and `data/pricing/new_hotels.json`, which predate this work and were deliberately
@@ -86,7 +86,7 @@ button for a full corpus — it holds an HTTP request open and will time out.
 
 Invariant 1.4 forbids running any model over the corpus before the owner
 agrees. That has not happened. Proposal text is verbatim sent prose with layout
-debris removed; what a model would still strip is embedded dates, prices and
+debris removed. What a model would still strip is embedded dates, prices and
 client names.
 
 ## Commands
@@ -104,7 +104,7 @@ interrupted run costs only the messages it had not reached. Run it detached —
 background tasks in this harness were killed three times.
 
 The review page is at `/offers`. Set `PYTHONIOENCODING=utf-8` before any command
-that prints corpus text; the console codepage cannot encode the bullet glyphs.
+that prints corpus text. The console codepage cannot encode the bullet glyphs.
 
 ## What is still open
 
@@ -117,8 +117,8 @@ It is the next real design question.
 **`BANMEB` and `BAEB` score 0.850 against each other.** The owner chose to
 differentiate them. It will surface in the review queue.
 
-**Route retrieval must never apply the recency weight.** Wording ages; routing
-does not. WP2 is not built; the rule is recorded where the weight is defined.
+**Route retrieval must never apply the recency weight.** Wording ages. Routing
+does not. WP2 is not built. The rule is recorded where the weight is defined.
 
 **The reconciliation is stale.** On the 7-month corpus, 128 legacy offers had no
 surviving source. The 24-month window should reduce that sharply. Re-run it.
@@ -130,7 +130,7 @@ in more than 1% of a sequence longer than 200 elements. Over characters that is
 the space and most common letters, and every template is longer than 200
 characters. It also junks only the second argument, so the score depended on
 argument order. Disabling it moved catalogue coverage from 35.0% to 47.7% on the
-same days. Every threshold measured before that fix is void.
+same days. Every threshold measured before that repair is void.
 
 **Each PDF generation drops spaces differently.** Three variants were found, each
 invisible until a rejected file was opened by name: `Day 1` spaced,
@@ -163,22 +163,22 @@ the whole suite at ~90%. Pruning during the walk took it from never-finishing to
 environmental (macOS, Docker, JS). That is the number to compare against, not
 zero.
 
-## Two claims that were wrong and were corrected
+## Two claims that were wrong, and the repairs
 
 **"Nine templates are used by no offer."** Measured as *never winning the
 argmax*, which is not the same claim. Four of the nine clear the threshold and
-simply lose to a closer template. After the autojunk fix only two are genuinely
+simply lose to a closer template. After the autojunk repair only two are genuinely
 unreferenced.
 
-**"Failures are now recorded in full."** The write block never reached the file;
-a patch had not matched. The claim appeared in a commit message and in a report
-to the owner while the behaviour was unchanged. Fixed in `0b2d970`.
+**"Failures are now recorded in full."** The write block never reached the file.
+A patch had not matched. The claim appeared in a commit message and in a report
+to the owner while the behaviour was unchanged. Repaired in `0b2d970`.
 
 **"Moved the workstream record into the repository it describes."** `c446240`
 copied the spec rather than moving it, and left a duplicate in the outer working
 directory. Both copies were identical, so nothing had diverged, but a second
-copy of a living document is a copy that will. The duplicate was deleted on
-2026-09-05; `docs/workstreams/` in the outer directory still holds
+copy of a living document is a copy that will. The duplicate was removed on
+2026-09-05. `docs/workstreams/` in the outer directory still holds
 `00-PROTOCOL.md` and `ws-01`, which predate this work.
 
 The pattern in all three: a claim was made from the intent of an edit rather
@@ -191,7 +191,7 @@ than from its result. Checking the file afterwards would have caught every one.
 What an audit found, what was built after it, and what is still open. Every
 number here was measured. The audit's own working is in `state-audit.md`.
 
-## What the audit corrected
+## What the audit repaired
 
 | Claim above | What is true |
 |---|---|
@@ -200,7 +200,7 @@ number here was measured. The audit's own working is in `state-audit.md`.
 | Gap summary stale at 68 offers | **It held a measurement over 2 offers**, written 48 minutes after the queue |
 | Three sibling checkouts | **Three worktrees of one repository**, per `git worktree list` |
 
-The pass that finished at 11:24 recovered three offers the parser fix `5a1ea4c`
+The pass that finished at 11:24 recovered three offers the parser repair `5a1ea4c`
 had just made readable: `Baghdad and The South in 7 days` twice and
 `in 8 days` once. They left the failure record as they entered the corpus,
 which took it from 331 rejections to 328.
@@ -268,7 +268,7 @@ offers. The larger corpus holds many more days the catalogue cannot express.
 
 The Windows instance serves it. `APP_BIND=0.0.0.0` is set in `.env`, and the
 phone opens `http://100.82.8.53:7001/offers` over Tailscale. The phone's own
-Odysseus has no offer corpus; its data directory is
+Odysseus has no offer corpus. Its data directory is
 `/data/data/com.termux/files/home/odysseus-data`.
 
 **Authentication is off instance-wide.** `.env` sets `AUTH_ENABLED=false`, so
@@ -291,7 +291,7 @@ document class, and matching filenames gives 131 as an upper bound that includes
 
 **21 proposals carry no corpus stamp.** They come from the 68-offer run and the
 new analysis did not re-propose them. They are shown as unknown rather than
-deleted, because no verdict was given on them.
+removed, because no verdict was given on them.
 
 **The reconciliation has never been persisted.** `reconcile()` computes and
 `format_reconciliation()` prints. The "128 legacy offers with no surviving
@@ -421,7 +421,7 @@ Kurdishhistory` — and pypdf and PyMuPDF return it the same way. It is named in
 the run's report rather than guessed at. One day in 2449 did not justify the
 word-list segmenter the design had held in reserve.
 
-### Two corrections came from running it
+### Two repairs came from running it
 
 **The first test asked about the whole document, and the day is the unit that
 gets matched.** One document scores 0.094 across the whole file while its third
@@ -459,7 +459,7 @@ code, and a proposal the server refuses does not take the others down with it.
 it was alive was CPU time climbing.
 
 `gap_report` measures and never prints, so the caller supplies a callback. The
-command prints it; the HTTP handler passes nothing.
+command prints it. The HTTP handler passes nothing.
 
 **An estimate appears only for scoring.** Every day costs the same to score, so
 the time left is a straight extrapolation. Clustering compares each day against
@@ -516,7 +516,7 @@ corpus each proposal came from.
 
 | Item | State |
 |---|---|
-| 1. Remove the dates | Not started. The owner's reason is catalogue text quality, not matching: removing the date line moved the mean score by +0.004 and moved no day across the threshold |
+| 1. Remove the dates | Not started. The owner's reason is catalogue text quality, not matching. Removing the date line moved the mean score by +0.004. It moved no day across the threshold |
 | 2. Group similar days | Built as a view |
 | 3. Suggest the code | Not started. The code abbreviates the places named in a template's title, and a new proposal has no title |
 | 4. Spaceless days | Repaired, 543 to 1 |
@@ -577,9 +577,149 @@ separately, so a bad rewrite does not cost a good set of fields.
 
 **The cleaner is gated.** Canon's 28 texts carry no formatting faults: no
 leading or trailing space, no double space, no carriage return, no triple
-newline, no space before a newline or before punctuation. A correct cleaner has
+newline, no space before a newline or before punctuation. A cleaner that works has
 nothing to change in them. It ships only when all 28 come back unchanged, so the
 fields half and the text half ship independently.
 
 **Unsure fields are filled and marked.** Each suggested field carries `high` or
 `low` confidence. The owner chose a marked guess over an empty box.
+
+---
+
+## Fourth pass — 2026-09-06: the catalogue grew
+
+**The 32 approved rows reached the sheet.** The `templates` tab holds 60 rows
+where it held 28. Verified by reading it: every new row carries
+`active: FALSE` and `needs_review: TRUE`, which is invariant 1.3 working.
+
+    ARREB, ArrSU, BAMaMNV, BANA, BGNJURUKNA, ChHkEB, DaMOZKDU, EB, EBKOSU,
+    EBNEWROZ, FREEBG, HABISU, KABBBG, KANJ, MUCTAGKDHBG, MaMEB, MaMJEFADU,
+    NJ, NJUkKA, QOLANOW, SHAKSOEB, SHAMBASO, SHRINESBG, SHSOKO, SUEBDEP,
+    SUKOYEB, SUSOEB, SUtEBt, UrErNA, UrukErUR, UrukNJ, ZuBA
+
+**The vendored copy still holds 28.** It is a snapshot, and it has not been
+taken again since the write. Anything reading `services/offers/data/templates`
+is reading the catalogue as it was before this.
+
+### The columns were filled by hand, once
+
+The owner asked for one pass without the configured model. Titles, cities and
+site codes were read from each day's own text. Every site code was checked
+against `entry_tickets` before it was written, and the script refuses to run if
+one is not in that list.
+
+`KABBBG` was approved while the pass ran and was included.
+
+### Two rows were still run together, and the reason was a blind spot
+
+A ratio test finds a day that lost every space. It cannot find one that lost
+some. `ATC Nowruz Itinerary - March 2025.pdf` reads at 0.12 overall and holds
+`Meet andGreet andtransfer fromtheairport`, so both re-extraction passes walked
+past it. It supplied `ARREB` and `SHAMBASO`.
+
+**`looks_unspaced` now counts two more shapes.** An eaten boundary is a
+lowercase run straight into a capitalised word, anchored at a word start so
+`MondayMar` splits at `Monday` and not at `onday`. An overlong run is thirteen
+letters or more. Three signs together are required, so a genuine long word never
+triggers a repair on its own.
+
+**Thirteen, measured.** At fourteen the test finds 4 damaged days, at thirteen
+11, and at twelve 216 — real words start there, and `accommodation` and
+`approximately` are twelve.
+
+**`word_split` puts the spaces back where no reader can.** The lexicon is the
+corpus's own spaced days, so it holds Qaimer, mashoof and Rawanduz. Only spaces
+are inserted, and the repair refuses to write text whose letters changed.
+
+**The run threshold is nine, measured.** Six was tried: it repaired not one day
+more, and it broke real words the lexicon happens not to hold, turning `within`
+into `with in` and `infamous` into `in famous`. Every piece of those splits is a
+known word, so the unknown-piece guard cannot catch them. The length line is the
+only defence.
+
+### The first repair attempt did nothing, and the cause is the same class
+
+The lexicon was built from days the ratio test called healthy, so it learned
+`fromtheairport` as a word. A lexicon that knows the run-together form can never
+split it again. One detector now serves both the repair pass and the lexicon
+filter.
+
+### A wording becomes a catalogue row at the verdict
+
+**Not at draft time, and not on a pending row.** A proposal id is the hash of
+its text. Measured: all 324 pending ids matched their text exactly. Cleaning at
+draft time would have re-identified every one and stopped the 224 rejections
+suppressing their days, orphaning every verdict already given. Cleaning a
+pending row is worse: the next rebuild redraws it from the corpus under the
+original id, retires the cleaned one, and puts a dirty duplicate beside it.
+
+`as_catalogue_text` strips the date heading and the overnight trailer and puts
+one sentence on one line. `record_verdict` calls it when a proposal is approved.
+A rejected row keeps the wording as sent, because it is evidence rather than a
+row.
+
+Two rows of the thirty-two were refreshed from the repaired corpus. The other
+thirty were left alone: the newer reading of some documents puts the
+`Overnight:` trailer and a pricing footnote back, and reads `Uruk` as `Euruk` in
+one. A refresh is not an improvement by default.
+
+### State after the rebuild
+
+| | |
+|---|---|
+| Catalogue | 60 rows in the sheet, 28 active, 32 awaiting activation |
+| Corpus | 335 offers, 2449 days |
+| Coverage | 49.6% — 1215 matched, 182 edited, 1052 uncovered |
+| Queue | 329 pending, 32 approved, 224 rejected, 142 retired |
+| Retired this run | 2, against 140 the run before |
+| Tests | 249 across seven files |
+
+**Retirement fell from 140 to 2.** The earlier run cleared a backlog from three
+older corpora. This one found almost the same set it drafted before, which is
+what a settled queue looks like.
+
+**The space repair moved coverage by four days.** It touched 11 days of 2449, so
+that is the size it should be. Its value was the two approved rows.
+
+### The itinerary desk
+
+**A request now becomes a day-code sequence at `/itinerary`.** The model reads
+the request and answers with codes. The vendored rules run beside it, matching
+the request against the routes actually sold and binding that route's days to
+live templates. The desk shows both and marks their difference position by
+position. Neither decides.
+
+A comment moves the model's answer and never the rules answer. The rules are
+deterministic, and an unchanging second opinion across a whole thread is what makes
+them worth running.
+
+`curated` is vendored from `OperationsAutomationSrv` at `3944ecc`, with its
+pipeline coupling rewritten to this repository's own vendored pipeline.
+`BILWEEKEND_REPO_ROOT` stays gone. `runner.py` and `sheets_client.py` are
+deliberately absent: they write six cells back to the operations sheet, and that
+write must not arrive as a side effect of an import.
+
+Verified on an 8-day request for Kurdistan and Central Iraq. The rules matched
+`Giovanbattista - 8 Days in Iraq.docx` at 1.00. The model answered with eight
+valid codes and a reason, invented nothing, and agreed on arrival and Mosul.
+
+### What is open
+
+**The 32 new rows are inactive.** `active_template_texts` filters on that field,
+so the itinerary desk still chooses from 28 codes. Activating them is a separate
+deliberate act that nothing in this workstream performs.
+
+**The vendored template snapshot is stale.** 28 rows against the sheet's 60.
+
+**The operations-sheet list on the desk is not built.** A request is pasted.
+
+**Generation from the desk is untested.** It renders a real Google Doc.
+
+**The text cleaner is off.** It failed the canon round trip at 11 of 28, and
+most of its changes were real repairs to canon's own spelling.
+
+**Day tours still do not parse.** 328 rejections, and how many are real offers
+is unknown.
+
+**Port 7001 answers with no login on the LAN and on ZeroTier.** `AUTH_ENABLED`
+is false and the firewall rule has not been added.
