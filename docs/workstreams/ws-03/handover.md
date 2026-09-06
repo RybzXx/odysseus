@@ -828,3 +828,155 @@ unknown until the first run.
 **The vendored template snapshot is stale.** 28 rows against the sheet's 60.
 
 **Port 7001 answers with no login on the LAN and on ZeroTier.**
+
+---
+
+## 2026-09-06: the merge, and the rule counter
+
+Two work packages landed. WP1 merged the duplicate. WP2 built the rule counter.
+
+Commits: `6aeabe1` for the merge, `936506a` for the counter.
+
+### WP1 — one itinerary module
+
+`services/curated` is gone. Nothing imports it.
+
+`drafts.py` and `propose_sequence.py` moved into `services/itinerary`. They hold
+the draft thread, the two proposers, and the position-by-position comparison.
+The survivor had no counterpart for any of the three.
+
+`MATCH_MIN_SCORE` 0.30 came across with them. It says when a route match is weak.
+
+The merge exposed three faults. A duplicate had hidden each one.
+
+**The two normalizers were not one reader.** The survivor reads the live web
+form keys, such as `tripDays` and `numberOfPeople`. The desk posted sheet
+headers, such as `days` and `pax`. Every typed request fell to the defaults. An
+8-day request built a 5-day trip, and nothing said so. The desk form and its
+tests now use the live keys.
+
+**The desk gave dicts to a binder that reads objects.** The overnight index came
+back empty. The binder bound 0 days of 8 and reported every day as uncovered.
+`active_day_templates` now reads through the generation pipeline's own loader.
+The desk therefore proposes over what the generator can build. `field_of` reads
+either shape.
+
+**`as_catalogue_text` removed the hour from a day.** Its date rule made every
+part optional, so the trailing year matched a bare number alone. "7 AM Start the
+day" became "AM Start the day". `MaMEB` reached the sheet without its hour. The
+rule now needs a weekday or a month name.
+
+### Repairs to the sheet
+
+Three cells changed. Each one repairs damage from the earlier push of approved
+rows. Each write was read back.
+
+| Row | Was | Now |
+|---|---|---|
+| `MaMEB` | `AM after Breakfast...` | `8 AM after Breakfast...` |
+| `ArrSU` | `Monastery ,` | `Monastery,` |
+| `KANJ` | `rest .` and `check -in` | `rest.` and `check-in` |
+
+The corpus holds one opening for the `MaMEB` day, so the hour is not in doubt.
+
+`as_catalogue_text` now closes a space before a mark and inside a hyphen.
+
+### The template snapshot is current
+
+`services/offers/refresh_snapshot.py` reads the `templates` tab and writes the
+vendored snapshot. It plans before it writes. It never removes a row.
+
+The snapshot went 28 to 60. The 32 approved rows are therefore proposable. The
+rules proposer already uses `KABBBG` and `SUEBDEP`.
+
+**Two site cells hold text that is not JSON.** `BA0` holds `[TRF_FEE]` and
+`URUK` holds `["NA_URUK","]`. The reader recovers the codes and reports both.
+Before this, the pipeline priced those two days without their sites. The two
+cells remain malformed in the sheet. The owner decides whether to repair them,
+because a repair changes what those days cost.
+
+### WP2 — rules by counting
+
+`services/offers/rule_counter.py` counts four families over the sent offers.
+No model reads the corpus here. D7 gives the wording to the model later.
+
+Measured on 2026-09-06: 39 rules from 289 offers, 2057 nights named, 4 refused.
+
+| Family | Rules | Strongest |
+|---|---|---|
+| first night | 2 | Baghdad 199 of 289 |
+| last night | 3 | Erbil 107 of 289 |
+| move | 24 | Erbil to Erbil 52 of 71 |
+| trip length | 10 | 8 days 49 of 289 |
+
+**A move counts against the nights spent in the city it leaves.** The rule
+answers one question: given a night here, where next. A share of all 1752
+transitions answers a question nobody asks.
+
+**A second night in one city counts as a move to itself.** 369 of 709 nights
+after Baghdad are another Baghdad night. That is the largest single fact in the
+corpus. Without it a planner reads every night as a change of city.
+
+**Trip length takes no share floor.** A share floor asks whether one outcome
+leads the others, and that question needs few outcomes. A trip runs any of 15
+lengths, so the commonest holds 17 percent. At a 15 percent floor the family
+stated one rule and hid the shape of the demand. It now reports 3 to 12 days,
+which covers 268 of 289 trips.
+
+**The floors are 10 observations, then the family's share.** Below ten, one more
+offer moves the share by more than ten points.
+
+**The counter refuses to name a city when the cell offers a choice.** `Duhok or
+Erbil` names two places. Reading it as either one invents evidence the offer
+does not carry. The night drops out and the report names the wording. A dropped
+night shortens the trip and joins no move, so no invented move appears.
+
+A normalizer merges punctuation, notes, trailing day numbers, case and spelling.
+The corpus holds 38 overnight strings for about a dozen places.
+
+**An offer under two named nights is left out of all four families.** Its first
+night is also its last. Counting it would state one fact twice under two family
+names. The report names the count: 46 of 335.
+
+### Numbers that moved
+
+The handover above records 194 first-night Baghdad out of 302. The counter says
+199 of 289. Two changes explain the difference. The normalizer merges
+`Baghdad (Not Included)` and `Baghdad  1` into Baghdad. The population is now
+offers with two or more named nights, rather than offers of three or more days.
+
+### Tests
+
+301 pass across nine files: `test_rule_counter`, `test_itinerary_desk`,
+`test_itinerary_module`, `test_offers_apply`, `test_offers_module`,
+`test_offers_provenance`, `test_offers_reconcile`, `test_offers_routes`,
+`test_offers_suggest`.
+
+Every rule-counter test uses a corpus small enough to check by reading it.
+
+Three tests pin the faults above, so none of them returns:
+`test_an_hour_at_the_head_of_a_day_survives_the_cleaner`,
+`test_a_real_date_is_still_stripped`,
+`test_a_space_before_a_mark_is_closed_up`.
+
+`test_every_vendored_template_recovers_itself` pins the snapshot at 60. All 60
+recover themselves.
+
+### What is open
+
+**WP3 to WP7 are not built.**
+
+- **WP3** model wording. The model states the rule and proposes a reason. It
+  reads the tallies only. No offer reaches the model.
+- **WP4** rule record in `data/ai_rules/`. Eleven fields, `synced_at`, and the
+  hash at the last sync.
+- **WP5** two-way sync with the `AIRules` tab. The sync plans first. A rule
+  changed on both sides is refused, and the rest still applies.
+- **WP6** workstation page. It lists the Curated and Queue requests in batches
+  of ten.
+- **WP7** first run. Ten offers, a check, then ten itineraries.
+
+**Two sheet cells hold text that is not JSON.** `BA0` and `URUK`, named above.
+
+**Port 7001 answers with no login on the LAN and on ZeroTier.** The firewall
+rule needs an elevated PowerShell, which is the owner's action.
