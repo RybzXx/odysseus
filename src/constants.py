@@ -52,6 +52,9 @@ TTS_CACHE_DIR = os.path.join(DATA_DIR, "tts_cache")
 # derived from it. The attachment is the authority for the whole offer corpus,
 # so it lives under DATA_DIR and is never regenerated.
 OFFER_CORPUS_DIR = os.path.join(DATA_DIR, "offer_corpus")
+# The rule books. Two of them, kept apart because a counted rule carries a
+# denominator and a judged one carries the comment that produced it (ws-03 D16).
+AI_RULES_DIR = os.path.join(DATA_DIR, "ai_rules")
 # Proposed additions and revisions to the day-template catalogue, awaiting a
 # human verdict. Nothing reaches the catalogue sheet from anywhere else.
 TEMPLATE_PROPOSAL_DIR = os.path.join(DATA_DIR, "template_proposals")

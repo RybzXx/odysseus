@@ -48,6 +48,29 @@ class ProposalError(Exception):
     """The model could not be reached, or did not answer with a usable sequence."""
 
 
+class ModelProposalsDisabled(Exception):
+    """The owner has not turned the model proposer on."""
+
+
+MODEL_PROPOSALS_SETTING = "itinerary_model_proposals_enabled"
+
+
+def model_proposals_enabled() -> bool:
+    """
+    Whether the desk may ask a model for a sequence.
+
+    Post: True only when the owner has set `itinerary_model_proposals_enabled`.
+          A missing or unreadable settings file reads as off.
+
+    Off is the safe answer, so the default carries no risk. A request reaching
+    this path holds the customer's own comments, and the configured endpoint
+    serves a model the local Ollama relays off the machine (ws-03 D17, D25).
+    """
+    from src.settings import load_settings
+
+    return bool(load_settings().get(MODEL_PROPOSALS_SETTING, False))
+
+
 def field_of(template, name: str, default: str = "") -> str:
     """
     Post: one field of a template, whichever shape it arrives in.
@@ -209,8 +232,19 @@ async def propose_by_model(request: NormalizedRequest, templates: dict,
           reason, and the model and endpoint that produced it.
 
     Blame: an unreachable model or an unusable answer raises ProposalError. The
-    desk reports it and stays usable, because a proposal is an offer.
+    desk reports it and stays usable, because a proposal is an offer. A setting
+    left off raises ModelProposalsDisabled, which is a configuration state and
+    not a failure.
+
+    The gate sits here rather than at the route, because this is the only place
+    request text reaches an endpoint. A caller added later is then covered by
+    the same check with nothing to remember.
     """
+    if not model_proposals_enabled():
+        raise ModelProposalsDisabled(
+            f"the model proposer is off. Set {MODEL_PROPOSALS_SETTING} to true "
+            f"to let a request reach the configured endpoint")
+
     from src.endpoint_resolver import resolve_endpoint
     from src.llm_core import llm_call_async
 

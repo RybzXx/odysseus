@@ -38,6 +38,14 @@ SOURCE_RULES = "rules"
 ORIGIN_SHEET = "sheet"
 ORIGIN_TYPED = "typed"
 
+# What became of a comment, as the judged rule book reads it (ws-03 D26).
+# A comment starts as raw feedback and leaves this queue exactly once, whether
+# it produced a rule or was turned down.
+RULE_STATE_NEW = "new"          # waiting to be read for a rule
+RULE_STATE_DRAFTED = "drafted"  # a rule was drafted from it
+RULE_STATE_DECLINED = "declined"  # read, and it states no rule
+RULE_STATES = (RULE_STATE_NEW, RULE_STATE_DRAFTED, RULE_STATE_DECLINED)
+
 
 class DraftError(Exception):
     """The draft is malformed, or the change asked for is not allowed."""
@@ -88,15 +96,24 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def draft_id_for(request_row: dict) -> str:
+def draft_id_for(request_row: dict, request_id: str = "") -> str:
     """
     Post: `dr-` and twelve hex characters, stable for one request.
 
+    Pre:  `request_id` names the request where the caller holds an id the
+          request keeps for its whole life, such as a worklist key.
+
     Keyed on the request rather than the moment, so re-opening the same row
     returns to the same thread instead of starting a second one beside it.
+
+    A typed request has no identity but its own contents, so its id is a hash of
+    them. A worklist request has one, and using it means an edit to the
+    submitted record returns to the same thread rather than opening a second
+    beside the first, with the comments left behind on the old one.
     """
-    seed = json.dumps(request_row, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    return f"dr-{hashlib.sha1(seed).hexdigest()[:12]}"
+    seed = (request_id.strip() or
+            json.dumps(request_row, sort_keys=True, ensure_ascii=False))
+    return f"dr-{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:12]}"
 
 
 def _path(draft_id: str) -> str:
@@ -152,15 +169,20 @@ def iter_drafts() -> Iterator[ItineraryDraft]:
 
 
 def open_draft(request_row: dict, origin: str = ORIGIN_TYPED,
-               parse_warnings: Optional[list] = None) -> ItineraryDraft:
+               parse_warnings: Optional[list] = None,
+               request_id: str = "") -> ItineraryDraft:
     """
     Start a thread for a request, or return the one it already has.
 
     Pre:  `request_row` is the column dict `normalize_row` reads.
+          `request_id` names the request where the caller holds a stable id,
+          such as a worklist key; otherwise the row's own `Customize` column
+          answers, and failing that the request has no name of its own.
     Post: a saved draft whose id is determined by the request. Re-opening the
           same request returns the existing thread with its history intact.
     """
-    draft_id = draft_id_for(request_row)
+    named = (request_id or request_row.get("Customize") or "").strip()
+    draft_id = draft_id_for(request_row, request_id)
     existing = load(draft_id)
     if existing is not None:
         return existing
@@ -168,7 +190,7 @@ def open_draft(request_row: dict, origin: str = ORIGIN_TYPED,
         draft_id=draft_id,
         request_row=dict(request_row),
         origin=origin,
-        request_id=(request_row.get("Customize") or "").strip(),
+        request_id=named,
         parse_warnings=list(parse_warnings or []),
         created_at=_now(),
     )
@@ -198,22 +220,89 @@ def add_sequence(draft_id: str, sequence: ProposedSequence) -> ItineraryDraft:
     return draft
 
 
+def comment_id_for(draft_id: str, text: str, at: str) -> str:
+    """Post: `cm-` and twelve hex characters, stable for one comment."""
+    seed = f"{draft_id}\x1f{text}\x1f{at}".encode("utf-8")
+    return f"cm-{hashlib.sha1(seed).hexdigest()[:12]}"
+
+
 def add_comment(draft_id: str, text: str) -> ItineraryDraft:
     """
     Record a comment. It asks for a new answer; it does not produce one.
 
     Pre:  the draft exists and `text` is not empty.
-    Post: the comment is on the thread. The caller asks the model for the next
-          sequence and records it with `in_reply_to` set to this text.
+    Post: the comment is on the thread, with an id and `rule_state` set to
+          RULE_STATE_NEW. The caller asks the model for the next sequence and
+          records it with `in_reply_to` set to this text.
+
+    The id and the state exist because a comment is also the raw material of a
+    judged rule (ws-03 D18, D26). Without them the rule drafter re-reads every
+    comment each time and drafts the same rule twice.
     """
     if not (text or "").strip():
         raise DraftError("a comment cannot be empty")
     draft = load(draft_id)
     if draft is None:
         raise DraftError(f"no such draft: {draft_id}")
-    draft.comments.append({"text": text.strip(), "at": _now()})
+    at = _now()
+    draft.comments.append({
+        "comment_id": comment_id_for(draft_id, text.strip(), at),
+        "text": text.strip(),
+        "at": at,
+        "rule_state": RULE_STATE_NEW,
+    })
     save(draft)
     return draft
+
+
+def set_comment_rule_state(draft_id: str, comment_id: str, state: str) -> ItineraryDraft:
+    """
+    Record what became of one comment.
+
+    Pre:  the draft holds a comment with this id, and `state` is one of
+          RULE_STATES.
+    Post: that comment carries the new state and nothing else changes.
+
+    Blame: an unknown state is a caller bug and raises. A drafter that writes a
+    state nobody reads would leave the comment queue growing in silence.
+    """
+    if state not in RULE_STATES:
+        raise DraftError(f"unknown rule state: {state!r}")
+    draft = load(draft_id)
+    if draft is None:
+        raise DraftError(f"no such draft: {draft_id}")
+    for comment in draft.comments:
+        if comment.get("comment_id") == comment_id:
+            comment["rule_state"] = state
+            save(draft)
+            return draft
+    raise DraftError(f"no comment {comment_id} on {draft_id}")
+
+
+def iter_comments(rule_state: Optional[str] = None):
+    """
+    Every comment on every draft, oldest draft first.
+
+    Pre:  `rule_state` is one of RULE_STATES, or None for all of them.
+    Post: dicts carrying the comment and the draft it sits on. A comment
+          written before this field existed reads as RULE_STATE_NEW, because it
+          has not been drafted into a rule either.
+    """
+    for draft in iter_drafts():
+        for comment in draft.comments:
+            state = comment.get("rule_state") or RULE_STATE_NEW
+            if rule_state is not None and state != rule_state:
+                continue
+            yield {
+                "comment_id": comment.get("comment_id")
+                or comment_id_for(draft.draft_id, comment.get("text") or "",
+                                  comment.get("at") or ""),
+                "draft_id": draft.draft_id,
+                "request_id": draft.request_id,
+                "text": comment.get("text") or "",
+                "at": comment.get("at") or "",
+                "rule_state": state,
+            }
 
 
 def sequences_agree(draft: ItineraryDraft) -> dict:

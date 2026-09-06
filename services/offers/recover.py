@@ -137,6 +137,15 @@ def main(argv=None) -> int:
                         help="with --reparse, discard stored documents that hold no itinerary")
     parser.add_argument("--rebuild-proposals", action="store_true",
                         help="re-derive the review queue and the gap summary; no mail is read")
+    parser.add_argument("--fetch-threads", action="store_true",
+                        help="read the sent messages again and add each one's body and thread "
+                             "headers to the offers already stored; no offer is added")
+    parser.add_argument("--report-threads", action="store_true",
+                        help="report which stored offers have a recoverable thread; no mail "
+                             "is read")
+    parser.add_argument("--save-rules", action="store_true",
+                        help="count the rules over the corpus and write them to the counted "
+                             "rule book; no mail is read and no model runs")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -211,6 +220,46 @@ def main(argv=None) -> int:
         for name in outcome["no_itinerary"][:20]:
             print(f"  - {name}")
         return 0
+
+    if args.save_rules:
+        from services.offers.rule_book import (
+            BOOK_COUNTED, book_summary, save_counted_report)
+        from services.offers.rule_counter import count_rules
+
+        # Stamped before the pass, not after. A stamp taken afterwards would
+        # describe the corpus at the end of a run and claim the pass measured
+        # offers it never saw.
+        corpus = corpus_fingerprint()
+        report = count_rules()
+        outcome = save_counted_report(report, corpus=corpus)
+        print(f"counted {len(report.rules)} rule(s) over {report.offers_counted} offers "
+              f"(corpus {corpus['fingerprint']}, {corpus['count']} stored)")
+        print(f"written {outcome['written']}  unchanged {outcome['unchanged']}  "
+              f"retired {outcome['retired']}")
+        for rule_id in outcome["retired_ids"][:20]:
+            print(f"  - retired {rule_id}")
+        summary = book_summary(BOOK_COUNTED)
+        print(f"the counted book holds {summary['count']} rule(s): "
+              + ", ".join(f"{family} {n}" for family, n in sorted(summary["families"].items())))
+        print(f"unsynced {summary['unsynced']}  "
+              f"changed since their last sync {summary['changed_since_sync']}")
+        return 0
+
+    if args.report_threads:
+        from services.offers.offer_thread import assemble_threads
+
+        outcome = assemble_threads()
+        print(f"examined {outcome['examined']} stored offers")
+        print(f"  body captured        {outcome['body_captured']}")
+        print(f"  quoted turns found   {outcome['with_quote_turns']}")
+        print(f"  earlier offer in the same thread  {outcome['with_header_turns']}")
+        print(f"  thread recovered     {outcome['recovered']}")
+        print(f"  named but not stored {outcome['unresolved_ids']} message id(s)")
+        print(f"not recovered: {len(outcome['not_recovered'])}")
+        for name in outcome["not_recovered"][:20]:
+            print(f"  - {name}")
+        return 0
+
     before = date.today() + timedelta(days=1)
     since = before - timedelta(days=31 * args.months)
 
@@ -218,6 +267,38 @@ def main(argv=None) -> int:
     if not accounts:
         print("no matching enabled account", file=sys.stderr)
         return 2
+
+    if args.fetch_threads:
+        from services.offers.sent_offers import fetch_sent_threads
+
+        totals = {"scanned": 0, "in_corpus": 0, "updated": 0,
+                  "with_headers": 0, "empty": 0, "failed": 0}
+        for account_id, owner, imap_user in accounts:
+            print(f"\n=== {imap_user}  {since} .. {before} ===", flush=True)
+            manifest = fetch_sent_threads(
+                account_id=account_id,
+                owner=owner,
+                since=since,
+                before=before,
+                dry_run=args.dry_run,
+            )
+            totals["scanned"] += manifest["messages_scanned"]
+            totals["in_corpus"] += manifest["messages_in_corpus"]
+            totals["updated"] += manifest["records_updated"]
+            totals["with_headers"] += manifest["with_headers"]
+            totals["empty"] += manifest["bodies_empty"]
+            totals["failed"] += len(manifest["failures"])
+            print(f"scanned {manifest['messages_scanned']}  "
+                  f"in the corpus {manifest['messages_in_corpus']}  "
+                  f"{'would update' if args.dry_run else 'updated'} "
+                  f"{manifest['records_updated']} record(s)")
+        print(f"\nscanned {totals['scanned']}  in the corpus {totals['in_corpus']}  "
+              f"records {'that would be updated' if args.dry_run else 'updated'} "
+              f"{totals['updated']}")
+        print(f"carried thread headers {totals['with_headers']}  "
+              f"carried no body {totals['empty']}  failed {totals['failed']}")
+        print("run --report-threads to see which offers now have a thread")
+        return 0
 
     started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     totals = {"scanned": 0, "stored": 0, "skipped": 0, "failed": 0}

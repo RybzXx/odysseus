@@ -192,15 +192,49 @@ def normalize_curated_record(key: str, data: dict) -> NormalizedRequest:
     )
 
 
+# What Bil Weekend's data-entry team types into a queue column the submitter
+# left blank. It carries the same absence of information as an empty cell, and
+# reading it as a value puts "Not known" into an itinerary. Mirrors
+# `_is_empty_value` in mcp_servers/ops_server.py, which does this for the
+# worklist's own summary.
+_QUEUE_PLACEHOLDERS = {"not known", "none", "n/a", "-"}
+
+
+def _queue_value(record: dict, column: str) -> str:
+    """Post: the column's text, or "" when it holds a placeholder."""
+    raw = str(record.get(column) or "").strip()
+    return "" if raw.casefold() in _QUEUE_PLACEHOLDERS else raw
+
+
+# The queue columns that describe the trip rather than book it. Each becomes a
+# note, so a request's own words reach the reviewer instead of being dropped.
+_QUEUE_NOTE_COLUMNS = (
+    ("service_type", "Service"),
+    ("request_type", "Type"),
+    ("trip_focus", "Focus"),
+    ("additional_interests", "Interests"),
+    ("dietary_restrictions", "Diet"),
+    ("other_dietary_needs", "Diet"),
+    ("walking_comfort", "Mobility/Pacing"),
+    ("climate_sensitivity", "Climate"),
+    ("hotel_change_preference", "Hotel change preference"),
+    ("entry_notes", "Entry notes"),
+)
+
+
 def normalize_queue_record(key: str, record: dict) -> NormalizedRequest:
     name = record.get("full_name") or "Valued Traveler"
     email = record.get("customer_email") or record.get("respondent_email") or None
-    phone = record.get("phone") or None
+    phone = _queue_value(record, "phone") or None
 
     day_count = _resolve_day_count(record.get("trip_days"))
-    pax = 2
-    tour_type = "individual"
-    hotel_tier = "3star"
+    # Read, not assumed. This branch used to hard-code pax 2, tier 3star and an
+    # individual tour whatever the record said, so a request for one traveller
+    # priced a trip for two and a group of twelve did the same. The columns are
+    # there and have been all along.
+    pax = _parse_int_safe(_queue_value(record, "number_of_people"), default=2)
+    tour_type = "group" if pax >= 10 else "individual"
+    hotel_tier = _resolve_hotel_tier(_queue_value(record, "accommodation"))
     vehicle_type = _resolve_vehicle(pax)
     regions = _normalize_regions(record.get("regions"))
 
@@ -212,10 +246,12 @@ def normalize_queue_record(key: str, record: dict) -> NormalizedRequest:
         travel_month = travel_date_str
 
     special_notes = []
-    if record.get("service_type"):
-        special_notes.append(f"Service: {record['service_type']}")
-    if record.get("request_type"):
-        special_notes.append(f"Type: {record['request_type']}")
+    for column, label in _QUEUE_NOTE_COLUMNS:
+        value = _queue_value(record, column)
+        if value:
+            special_notes.append(f"{label}: {value}")
+    for region in unmapped_regions(regions):
+        special_notes.append(f"Region not in the catalogue: {region}")
 
     return NormalizedRequest(
         key=key,
@@ -233,6 +269,8 @@ def normalize_queue_record(key: str, record: dict) -> NormalizedRequest:
         travel_month=travel_month,
         travel_year=travel_year,
         special_notes=special_notes,
+        parse_warnings=[f"the catalogue has no region called {r}"
+                        for r in unmapped_regions(regions)],
         raw_record=record,
     )
 

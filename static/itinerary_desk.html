@@ -63,6 +63,45 @@
   .empty { text-align: center; color: var(--muted); padding: 40px 20px; }
   .thread { border-left: 2px solid var(--line); padding-left: 12px; margin-top: 10px; }
   .turn { margin-bottom: 10px; }
+
+  /* The request strip. Ten at a time, because the offers review page locked a
+     phone browser when it wrote 257 cards in one go. */
+  nav.strip { background: var(--panel); border-bottom: 1px solid var(--line);
+              padding: 10px 20px; position: sticky; top: 92px; z-index: 4; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+          font: 13px/1.3 inherit; border: 1px solid var(--line); background: var(--bg);
+          color: var(--ink); border-radius: 999px; padding: 5px 12px; }
+  .pill:hover { border-color: var(--accent); }
+  .pill[aria-current="true"] { background: var(--accent); border-color: var(--accent);
+                               color: #fff; }
+  .pill .who { font-weight: 600; }
+  .pill .st { font-size: 11px; opacity: .75; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .pill .dot.curated { background: var(--accent); }
+  .pill .dot.queue { background: var(--warn); }
+  .pill .has-doc { font-size: 11px; color: var(--accent); }
+  .pill[aria-current="true"] .has-doc { color: #fff; }
+  .strip-bar { display: flex; gap: 8px; align-items: center;
+               margin-top: 8px; flex-wrap: wrap; }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 2px 10px;
+        font-size: 13px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; }
+  .kv dd.differs { color: var(--warn); font-weight: 600; }
+
+  /* The two rule books. Kept visibly apart: a counted rule carries a
+     denominator, a judged one carries the comment that produced it. */
+  details.book { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
+  details.book > summary { cursor: pointer; font-size: 12px; text-transform: uppercase;
+                           letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  .rule { border-left: 2px solid var(--line); padding-left: 10px; margin: 8px 0; }
+  .rule .stat { font-size: 13px; }
+  .rule .n { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+             color: var(--muted); }
+  .rule.agrees { border-left-color: var(--accent); }
+  .rule.disagrees { border-left-color: var(--warn); }
+  .rule.silent { border-left-style: dashed; }
 </style>
 </head>
 <body>
@@ -77,6 +116,16 @@
   </div>
 </header>
 
+<nav class="strip">
+  <div class="pills" id="pills"><span class="note">loading requests…</span></div>
+  <div class="strip-bar">
+    <button id="pill-more">Show ten more</button>
+    <span class="note" id="pill-count"></span>
+    <span class="grow"></span>
+    <span class="note" id="pill-error"></span>
+  </div>
+</nav>
+
 <main>
   <section id="request-pane">
     <div class="card" id="request-card"><div class="empty">no request open</div></div>
@@ -86,6 +135,10 @@
   </section>
 </main>
 
-<script src="/static/js/itineraryDesk.js?v=20260905desk1"></script>
+<section style="max-width:1400px;margin:0 auto;padding:0 20px 30px">
+  <div class="card" id="rule-books"><div class="note">loading the rule books…</div></div>
+</section>
+
+<script src="/static/js/itineraryDesk.js?v=20260906desk3"></script>
 </body>
 </html>

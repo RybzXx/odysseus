@@ -6,7 +6,14 @@ from it.
 
     offer_corpus/<slug>/source.<ext>    the attachment exactly as sent
                        /text.txt        extracted text
+                       /body.txt        the sent message's own plain body
+                       /body.html       the sent message's own HTML body
                        /offer.json      parsed days plus provenance
+
+The two body files are the raw material for the thread the offer answered. They
+are kept for the same reason `source.<ext>` is: the quoted history inside them
+is the only surviving copy of the customer's request, and INBOX holds nothing
+older than five weeks (ws-03 D22).
 
 The original attachment is kept forever and never rewritten. The corpus that
 preceded this one was rebuilt from a folder of .docx files that no longer
@@ -33,6 +40,8 @@ from services.offers.models import OfferDay, SentOffer
 _UNSAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _OFFER_RECORD = "offer.json"
 _OFFER_TEXT = "text.txt"
+_BODY_TEXT = "body.txt"
+_BODY_HTML = "body.html"
 _SOURCE_STEM = "source"
 
 # What a corpus stamp on a derived artifact can say about that artifact.
@@ -81,14 +90,17 @@ def _source_path(directory: str, attachment_name: str) -> str:
     return os.path.join(directory, _SOURCE_STEM + (ext.lower() or ".bin"))
 
 
-def store_offer(offer: SentOffer, attachment_data: bytes, text: str) -> str:
+def store_offer(offer: SentOffer, attachment_data: bytes, text: str,
+                body_text: str = "", body_html: str = "") -> str:
     """
-    Write one offer's attachment, text and parsed record.
+    Write one offer's attachment, text, message body and parsed record.
 
     Pre:  `offer.message_id` is non-empty; `attachment_data` is the bytes as
           received; `offer.attachment_bytes` is their declared length.
-    Post: the directory holds all three files, and the stored attachment is
-          byte-identical to what was passed in.
+    Post: the directory holds all five files, and the stored attachment is
+          byte-identical to what was passed in. A message with no body of a
+          given kind writes that file empty, so a reader tells "captured and
+          empty" from "never captured" by the file's presence alone.
 
     Blame: a length mismatch is a fetch bug, not a store bug, and is raised
     rather than written — a truncated attachment silently stored would corrupt
@@ -109,9 +121,88 @@ def store_offer(offer: SentOffer, attachment_data: bytes, text: str) -> str:
         fh.write(attachment_data)
     with open(os.path.join(directory, _OFFER_TEXT), "w", encoding="utf-8") as fh:
         fh.write(text)
+    _write_body(directory, body_text, body_html)
     with open(os.path.join(directory, _OFFER_RECORD), "w", encoding="utf-8") as fh:
         json.dump(_offer_to_dict(offer), fh, ensure_ascii=False, indent=2)
     return directory
+
+
+def _write_body(directory: str, body_text: str, body_html: str) -> None:
+    """
+    Post: both body files hold this message's body. An absent body of a kind is
+          written as an empty file, so the pair's presence means "captured".
+
+    Both are written to temporary names and then moved into place, so a run that
+    stops partway leaves the pair as it was rather than one new file beside one
+    old one. A second walk rewrites both, and a mixed pair would put one
+    message's plain text beside another's HTML with nothing to say so.
+    """
+    staged = []
+    for name, content in ((_BODY_TEXT, body_text), (_BODY_HTML, body_html)):
+        temporary = os.path.join(directory, name + ".tmp")
+        with open(temporary, "w", encoding="utf-8") as fh:
+            fh.write(content or "")
+        staged.append((temporary, os.path.join(directory, name)))
+    for temporary, final in staged:
+        os.replace(temporary, final)
+
+
+def stored_body(directory: str) -> Optional[tuple]:
+    """
+    Post: (body_text, body_html) for a record that was walked for its body, or
+          None for one that was not.
+
+    None and ("", "") mean different things. None says the message was never
+    read for a body; ("", "") says it was read and carried none. A caller that
+    treats them alike reports a capture that did not happen.
+    """
+    text_path = os.path.join(directory, _BODY_TEXT)
+    html_path = os.path.join(directory, _BODY_HTML)
+    if not (os.path.exists(text_path) and os.path.exists(html_path)):
+        return None
+    try:
+        with open(text_path, encoding="utf-8") as fh:
+            body_text = fh.read()
+        with open(html_path, encoding="utf-8") as fh:
+            body_html = fh.read()
+    except OSError:
+        return None
+    return body_text, body_html
+
+
+def store_thread_source(message_id: str, body_text: str, body_html: str,
+                        in_reply_to: str = "",
+                        references: Optional[list] = None) -> list:
+    """
+    Add one sent message's body and thread headers to every offer it carried.
+
+    Pre:  the corpus already holds at least one offer from `message_id`.
+    Post: each of that message's directories holds `body.txt` and `body.html`,
+          and its record carries `in_reply_to` and `references`. No
+          `source.<ext>` and no `text.txt` is written, so invariant 1.1 and the
+          extracted text both survive a re-walk.
+
+    Returns the directories that were written.
+
+    One email can carry two offers, and each directory is self-contained by the
+    store's own design, so the body is written into both rather than shared. The
+    duplication costs a few kilobytes and keeps every directory readable alone.
+    """
+    written = []
+    for offer in offers_of_message(message_id):
+        directory = offer_dir(offer.message_id, offer.attachment_name)
+        record_path = os.path.join(directory, _OFFER_RECORD)
+        if not os.path.exists(record_path):
+            continue
+        _write_body(directory, body_text, body_html)
+        offer.in_reply_to = in_reply_to or ""
+        offer.references = list(references or [])
+        temporary = record_path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as fh:
+            json.dump(_offer_to_dict(offer), fh, ensure_ascii=False, indent=2)
+        os.replace(temporary, record_path)
+        written.append(directory)
+    return written
 
 
 def _offer_to_dict(offer: SentOffer) -> dict:
@@ -125,6 +216,8 @@ def _offer_to_dict(offer: SentOffer) -> dict:
         "attachment_bytes": offer.attachment_bytes,
         "tour_type": offer.tour_type,
         "extraction_warnings": offer.extraction_warnings,
+        "in_reply_to": offer.in_reply_to,
+        "references": offer.references,
         "days": [
             {
                 "day": day.day_number,
@@ -156,6 +249,8 @@ def _offer_from_dict(record: dict) -> SentOffer:
             for d in (record.get("days") or [])
         ],
         extraction_warnings=list(record.get("extraction_warnings") or []),
+        in_reply_to=record.get("in_reply_to") or "",
+        references=list(record.get("references") or []),
     )
 
 
@@ -167,26 +262,47 @@ def load_offer(message_id: str, attachment_name: str = "") -> Optional[SentOffer
         return _offer_from_dict(json.load(fh))
 
 
+_ATTACHMENT_DIGEST_RE = re.compile(r"^[0-9a-f]{8}$")
+
+
+def _names_one_message(directory_name: str, message_part: str) -> bool:
+    """
+    Whether a corpus directory belongs to the message `message_part` slugs to.
+
+    A directory is either the message slug alone, or that slug, a hyphen, and
+    the attachment's eight-character digest. A plain prefix test accepts neither
+    boundary: `abc-x` prefixes `abc-xy`, so one message id answers for a longer
+    one. That mattered when the ids came from the corpus itself and matters more
+    now that a `References` header supplies them (ws-03 WP9).
+    """
+    if directory_name == message_part:
+        return True
+    if not directory_name.startswith(message_part + "-"):
+        return False
+    return bool(_ATTACHMENT_DIGEST_RE.match(directory_name[len(message_part) + 1:]))
+
+
 def offers_of_message(message_id: str) -> list:
     """
     Every stored offer that came from one email.
 
     Pre:  `message_id` is the id as stored, with or without angle brackets.
     Post: the offers from that message, in directory order. Empty when the
-          message is not in the corpus.
+          message is not in the corpus. A message id that only prefixes a
+          stored one matches nothing.
 
     The slug starts with the sanitised message id, so the directories are found
-    by prefix and only those are read. The caller usually holds a day key, which
+    by name and only those are read. The caller usually holds a day key, which
     names the message but not the attachment, and one email can carry two
     offers. Reading the whole corpus to answer that costs 335 file reads and
     about 14 seconds; this costs one directory listing and one read.
     """
     if not os.path.isdir(OFFER_CORPUS_DIR):
         return []
-    prefix = offer_slug(message_id)
+    message_part = offer_slug(message_id)
     found = []
     for name in sorted(os.listdir(OFFER_CORPUS_DIR)):
-        if not name.startswith(prefix):
+        if not _names_one_message(name, message_part):
             continue
         path = os.path.join(OFFER_CORPUS_DIR, name, _OFFER_RECORD)
         if not os.path.exists(path):

@@ -112,6 +112,13 @@ DEFAULT_SETTINGS = {
     # unbounded model/API bill. Other values are bounded to [60, 86400].
     # Tune via Settings or by editing data/settings.json.
     "research_run_timeout_seconds": 1800,
+    # Whether the itinerary desk may ask a model for a day-code sequence.
+    # Off by default (ws-03 D25). The desk's request carries the customer's own
+    # comments, and the configured endpoint serves `gemma4:31b-cloud`, which the
+    # local Ollama relays off the machine. Invariant 1.9 says enquiry text never
+    # leaves the machine, and no chokepoint enforces it yet, so the desk asks
+    # only when the owner turns this on.
+    "itinerary_model_proposals_enabled": False,
     "agent_max_tool_calls": 0,
     "agent_max_rounds": 20,  # per-message agent step cap (clamped 1..200)
     # Soft input-token budget for the agent loop. The DEFAULT value (6000) is the

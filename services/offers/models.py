@@ -66,6 +66,11 @@ class SentOffer:
     tour_type: str = "individual"        # "individual" | "group"
     days: list[OfferDay] = field(default_factory=list)
     extraction_warnings: list[str] = field(default_factory=list)
+    # The conversation this offer answered. Both come from the sent message's
+    # own headers, which is the only place they survive: the Sent folder carries
+    # them on 90 of 139 messages, against 22 of 278 in INBOX (ws-03 D20, D22).
+    in_reply_to: str = ""
+    references: list[str] = field(default_factory=list)
 
     @property
     def day_count(self) -> int:
