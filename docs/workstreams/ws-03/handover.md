@@ -723,3 +723,108 @@ is unknown.
 
 **Port 7001 answers with no login on the LAN and on ZeroTier.** `AUTH_ENABLED`
 is false and the firewall rule has not been added.
+
+---
+
+## Phase two — 2026-09-06: AI automations and the rule set
+
+The owner activated all 60 catalogue rows and cleared `needs_review` on every
+one. Verified by reading the sheet. The itinerary desk now chooses from 60 codes
+rather than 28.
+
+The owner also made an `AIRules` tab. It is empty, so its header is ours to
+choose.
+
+### I built a duplicate, and a search would have found it first
+
+`services/itinerary` already held a normalizer, a matcher, a binder and a
+generator. This session vendored `curated` from `OperationsAutomationSrv` on top
+of it. Two implementations of one job then sat in one repository.
+
+| Job | Already there | What this session added |
+|---|---|---|
+| Read a request | `normalizer.normalize_from_dict` | `curated.normalize.normalize_row` |
+| Match a route | `matcher.find_best_route` | `curated.scorer.best_match` |
+| Bind days to codes | `binder.bind_route_to_templates` | `curated.binder.bind_route` |
+| Build and generate | `generator.execute_generation` | `curated.request_builder.build_request` |
+
+**Both scorers carry identical weights**: region 0.5, day count 0.35, tour type
+0.15. The two are the same algorithm.
+
+**The search missed it because it looked for the wrong word.** It searched for
+"rule" and "automation" across three project trees and the git history. It found
+nothing, and reported that no prior work existed. The prior work was there under
+"itinerary".
+
+**`services/itinerary` is the survivor.** `app.py` registers its routes, it
+exposes `/preview`, `/generate` and `/stage-reply`, and it already reads the
+Operations panel's four sources: booking, contact, curated and queue. Its
+`NormalizedRequest` carries 17 fields to the vendored copy's 14, including
+`key`, `source` and `raw_record`.
+
+**The vendored copy holds two constants the survivor lacks.**
+`MATCH_MIN_SCORE` 0.30 says when a match is weak. `DAYTRIP_MIN_SIMILARITY` 0.12
+governs binding a day trip. The merge carries both across.
+
+`drafts.py` and `propose_sequence.py` are not duplicates. The draft thread, the
+two proposers and the position-by-position comparison have no counterpart, so
+they move rather than end.
+
+### Rules come out of the corpus by counting
+
+**A rule of this kind is a count, not a judgement.** Measured over the 302
+offers of three days or more, using the overnight city each day already carries:
+
+| | |
+|---|---|
+| Starts in Baghdad | 194 of 302 |
+| Starts in Basra | 46 |
+| Ends in Erbil | 107 |
+| Ends in Mosul | 66 |
+| Ends in Baghdad | 60 |
+
+The commonest moves: Baghdad to Mosul 171, Baghdad to Karbala 116, Karbala to
+Nasiriyah 104, Nasiriyah to Baghdad 102, Mosul to Duhok 61, Mosul to Erbil 51.
+
+Day counts cluster at 8 days 50 times, 5 days 43, 7 days 35, 10 days 27.
+
+**"194 of 302 trips start in Baghdad" is checkable by anyone.** A model saying
+the same thing is not, and it can be wrong in a way nobody notices.
+
+### The owner's decisions
+
+| # | Decision |
+|---|---|
+| D7 | The counter finds the rule. The model words it and proposes a reason. The count sits beside both |
+| D8 | Rules describe the whole corpus, not a slice |
+| D9 | The page owns the rule record. `AIRules` holds a copy |
+| D10 | A sync runs both ways, and names every addition, change and removal before it moves anything |
+| D11 | A rule changed on both sides since the last sync is refused. The rest of the sync still applies |
+| D12 | A new workstation page. The desk at `/itinerary` stays |
+| D13 | Merge the vendored copy into `services/itinerary`, then remove it |
+
+**A reason is a claim the counting does not support, and it goes into the
+prompt.** The owner chose that knowing it. The page must therefore show the
+reason apart from its count, so a reader can accept the statement and turn down
+the reason without losing the rule.
+
+### The operations sheet does not hold requests in the shape curated expects
+
+`curated.settings` reads a tab named `main`. The operations sheet is titled
+`26-27 Upcoming Tours / Season of 2026/2027` and holds eleven tabs, none of them
+`main`. The read failed on exactly that.
+
+The owner named the Operations panel inside Odysseus instead. It already carries
+Curated and Queue sources, and the workstation reads those.
+
+### What is open
+
+**The merge is not done.** Two implementations still sit side by side.
+
+**The rule families are measured but not built.** First night, last night, move
+and trip length all exist in the corpus. How many rules each produces is
+unknown until the first run.
+
+**The vendored template snapshot is stale.** 28 rows against the sheet's 60.
+
+**Port 7001 answers with no login on the LAN and on ZeroTier.**
