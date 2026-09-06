@@ -254,6 +254,8 @@ def main(argv=None) -> int:
         print(f"  quoted turns found   {outcome['with_quote_turns']}")
         print(f"  earlier offer in the same thread  {outcome['with_header_turns']}")
         print(f"  thread recovered     {outcome['recovered']}")
+        print(f"  first contact        {outcome['first_contact']}"
+              f"  (opened the conversation, so there is no thread)")
         print(f"  named but not stored {outcome['unresolved_ids']} message id(s)")
         print(f"not recovered: {len(outcome['not_recovered'])}")
         for name in outcome["not_recovered"][:20]:

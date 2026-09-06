@@ -233,7 +233,7 @@ def test_thread_of_returns_none_for_an_offer_the_corpus_does_not_hold(corpus):
 
 # ── the corpus-wide report names its failures ─────────────────────────────────
 
-def test_the_report_names_what_did_not_recover(corpus):
+def test_the_report_separates_a_recovered_thread_from_a_first_contact(corpus):
     store_offer(_offer("<k@bilweekend.iq>", "recovered.pdf"), b"data", "day text",
                 body_text=REPLY_BODY, body_html="")
     store_offer(_offer("<l@bilweekend.iq>", "bare.pdf"), b"data", "day text",
@@ -243,8 +243,8 @@ def test_the_report_names_what_did_not_recover(corpus):
     assert outcome["examined"] == 2
     assert outcome["body_captured"] == 2
     assert outcome["recovered"] == 1
-    assert len(outcome["not_recovered"]) == 1
-    assert "bare.pdf" in outcome["not_recovered"][0]
+    assert outcome["first_contact"] == 1
+    assert outcome["not_recovered"] == []
 
 
 def test_the_report_says_when_a_body_was_never_captured(corpus):
@@ -252,6 +252,38 @@ def test_the_report_says_when_a_body_was_never_captured(corpus):
     outcome = assemble_threads()
     assert outcome["body_captured"] == 0
     assert "body never captured" in outcome["not_recovered"][0]
+
+
+def test_an_offer_that_opened_the_conversation_is_not_a_failure(corpus):
+    """34 of 81 offers in the window quote nothing, because nothing preceded them."""
+    store_offer(_offer("<n@bilweekend.iq>", "first-contact.pdf",
+                       subject="10 Days Tour in Iraq"),
+                b"data", "day text",
+                body_text="Dear Adrian,\n\nPlease find our offer attached.\n\nNoor",
+                body_html="")
+    thread = thread_of("<n@bilweekend.iq>", "first-contact.pdf")
+    assert thread.first_contact is True
+    assert thread.recovered is False
+
+    outcome = assemble_threads()
+    assert outcome["first_contact"] == 1
+    assert outcome["not_recovered"] == [], \
+        "an offer that opened the conversation is not a thread that failed"
+
+
+def test_an_offer_whose_body_was_never_captured_is_not_first_contact(corpus):
+    """A walk that did not run is a gap, not a conversation that had no start."""
+    _store_unwalked("<o@bilweekend.iq>", "o.pdf")
+    thread = thread_of("<o@bilweekend.iq>", "o.pdf")
+    assert thread.first_contact is False
+    assert assemble_threads()["first_contact"] == 0
+
+
+def test_an_offer_naming_a_message_the_corpus_lacks_is_not_first_contact(corpus):
+    """It answered something. The corpus simply does not hold what."""
+    store_offer(_offer("<p@bilweekend.iq>", references=["<gone@example.com>"]),
+                b"data", "day text", body_text="Thanks.", body_html="")
+    assert thread_of("<p@bilweekend.iq>", "trip.pdf").first_contact is False
 
 
 def test_the_report_counts_nothing_over_an_empty_corpus(corpus):

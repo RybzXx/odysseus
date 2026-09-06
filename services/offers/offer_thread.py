@@ -76,6 +76,23 @@ class OfferThread:
         """True when the thread yielded anything beyond the offer's own message."""
         return bool(self.header_turns) or len(self.quote_turns) > 1
 
+    @property
+    def first_contact(self) -> bool:
+        """
+        True when this offer opened the conversation rather than answering one.
+
+        A first-contact offer quotes nothing and its headers name no earlier
+        message, because there was none. Measured over the eight-month window:
+        34 of 81 offers, whose subjects are Bil Weekend's own naming rather than
+        a reply — "10 Days Tour in Iraq", "Adrian Meier - Iraq Tour Request".
+
+        The distinction matters to a reader and to WP10. A first-contact offer
+        is not a thread the walk failed to recover, and it carries no inbound
+        request to read, so it cannot be graded against one.
+        """
+        return (self.body_captured and not self.recovered
+                and not self.chain_ids and not self.unresolved_ids)
+
 
 def _chain_of(offer: SentOffer) -> list:
     """
@@ -214,6 +231,7 @@ def assemble_threads(since: Optional[datetime] = None) -> dict:
         "with_quote_turns": 0,
         "with_header_turns": 0,
         "recovered": 0,
+        "first_contact": 0,
         "not_recovered": [],
         "unresolved_ids": 0,
     }
@@ -234,6 +252,10 @@ def assemble_threads(since: Optional[datetime] = None) -> dict:
         outcome["unresolved_ids"] += len(thread.unresolved_ids)
         if thread.recovered:
             outcome["recovered"] += 1
+        elif thread.first_contact:
+            # It opened the conversation. There is no thread to recover, and
+            # counting it as a failure would report a fault that is not one.
+            outcome["first_contact"] += 1
         else:
             outcome["not_recovered"].append(
                 f"{offer.attachment_name}"
