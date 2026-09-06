@@ -168,6 +168,75 @@ def test_the_grade_never_changes_the_offer():
     assert [(d.day_number, d.overnight_city) for d in offer.days] == before
 
 
+# ── a graded draft is a record, not work on the desk ─────────────────────────
+
+@pytest.fixture
+def draft_store(tmp_path, monkeypatch):
+    from services.itinerary import drafts
+
+    monkeypatch.setattr(drafts, "ITINERARY_DRAFT_DIR",
+                        str(tmp_path / "itinerary_drafts"))
+
+
+def test_a_graded_draft_never_reaches_the_desk_s_request_list(draft_store):
+    """47 sold trips must not appear as work waiting to be done."""
+    from services.itinerary.drafts import (
+        OPEN_REQUEST_ORIGINS, ORIGIN_GRADED, iter_drafts, open_draft)
+    from services.itinerary.sequence_grade import open_graded_draft
+
+    open_draft({"name": "a live request"}, request_id="curated:1")
+    open_graded_draft(_offer("Baghdad", message_id="<g@bilweekend.iq>"))
+
+    assert len(list(iter_drafts())) == 2
+    open_requests = list(iter_drafts(OPEN_REQUEST_ORIGINS))
+    assert len(open_requests) == 1
+    assert all(d.origin != ORIGIN_GRADED for d in open_requests)
+
+
+def test_grading_one_offer_twice_stays_on_one_thread(draft_store):
+    from services.itinerary.sequence_grade import open_graded_draft
+
+    offer = _offer("Baghdad", "Karbala", message_id="<h@bilweekend.iq>")
+    assert open_graded_draft(offer).draft_id == open_graded_draft(offer).draft_id
+
+
+def test_a_recorded_read_keeps_its_grade_and_says_which_read_it_was(draft_store):
+    from services.itinerary.sequence_grade import READ_ONE, READ_TWO, record_read
+
+    offer = _offer("Baghdad", "Karbala", message_id="<i@bilweekend.iq>")
+    draft, first = record_read(offer, ["ARRBG", "MO1"], TEMPLATES, READ_ONE)
+    draft, second = record_read(offer, ["ARRBG", "KA"], TEMPLATES, READ_TWO)
+
+    assert first.matched == 1
+    assert second.matched == 2
+    assert len(draft.sequences) == 2
+    assert [s.in_reply_to for s in draft.sequences] == [READ_ONE, READ_TWO]
+    assert "1 of 2" in draft.sequences[0].note
+    assert "2 of 2" in draft.sequences[1].note
+
+
+def test_an_unknown_read_is_refused(draft_store):
+    from services.itinerary.sequence_grade import record_read
+
+    with pytest.raises(ValueError):
+        record_read(_offer("Baghdad"), ["ARRBG"], TEMPLATES, "read three")
+
+
+def test_a_correction_on_a_graded_draft_reaches_the_rule_queue(draft_store):
+    """10.6: the human's reason is a comment, and WP4b reads comments."""
+    from services.itinerary.drafts import RULE_STATE_NEW, add_comment, iter_comments
+    from services.itinerary.sequence_grade import READ_ONE, record_read
+
+    offer = _offer("Baghdad", "Nasiriyah", message_id="<j@bilweekend.iq>")
+    draft, _ = record_read(offer, ["ARRBG", "BG1"], TEMPLATES, READ_ONE)
+    add_comment(draft.draft_id, "night two goes south when the client asks for Ur")
+
+    queued = list(iter_comments(RULE_STATE_NEW))
+    assert len(queued) == 1
+    assert queued[0]["draft_id"] == draft.draft_id
+    assert "goes south" in queued[0]["text"]
+
+
 def test_the_formatted_grade_names_every_wrong_night():
     grade = grade_sequence(["ARRBG", "KA"], TEMPLATES,
                            _offer("Baghdad", "Mosul"), source="model")

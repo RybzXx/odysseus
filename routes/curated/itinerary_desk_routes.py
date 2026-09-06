@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from core.middleware import require_admin
 
 from services.itinerary.drafts import (
+    OPEN_REQUEST_ORIGINS,
     ORIGIN_SHEET,
     RULE_STATE_DRAFTED,
     RULE_STATES,
@@ -210,7 +211,8 @@ def setup_itinerary_desk_routes() -> APIRouter:
         except OpsApiError as exc:
             raise HTTPException(502, str(exc)) from exc
 
-        drafts_by_key = {d.request_id: d for d in iter_drafts() if d.request_id}
+        drafts_by_key = {d.request_id: d
+                         for d in iter_drafts(OPEN_REQUEST_ORIGINS) if d.request_id}
         pills = [_request_pill(row, drafts_by_key)
                  for row in _project(rows, "full", None, None)
                  if row.get("source") in wanted]
@@ -266,7 +268,9 @@ def setup_itinerary_desk_routes() -> APIRouter:
     @router.get("/drafts")
     async def list_drafts(request: Request):
         require_admin(request)
-        drafts = [_draft_to_dict(d) for d in iter_drafts()]
+        # Graded drafts are trips that were already sold, opened only so a
+        # read can be marked against them. They are not work on the desk.
+        drafts = [_draft_to_dict(d) for d in iter_drafts(OPEN_REQUEST_ORIGINS)]
         return {"count": len(drafts), "drafts": drafts}
 
     @router.get("/drafts/{draft_id}")

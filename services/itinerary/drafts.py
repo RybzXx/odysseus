@@ -37,6 +37,14 @@ SOURCE_RULES = "rules"
 # is recorded rather than inferred later from the shape.
 ORIGIN_SHEET = "sheet"
 ORIGIN_TYPED = "typed"
+# A trip that was already sold, opened so a read can be marked against it
+# (ws-03 WP10). It is not work waiting to be done, so the desk's request list
+# leaves it out. The correction a grade produces is a comment like any other,
+# which is what puts it in front of the judged rule book.
+ORIGIN_GRADED = "graded"
+
+# The origins that name a request somebody still has to answer.
+OPEN_REQUEST_ORIGINS = (ORIGIN_TYPED, ORIGIN_SHEET)
 
 # What became of a comment, as the judged rule book reads it (ws-03 D26).
 # A comment starts as raw feedback and leaves this queue exactly once, whether
@@ -148,12 +156,18 @@ def load(draft_id: str) -> Optional[ItineraryDraft]:
         return None
 
 
-def iter_drafts() -> Iterator[ItineraryDraft]:
+def iter_drafts(origins: Optional[tuple] = None) -> Iterator[ItineraryDraft]:
     """
     Yield every draft, newest first.
 
+    Pre:  `origins` names the origins to return, or None for all of them.
     Post: a draft whose file is unreadable is skipped rather than raised — one
           bad file must not empty the desk.
+
+    The filter sits here rather than at each caller. A graded draft is a trip
+    that was already sold, and a caller that forgot to exclude it would show 47
+    finished trips as work waiting on the desk. A caller that wants every draft
+    asks for every draft, which is the harder thing to do by accident.
     """
     if not os.path.isdir(ITINERARY_DRAFT_DIR):
         return
@@ -162,7 +176,9 @@ def iter_drafts() -> Iterator[ItineraryDraft]:
         if not name.endswith(".json"):
             continue
         draft = load(name[:-5])
-        if draft is not None:
+        if draft is None:
+            continue
+        if origins is None or draft.origin in origins:
             found.append(draft)
     found.sort(key=lambda d: d.created_at, reverse=True)
     yield from found

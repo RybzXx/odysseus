@@ -190,6 +190,62 @@ def format_grade(grade: SequenceGrade) -> str:
     return "\n".join(lines)
 
 
+def thread_as_text(thread, limit: int = 12) -> str:
+    """
+    Post: the recovered turns as plain text, oldest first, each labelled with
+          the level it was quoted at.
+
+    Oldest first, because a read works forward through a conversation. The HTML
+    the parser returns is stripped here rather than stored stripped, so the
+    turns keep their markup for any reader that wants it.
+    """
+    import html as _html
+    import re as _re
+
+    lines = []
+    for turn in sorted(thread.quote_turns, key=lambda t: -t.level)[:limit]:
+        text = _re.sub(r"<[^>]+>", " ", turn.body_html or "")
+        text = _html.unescape(_re.sub(r"\s+", " ", text)).strip()
+        if not text:
+            continue
+        who = turn.attribution or "unattributed"
+        lines.append(f"[level {turn.level} | {who}] {text}")
+    return "\n\n".join(lines)
+
+
+def open_graded_draft(offer, thread=None):
+    """
+    Open the thread a graded read is recorded on.
+
+    Pre:  `offer` is a stored SentOffer whose thread recovered.
+    Post: a draft carrying the conversation and the offer's identity, with
+          origin ORIGIN_GRADED. Re-opening the same offer returns the same
+          thread, so a second grading pass adds to the record rather than
+          starting a new one beside it.
+
+    A graded draft is not a request. It exists so the human's correction lands
+    on `comments` like every other piece of feedback, which is what puts it in
+    front of the judged rule book (ws-03 10.6). `iter_drafts` leaves this origin
+    out of the desk's request list.
+    """
+    from services.itinerary.drafts import ORIGIN_GRADED, open_draft
+    from services.offers.offer_store import offer_slug
+    from services.offers.offer_thread import thread_of
+
+    thread = thread or thread_of(offer.message_id, offer.attachment_name)
+    request_id = f"graded:{offer_slug(offer.message_id, offer.attachment_name)}"
+    row = {
+        "graded_offer": offer.message_id,
+        "attachment": offer.attachment_name,
+        "subject": offer.subject,
+        "sent_at": offer.sent_at.isoformat() if offer.sent_at else "",
+        "day_count": str(offer.day_count),
+        "sent_nights": " -> ".join(offer.city_sequence),
+        "thread": thread_as_text(thread) if thread else "",
+    }
+    return open_draft(row, origin=ORIGIN_GRADED, request_id=request_id)
+
+
 def gradeable_offers(since=None) -> list:
     """
     The offers a read can be graded against.
@@ -218,3 +274,38 @@ def gradeable_offers(since=None) -> list:
             continue
         ready.append(offer)
     return ready
+
+
+READ_ONE = "read one: the first inbound turn alone"
+READ_TWO = "read two: every turn before the offer"
+
+
+def record_read(offer, day_codes, templates: dict, read: str,
+                thread=None):
+    """
+    Store one read against a graded offer, with its grade.
+
+    Pre:  `read` is READ_ONE or READ_TWO, and `day_codes` is the answer that
+          read gave. `templates` maps code to template row.
+    Post: the graded draft holds the read as a sequence, whose note is the grade
+          night by night. The draft is created if this is the first read on it.
+
+    Returns (draft, grade).
+
+    Blame: the caller owes it that the read never saw the offer. Nothing here
+    can check that, because the read happens in a session (ws-03 10.3, 10.7).
+    """
+    from services.itinerary.drafts import SOURCE_MODEL, ProposedSequence, add_sequence
+
+    if read not in (READ_ONE, READ_TWO):
+        raise ValueError(f"unknown read: {read!r}")
+
+    draft = open_graded_draft(offer, thread)
+    grade = grade_sequence(day_codes, templates, offer, source=read)
+    draft = add_sequence(draft.draft_id, ProposedSequence(
+        source=SOURCE_MODEL,
+        day_codes=list(day_codes),
+        note=format_grade(grade),
+        in_reply_to=read,
+    ))
+    return draft, grade
