@@ -24,7 +24,7 @@ from typing import Iterator, Optional
 
 from src.constants import TEMPLATE_PROPOSAL_DIR
 
-from services.offers.catalogue import TEMPLATE_FIELDS
+from services.offers.catalogue import TEMPLATE_FIELDS, as_catalogue_text
 
 # What a proposal asks for.
 KIND_NEW = "new"                 # a day the catalogue cannot express at all
@@ -273,6 +273,19 @@ def record_verdict(
         if unknown:
             raise ProposalError(f"not catalogue fields: {', '.join(unknown)}")
         proposal.fields.update(edited_fields)
+
+    if status == STATUS_APPROVED:
+        # The wording becomes a catalogue row here and nowhere earlier. A
+        # proposal id is the hash of its text, so cleaning at draft time would
+        # re-id every proposal and orphan every verdict already given. Cleaning
+        # a pending row is worse still: the next rebuild redraws it from the
+        # corpus under the original id, retires the cleaned one, and puts a
+        # dirty duplicate beside it.
+        #
+        # A verdict is the one moment the text stops being a question about the
+        # corpus and becomes an answer for the catalogue.
+        proposal.fields["full_text"] = as_catalogue_text(
+            proposal.fields.get("full_text") or "")
 
     proposal.status = status
     proposal.reviewer_note = reviewer_note

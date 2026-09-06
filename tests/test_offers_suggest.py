@@ -248,3 +248,80 @@ def test_the_fields_still_arrive_while_the_wording_is_withheld():
     parsed = parse_answer(_answer(cleaned_text="rewritten"), DAY, "Mosul")
     assert parsed["title"] == "Old Mosul"
     assert parsed["city"] == "Mosul"
+
+
+# --- catalogue wording ------------------------------------------------------
+
+def test_a_catalogue_row_carries_no_date_and_no_overnight_trailer():
+    """
+    A sent day names the date it was sent for and the night it ended on. A
+    catalogue row is used again on other dates, and its overnight city lives in
+    its own column.
+    """
+    from services.offers.catalogue import as_catalogue_text
+    sent = ("Tuesday Oct 7\n"
+            "Morning departure to visit Shanidar Cave.\n"
+            "Continue to Korek Mountain. Overnight: Korek Mountain / night 3.")
+    assert as_catalogue_text(sent) == (
+        "Morning departure to visit Shanidar Cave.\n"
+        "Continue to Korek Mountain.")
+
+
+def test_a_note_beside_the_date_is_kept():
+    """
+    The date is stripped as a prefix, not by dropping the line. "(Lunch OR
+    Dinner is included)" sat beside a date on two offers, and it is content.
+    """
+    from services.offers.catalogue import as_catalogue_text
+    out = as_catalogue_text("Wednesday, 30 September (Lunch is included)\nHead to Najaf.")
+    assert "Lunch is included" in out
+    assert "September" not in out
+
+
+def test_one_sentence_sits_on_one_line():
+    from services.offers.catalogue import as_catalogue_text
+    out = as_catalogue_text("Visit the museum. Then walk the bazaar. Return at dusk.")
+    assert out.splitlines() == ["Visit the museum.", "Then walk the bazaar.",
+                                "Return at dusk."]
+
+
+def test_an_abbreviation_does_not_start_a_new_line():
+    """"Erbil Intl. Airport" and "approx. 1.5 hours" were being cut in half."""
+    from services.offers.catalogue import as_catalogue_text
+    assert as_catalogue_text("Transfer to Erbil Intl. Airport.") == \
+        "Transfer to Erbil Intl. Airport."
+    assert as_catalogue_text("Drive to Ur (approx. 1.5 hours).") == \
+        "Drive to Ur (approx. 1.5 hours)."
+
+
+def test_approving_turns_the_wording_into_a_catalogue_row(queue):
+    """
+    The verdict is the moment the text stops being a question about the corpus
+    and becomes an answer for the catalogue.
+    """
+    proposal = prop.build_proposal(
+        prop.KIND_NEW,
+        _fields(text="Monday Mar 17\nArrival in Erbil. Overnight: Erbil / night 1."),
+        ["<1@x>#1"])
+    prop.save(proposal)
+    decided = prop.record_verdict(proposal.proposal_id, prop.STATUS_APPROVED,
+                                  edited_fields={"code": "ARREB"})
+    assert decided.fields["full_text"] == "Arrival in Erbil."
+
+
+def test_rejecting_leaves_the_wording_exactly_as_it_was_sent(queue):
+    """A rejected row is evidence about the corpus, not a catalogue row."""
+    sent = "Monday Mar 17\nArrival in Erbil. Overnight: Erbil / night 1."
+    proposal = prop.build_proposal(prop.KIND_NEW, _fields(text=sent), ["<1@x>#1"])
+    prop.save(proposal)
+    decided = prop.record_verdict(proposal.proposal_id, prop.STATUS_REJECTED)
+    assert decided.fields["full_text"] == sent
+
+
+def test_approving_a_row_that_is_already_clean_changes_nothing(queue):
+    clean = "Arrival in Erbil.\nExplore the citadel."
+    proposal = prop.build_proposal(prop.KIND_NEW, _fields(text=clean), ["<1@x>#1"])
+    prop.save(proposal)
+    decided = prop.record_verdict(proposal.proposal_id, prop.STATUS_APPROVED,
+                                  edited_fields={"code": "EB2"})
+    assert decided.fields["full_text"] == clean

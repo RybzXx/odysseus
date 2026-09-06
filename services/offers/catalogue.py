@@ -11,10 +11,87 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Optional
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(_HERE, "data", "templates")
+
+# ── What a catalogue row's wording looks like ────────────────────────────────
+#
+# A sent day carries the date it was sent for and the night it ended on. A
+# catalogue row carries neither: it is used again on other dates, and the
+# overnight city lives in its own column. The 28 rows already in the sheet hold
+# no date and no trailer, so this is the catalogue's own convention rather than
+# a preference.
+
+_WEEKDAY = r"(?:Mon|Tues?|Wed(?:nes)?|Thur?s?|Fri|Sat(?:ur)?|Sun)(?:day)?"
+_MONTH = (r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?"
+          r"|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?"
+          r"|Dec(?:ember)?)")
+
+# The date at the head of a day, stripped as a prefix rather than by dropping
+# the whole line. A heading can carry a real note beside its date, such as
+# "(Lunch OR Dinner is included)", and that note is content.
+_DATE_PREFIX_RE = re.compile(
+    rf"^\s*(?:{_WEEKDAY}\b\s*,?\s*)?"
+    rf"(?:\d{{1,2}}\s*{_MONTH}\b|{_MONTH}\b\s*\d{{0,2}})?"
+    rf"\s*,?\s*\d{{0,4}}\s*,?\s*", re.I)
+
+_OVERNIGHT_TRAILER_RE = re.compile(
+    r"\s*Overnight\s*(?::\s*|\s+in\s+)[^.\n]*?(?:/\s*(?:night|Night)\s*\d+)?\s*\.?\s*$",
+    re.I | re.M)
+
+# A period does not always end a sentence. "approx." and "Intl." carry one and
+# continue, and a period inside a number is no break at all. Splitting on either
+# would leave half a measurement on its own line.
+_ABBREVIATIONS = ("approx", "Intl", "Int", "St", "Mt", "No", "Mr", "Mrs", "Dr", "etc")
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z“\"(])")
+
+
+def as_catalogue_text(day_text: str) -> str:
+    """
+    A sent day's wording in the form a catalogue row holds it.
+
+    Pre:  `day_text` is one day as it was written to a client.
+    Post: no date heading, no overnight trailer, one sentence on one line, and
+          no run of two spaces. Every other word is exactly as it was sent.
+
+    Blame: this changes form and never content. A caller that needs the day as
+    sent reads the corpus, which is the record; this is the derivative.
+    """
+    lines = [line.strip() for line in (day_text or "").splitlines()]
+    kept = []
+    for index, line in enumerate(lines):
+        if not line:
+            continue
+        if index == 0:
+            match = _DATE_PREFIX_RE.match(line)
+            if match and match.end() > 0:
+                line = line[match.end():].strip()
+            if not line:
+                continue
+        kept.append(line)
+
+    joined = _OVERNIGHT_TRAILER_RE.sub("", "\n".join(kept))
+
+    out = []
+    for line in joined.splitlines():
+        line = re.sub(r"\s{2,}", " ", line).strip()
+        if not line:
+            continue
+        parts, buffer = [], ""
+        for piece in _SENTENCE_END_RE.split(line):
+            buffer = f"{buffer} {piece}".strip() if buffer else piece
+            tail = buffer.rstrip(".").rsplit(" ", 1)[-1] if buffer.endswith(".") else ""
+            if tail in _ABBREVIATIONS:
+                continue
+            parts.append(buffer)
+            buffer = ""
+        if buffer:
+            parts.append(buffer)
+        out.extend(part.strip() for part in parts if part.strip())
+    return "\n".join(out)
 
 # The 11 columns of the `templates` sheet tab, in live header order. A drafted
 # template row must supply exactly these keys.
