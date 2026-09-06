@@ -869,6 +869,9 @@ app.include_router(itinerary_router)
 from routes.offers.offers_routes import setup_offers_routes
 app.include_router(setup_offers_routes())
 
+from routes.curated.itinerary_desk_routes import setup_itinerary_desk_routes
+app.include_router(setup_itinerary_desk_routes())
+
 # Projects Module (hybrid file-as-spec + SQLite project workspace management)
 from routes.projects.projects_routes import setup_projects_routes
 app.include_router(setup_projects_routes())
@@ -981,6 +984,17 @@ async def serve_offers(request: Request):
     before it needs to be docked, and a standalone page cannot break the SPA.
     """
     return FileResponse(os.path.join(STATIC_DIR, "offers_review.html"))
+
+
+@app.get("/itinerary")
+async def serve_itinerary_desk(request: Request):
+    """
+    The itinerary desk: a request, two proposed day-code sequences, a comment.
+
+    A separate page for the same reason the review is one. It must be usable
+    before it is docked, and a standalone page cannot break the SPA.
+    """
+    return FileResponse(os.path.join(STATIC_DIR, "itinerary_desk.html"))
 
 @app.get("/overview")
 async def serve_overview(request: Request):
