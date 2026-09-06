@@ -12,19 +12,40 @@ from typing import Any, Optional
 
 from services.itinerary.models import NormalizedRequest
 
+# The customer-facing region names, mapped to the three the catalogue models.
+#
+# A label with no entry here reaches the binder unchanged, and the binder then
+# drops every day whose overnight city sits "outside requested region(s)". A
+# request for "Central Iraq & Middle Euphrates" therefore bound no day at all,
+# and its preview reported a matched route with nothing in it.
+#
+# Measured over the 43 live Curated and Queue requests on 2026-09-07: eight
+# distinct labels, of which six had no entry. The two commonest were two of the
+# six, at 26 and 25 requests.
 REGION_NAME_MAP = {
     "central iraq": "Central Iraq",
     "central": "Central Iraq",
+    "central iraq & middle euphrates": "Central Iraq",
+    "center & middle euphrates": "Central Iraq",
+    "middle euphrates": "Central Iraq",
     "southern iraq": "Southern Iraq",
     "southern": "Southern Iraq",
     "south": "Southern Iraq",
+    "south of iraq": "Southern Iraq",
     "kurdistan": "Northern Iraq",
+    "iraqi kurdistan": "Northern Iraq",
     "northern iraq": "Northern Iraq",
     "northern iraq / kurdistan": "Northern Iraq",
     "western iraq & nineveh plains": "Northern Iraq",
+    "west & nineveh plains": "Northern Iraq",
     "western iraq": "Northern Iraq",
     "nineveh plains": "Northern Iraq",
 }
+
+# What the data-entry team types into a region column the submitter left blank.
+# It is an empty cell, not a region, and reading it as one filtered every day
+# out of ten-day trips.
+_REGION_PLACEHOLDERS = {"not known", "none", "n/a", "-", "unknown", "any"}
 
 HOTEL_TIER_MAP = {
     "3 star": "3star",
@@ -116,6 +137,8 @@ def _normalize_regions(raw_regions: Any) -> list[str]:
 
     res: list[str] = []
     for p in parts:
+        if p.strip().casefold() in _REGION_PLACEHOLDERS:
+            continue
         mapped = REGION_NAME_MAP.get(p.lower(), p)
         if mapped not in res:
             res.append(mapped)

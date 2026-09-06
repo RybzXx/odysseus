@@ -45,6 +45,8 @@ def _ensure_pipeline_imported():
             load_runtime_data,
         )
         from services.itinerary.pipeline.loader import load_all_templates, load_pricing
+        from services.itinerary.pipeline.builder import build_itinerary
+        from services.itinerary.pipeline.calculator import calculate_quote
     except Exception:
         logger.exception("vendored itinerary pipeline failed to import")
         return None
@@ -56,6 +58,12 @@ def _ensure_pipeline_imported():
         "load_runtime_data": load_runtime_data,
         "load_all_templates": load_all_templates,
         "load_pricing": load_pricing,
+        # Bound here like every other entry point. These two were still
+        # imported from `src.` at their use site, which is where the pipeline
+        # lived before it was vendored, so every preview lost its quote to a
+        # ModuleNotFoundError the caller swallowed as a notice.
+        "build_itinerary": build_itinerary,
+        "calculate_quote": calculate_quote,
     }
 
 
@@ -197,10 +205,8 @@ def preview_itinerary(req: NormalizedRequest) -> ItineraryPreviewResult:
             can_generate = check_res.get("ok", False)
 
             pricing = _PIPELINE["load_pricing"]()
-            from src.calculator import calculate_quote
-            from src.builder import build_itinerary
-            built_days = build_itinerary(tour_req, templates)
-            q = calculate_quote(tour_req, built_days, pricing)
+            built_days = _PIPELINE["build_itinerary"](tour_req, templates)
+            q = _PIPELINE["calculate_quote"](tour_req, built_days, pricing)
             if q:
                 estimated_quote = _format_quote(q, req.hotel_tier)
         except Exception as e:

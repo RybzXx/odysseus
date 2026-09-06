@@ -259,6 +259,11 @@ def gradeable_offers(since=None) -> list:
     A first-contact offer is left out. It carries no request to read, so read
     one has nothing to take and the grade would score a proposal against a
     question nobody asked (ws-03 9.6).
+
+    An offer that names no overnight city is left out too. It is the answer key,
+    and a key with no answers scores every proposal at zero out of zero. Two of
+    the 47 read that way: a one-day marshes tour, and a routing proposal whose
+    days name no city at all.
     """
     from services.offers.offer_store import iter_offers
     from services.offers.offer_thread import thread_of
@@ -267,7 +272,7 @@ def gradeable_offers(since=None) -> list:
     for offer in iter_offers():
         if since is not None and (offer.sent_at is None or offer.sent_at < since):
             continue
-        if not offer.days:
+        if not offer.days or not offer.city_sequence:
             continue
         thread = thread_of(offer.message_id, offer.attachment_name)
         if thread is None or not thread.recovered:

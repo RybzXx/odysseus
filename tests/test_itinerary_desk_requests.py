@@ -290,6 +290,91 @@ def test_a_curated_request_is_unchanged_by_the_queue_repair():
     assert normalized.hotel_tier == "4star"
 
 
+# ── the region labels the live worklist actually uses ────────────────────────
+#
+# Measured over the 43 live Curated and Queue requests on 2026-09-07. Six of the
+# eight labels had no entry in REGION_NAME_MAP, so the binder dropped every day
+# of those requests as outside the requested region. The first run built 1 of 10
+# documents before this, and 8 of 10 after.
+LIVE_REGION_LABELS = {
+    "Central Iraq & Middle Euphrates": "Central Iraq",
+    "Center & Middle Euphrates": "Central Iraq",
+    "Iraqi Kurdistan": "Northern Iraq",
+    "Western Iraq & Nineveh Plains": "Northern Iraq",
+    "West & Nineveh Plains": "Northern Iraq",
+    "South of Iraq": "Southern Iraq",
+    "Southern Iraq": "Southern Iraq",
+}
+
+
+@pytest.mark.parametrize("label,expected", sorted(LIVE_REGION_LABELS.items()))
+def test_every_live_region_label_maps_to_one_the_catalogue_models(label, expected):
+    from services.itinerary.normalizer import _normalize_regions
+
+    assert _normalize_regions(label) == [expected]
+
+
+def test_a_region_the_catalogue_does_not_model_is_kept_and_warned_about():
+    """An unmapped region must stay visible, not vanish into a default."""
+    from services.itinerary.normalizer import _normalize_regions, unmapped_regions
+
+    regions = _normalize_regions("Atlantis")
+    assert regions == ["Atlantis"]
+    assert unmapped_regions(regions) == ["Atlantis"]
+
+
+def test_a_placeholder_region_is_not_a_region():
+    """"Not Known" filtered every day out of a ten-day trip."""
+    from services.itinerary.normalizer import _normalize_regions
+
+    assert _normalize_regions("Not Known") == ["Central Iraq"]
+    assert _normalize_regions("Iraqi Kurdistan, Not Known") == ["Northern Iraq"]
+
+
+def test_two_labels_that_mean_one_region_are_named_once():
+    from services.itinerary.normalizer import _normalize_regions
+
+    assert _normalize_regions(
+        "Central Iraq & Middle Euphrates, Center & Middle Euphrates") == ["Central Iraq"]
+
+
+def test_a_queue_request_with_no_stated_region_still_names_one():
+    from services.itinerary.normalizer import normalize_from_dict
+
+    normalized = normalize_from_dict(
+        "queue:1", dict(QUEUE_RECORD, regions="Not Known"), source="queue")
+    assert normalized.requested_regions == ["Central Iraq"]
+    assert normalized.parse_warnings == []
+
+
+# ── the pipeline's own entry points are bound in one place ───────────────────
+
+def test_the_preview_path_binds_every_pipeline_symbol_it_uses():
+    """
+    The regression: build_itinerary and calculate_quote were still imported
+    from `src.`, which is where the pipeline lived before it was vendored. Every
+    preview lost its quote to a ModuleNotFoundError the caller logged as a note.
+    """
+    from services.itinerary.generator import _ensure_pipeline_imported
+
+    pipeline = _ensure_pipeline_imported()
+    assert pipeline is not None
+    for entry in ("build_itinerary", "calculate_quote", "check_request",
+                  "generate_document", "load_pricing", "load_all_templates"):
+        assert callable(pipeline[entry]), f"{entry} is not bound"
+
+
+def test_no_module_still_imports_the_pipeline_from_its_old_home():
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "services" / "itinerary"
+    stale = re.compile(r"from src\.(calculator|builder|assembler|renderer|loader|validator)")
+    offenders = [str(path) for path in root.rglob("*.py")
+                 if stale.search(path.read_text(encoding="utf-8"))]
+    assert offenders == [], f"pre-vendoring imports survive in {offenders}"
+
+
 def test_an_empty_comment_is_refused(draft_store):
     draft = open_draft(CURATED_RECORD, request_id="curated:abc")
     with pytest.raises(DraftError):
