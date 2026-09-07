@@ -980,3 +980,187 @@ recover themselves.
 
 **Port 7001 answers with no login on the LAN and on ZeroTier.** The firewall
 rule needs an elevated PowerShell, which is the owner's action.
+
+---
+
+## 2026-09-06 and 07: phase three
+
+An audit opened this session. Then WP9, WP6, WP4, WP10 and WP7 landed. The
+specification sits beside this file in `phase-three-spec.md`, with decisions
+D14 to D27.
+
+Commits `3e1a885` through `4e30a3f`, on `origin/daily-driver` and on the phone.
+
+### The audit of the record above
+
+Most of it held. The rule counter reproduced 39 rules over 289 offers. The
+snapshot held 60 rows, all active. The queue held 329 pending, 32 approved, 224
+rejected and 142 retired, to the row. 301 tests passed.
+
+Five claims did not hold.
+
+**The firewall rule exists.** `Odysseus 7001 off-tailnet block` is enabled and
+blocks TCP 7001 from `192.168.0.0/16`, `10.0.0.0/8`, `172.16.0.0/12` and
+`169.254.0.0/16`. That covers the LAN and the ZeroTier range. Only
+`AUTH_ENABLED=false` still stands.
+
+**`DAYTRIP_MIN_SIMILARITY` never arrived.** The merge record says it came across
+with `MATCH_MIN_SCORE`. A search of every `.py` file finds no occurrence.
+
+**Four commits waited, not three.** `origin/daily-driver` sat at `2412ff6`, and
+`main` tracked nothing.
+
+**`services/curated` survives on disk.** Git and every import lost it. The
+directory keeps a stale `__pycache__` with eight `.pyc` files.
+
+**The WP numbers collide.** `spec.md` uses WP1 to WP5 for Catalogue, Retrieval
+index, Generation, Human loop and Cross-cutting. The handover uses WP1 to WP7
+for other work. A reader who opens `spec.md` to find WP6 does not find it.
+
+### The relay is real
+
+`gemma4:31b-cloud` leaves the machine. One probe to `100.82.8.53:11434`
+returned headers that belong to somebody else's infrastructure:
+
+    Server: Google Frontend
+    Via: 1.1 google
+    X-Cloud-Trace-Context: 7575d489b56641ce2c3983c7afa03274/954754...
+
+Three facts agree. `/api/ps` held no resident model before the call and none
+after. A 32.7B model answered in 0.9 seconds. The daemon stores one model,
+`qwen3.8:27b` at 17.7 GB, and 32.7B at BF16 needs about 65 GB.
+
+The endpoint record calls itself `local`, so `endpoint_cost_tracked` reads it as
+local and tracks no cost.
+
+### The desk served 28 codes while the disk held 60
+
+Three things stacked up. `uvicorn.run` takes no reloader, so the process froze
+its code at start. `catalogue.load_templates` keeps a process-lifetime cache
+that only `refresh=True` clears. The pre-merge desk read that cached catalogue,
+so both endpoints answered from one stale dict.
+
+A restart moved both to 60. The code on disk needed no change, because the
+merge had already moved the desk to an uncached loader.
+
+### WP9 — the thread inside the sent message
+
+The first Sent-folder walk kept the attachment and discarded the message. The
+customer's request lives in that message, quoted under the reply, and INBOX
+holds nothing older than five weeks.
+
+The walk now stores `body.txt`, `body.html`, `in_reply_to` and `references`
+beside the attachment. It never writes `source.<ext>`.
+
+| | |
+|---|---|
+| Bodies captured, eight-month window | 81 |
+| Threads recovered | 47, against a floor of 45 |
+| Offers naming an earlier offer of ours | 10 |
+| First-contact offers | 33 |
+
+A first-contact offer opened the conversation. It quotes nothing because
+nothing came before it. The report used to count all 33 as threads it had
+failed to recover.
+
+### Six faults a boundary pass found
+
+A naive cutoff raised on tz-aware records. `offers_of_message` matched
+directories by prefix, so a `References` header naming `<abc@x>` answered with
+the stored `<abc@xy>`. `Message.walk` descended into `message/rfc822`, so a mail
+forwarded as an attachment handed back its sender's words as ours. A reference
+id with no angle brackets vanished. An RFC 5322 comment after an id travelled
+with it. The walk keyed a message with no `Message-ID` on an IMAP sequence
+number, which moves between sessions.
+
+None had reached the live corpus. Every one now has a test.
+
+### WP6 — the desk reads the worklist
+
+The desk lists 43 Curated and Queue requests, whatever their status. 33 of them
+carry `Replied`. Pills render ten at a time, above one detail pane that stays in
+place.
+
+The pane shows the normalised request beside the submitted record, and it
+earned its place on the first request it opened. `normalize_queue_record` read
+none of its row: pax was 2 whatever the record said, the hotel tier was 3star,
+and it dropped every interest the customer wrote.
+
+A setting gates the model proposer, off by default. The gate sits in
+`propose_by_model` rather than at the route. A separate route saves a comment
+with no model call.
+
+### WP4 — two rule books
+
+`data/ai_rules/counted/` holds 39 rules, eleven fields each. The content hash
+ignores the moment a run counted a rule, so a re-count does not make the sheet
+sync rewrite the tab. A rule the corpus stops supporting retires rather than
+disappearing.
+
+`data/ai_rules/judged/` stays separate, and its reader refuses the other book's
+files. A judged rule carries the comment that produced it, the sequence a
+reviewer repaired, and a corpus verdict of agrees, disagrees or silent.
+
+### WP10 — 44 threads graded
+
+Claude read each thread twice and answered before seeing the offer's cities.
+Read one took the first inbound turn. Read two took every turn before the offer.
+
+| | |
+|---|---|
+| Read one | 167 of 349 nights |
+| Read two | 168 of 349 |
+| The thread helped | 3 threads |
+| The thread hurt | 1 thread |
+| The thread changed nothing | 40 threads |
+
+**The whole thread is worth one night in 349.** Bil Weekend's replies carry
+logistics: payment, rooming, hotel category, visa. The route sits in the
+customer's first message or nowhere in the text.
+
+Four threads scored full marks, and every one stated its route outright.
+
+The worst answers repeat one mistake. A request names cities, and the reader
+gives each one a night. The offer keeps one base and visits them as day trips.
+The counted book already says so, at 369 of 709 nights after Baghdad.
+
+`ORIGIN_GRADED` opens a draft for a trip that was already sold, so the human's
+reason lands on `comments` like every other piece of feedback. `iter_drafts`
+takes the origins it should return, and the desk asks for open requests only.
+
+### WP7 — the first run
+
+Ten live requests, checked without rendering anything. It built 1 document of
+10, and after two repairs it builds 8. Uncovered days fell from 57 to 13.
+
+**The region a customer names never reached the binder.** `REGION_NAME_MAP` had
+no entry for the labels the worklist uses, so the binder dropped every day whose
+overnight city sat outside the requested region. Measured over 43 live requests:
+eight labels, six of them unmapped, and the two commonest were two of the six at
+26 and 25 requests.
+
+**`Not Known` was a region.** It filtered every day out of two ten-day trips.
+
+**The pipeline was still imported from `src.`,** where it lived before this
+repository vendored it. Every preview lost its quote to a
+`ModuleNotFoundError` that the caller recorded as a notice.
+
+Match scores rose with the repair, because region coverage feeds them. One route
+moved from 0.70 to 1.00.
+
+### What is open
+
+**The human's reason.** 44 graded drafts hold both reads and the grades. One
+comment on one of them becomes a judged rule.
+
+**WP7's ten itineraries.** The ten requests are checked and ready. D15 makes a
+generation the owner's act.
+
+**The phone runs the old code.** Its checkout pulled to `4e30a3f`. Its server
+has run since 2023 by the process table, and a pull does not reach a running
+process.
+
+**Invariant 1.9 has no chokepoint and no test.** D17 and D25 hold it.
+
+**`AUTH_ENABLED` is false.** The firewall now blocks the LAN and ZeroTier, and
+the tailnet still reaches port 7001 with no login.
