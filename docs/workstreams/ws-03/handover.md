@@ -1241,3 +1241,158 @@ nothing compares two templates in one proposal.
 
 No day-trip marker. A reader tells a day trip from a transit only by reading
 the overnight city, and four codes carry none.
+
+## 2026-09-07: the map, the checks, and the tie-break
+
+The owner's four comments named three routing faults. This pass built the data
+and the checks that find them, and it wired them to the desk.
+
+`phase-four-spec.md` sits beside this file. It holds decisions D28 to D37 and
+work packages WP11 to WP15.
+
+### What was built
+
+Five modules, all new.
+
+`services/itinerary/move_map.py` holds where places are and which pairs the work
+joins. 34 places with a coordinate, and the counted moves with no floor applied.
+`resolve_place` is the one place-name authority in the repository: four sources
+spelled places four ways, and `binder`, `site_index` and `sequence_check` now
+all read through it.
+
+`services/itinerary/site_index.py` reads the ticket index. The handover said no
+site index exists. It has been in `services/offers/data/pricing/entry_tickets.json`
+all along, where 76 sites each carry a city, a region and a closing day. It was
+written to price a ticket and it answers a routing question for free.
+
+`services/itinerary/sequence_check.py` finds six faults and raises flags.
+
+`services/itinerary/day_shape.py` says where each template's day starts, where
+it ends, and what job it does.
+
+`services/itinerary/named_pair_rules.py` reads a judged rule that names two
+template codes.
+
+The desk shows all of it. Each sequence carries a check, the faulty days are
+ringed in the chip row, and the machine notes sit in their own card.
+
+### What the owner settled
+
+The catalogue could not say where 21 templates start their day. `SAFA` reads
+"Samarra / Baghdad area" and sleeps in Baghdad, and it truly starts in Baghdad
+and comes back. Read as a chain it looks like a transit out of Samarra.
+
+The owner read all 21 and gave a start, an end and a role for each. Two answers
+changed the shape of the question:
+
+`BB` is a day tour with no start of its own. Babylon sits 44 km from Karbala
+and 99 km from Baghdad, and a trip reaches it from either. One named start
+would hide it from the other city.
+
+A template needs two fields and not one. The owner's first two corrections named
+end cities, and the column asked for a start.
+
+`day_shape.OWNER_SETTLED_SHAPES` holds the 21. Two more templates carry a role
+and no start: `ArrSU` reads "Drive to Sulaymaniyah" and `NA1` reads "Drive
+South", and nobody has said where either drives from.
+
+### The rules the owner set this pass
+
+A move counts in either direction. The corpus drives Mosul to Duhok 61 times and
+Duhok to Mosul never, and that is one road of 69 km. Mosul to Sulaymaniyah is
+zero each way and stays refused.
+
+Two or more sites shared by one day pair is a fault. One shared site is a flag.
+The unit is the day pair and not the site, so four sites shared by days 3 and 4
+is one fault about two days.
+
+The rule reads any two days of the trip. `SAMO` on day 2 and `SAFA` on day 9
+send a customer to Samarra twice, and seven days between them changes nothing.
+
+The same template on two days is a fault, whatever the site count.
+
+Two flags on one trip break the cap.
+
+A machine note has its own list. `comments` is the raw material of a judged rule,
+and a note there would enter the rule queue and read as the owner's words.
+
+`SAFA` with `SAMO` is a penalty and never a refusal. The penalty lifts when the
+request names the west and the north over 7 days, where the days have to be
+filled with relevant sites.
+
+### What the numbers say
+
+    codes the binder reaches      48 -> 52 of 60, ceiling 58
+    site repeats, ten proposals   14 -> 9
+    same-template repeats          4 -> 0
+    nights in the offer's city    58 of 116, unchanged
+    sites the route text names    44 of 55 by word, 24 by exact string
+
+The nights did not move. Every part of the tie-break picks a better code for a
+night the matched route already chose. `find_best_route` returns the first of 5
+to 11 routes that tie at the top score, and that holds the larger part of the
+50 percent.
+
+### Two things that were learned the hard way
+
+The first tie-break made everything worse. Reach fell from 48 to 45, site
+repeats rose from 14 to 15, and flags rose from 6 to 15. The site score had no
+memory, so two days that both name Samarra both pulled the Samarra template.
+Threading the used sites through the bind loop repaired it, and the numbers
+that forced the repair are in the docstring.
+
+The `SAFA` condition was inverted on the first attempt. A 12-day request through
+the west and the north came out as a fault, when the owner said `SAFA` is
+penalised and never rejected. The rule now always gives a flag, and the flag
+says which of the two things happened.
+
+### Five defects found in code written the same day
+
+`leg()` resolved a place for the distance and not for the count, so a leg named
+the ticket index's way read as never carried while its distance proved the place
+was understood.
+
+`path_between` routed through a place the map does not hold, and resolved no
+spelling at all.
+
+`is_clean` ignored `untested`, so a sequence whose closing days were never tested
+reported clean.
+
+A sequence with no codes reported clean. Every check passes on nothing.
+
+The desk offered "Generate from this" on a sequence with no codes. The route
+answers 409, so the click could never work.
+
+### Two catalogue rows to raise
+
+`BANA` ends in Nasiriyah and its `overnight_city` cell is blank. `MOBKHEB` ends
+in Erbil with the same blank cell, and it has the shape of a departure day.
+Neither was changed. The sheet is the owner's, and invariant 1.3 binds.
+
+### What is open
+
+Two things rest on Claude's reading and not on the owner's word. The flag cap
+ladder is one constant, `FLAG_CAP = 2`. The `SAFA` rule sits in the judged book
+on a recommendation.
+
+Three checks are buildable and are not built: a day that starts where the last
+night did not end, a leg whose richer template was passed over, and a day trip
+used on the day the trip moves on. `day_shape` holds the data all three need.
+
+A flag does not yet lower a candidate's score. No candidate scorer exists.
+
+The judged rule book still has no control on the desk. Three routes are served
+and never called: `GET /comments`, `POST /comments/{draft}/{comment}` and
+`POST /rules/judged`.
+
+One stored sequence names a live endpoint. `dr-1181c61d5385` carries
+`gemma4:31b-cloud` at `http://100.82.8.53:11434/v1/chat/completions`, dated
+2026-09-05. It predates `phase-three-spec.md` by one day, so invariant 2.3
+stands.
+
+### Tests
+
+125 new tests across five files: `test_move_map.py`, `test_site_index.py`,
+`test_sequence_check.py`, `test_day_shape.py` and `test_named_pair_rules.py`.
+
+The 14 files the frame prompt names still pass at 430.
