@@ -1164,3 +1164,80 @@ process.
 
 **`AUTH_ENABLED` is false.** The firewall now blocks the LAN and ZeroTier, and
 the tailnet still reaches port 7001 with no login.
+
+---
+
+## 2026-09-07: the owner's comments, and the map the desk lacks
+
+The owner read the graded drafts and left four comments. All four name routing
+faults, and none of them names a wording fault.
+
+### What the four comments say
+
+**`dr-7d5c4865d7b1`, on `curated:cr-mthikj54`.** Sites repeat on days 3 and 4,
+then again on 6 and 7. The arrival is Basra, so the sequence should run BANA2,
+then URUKNJ, then KABBBG. Mosul sits far from Sulaymaniyah, and the last few
+days carry many problems.
+
+**`dr-1d40984884cc`, on `curated:cr-mto8t3ra`.** The request names Western Iraq
+and the Nineveh Plains, so the sequence should run SAFA, SAMO, MO1EB.
+
+**`dr-52cf8650ce00`, on `curated:cr-mtgn4c5d`.** A ten-day trip arrives in
+Baghdad and BG1CT is right. Every day to day 6 is good. Days 7, 8 and 9 are
+wrong. SAFA is a Baghdad day trip, and day 7 leaves Baghdad for Mosul. Samarra
+also appears twice, on day 7 and on day 8.
+
+**`dr-f6f387710a8a`, on `queue:qr-mt4jveb4-99906312`.** A standard ten-day
+itinerary starts in Baghdad and ends in Erbil.
+
+### Three faults the comments share
+
+**A site appears on two days.** The 60 templates carry 57 distinct site codes
+between them, and a site sits in several templates. `ERB_CITD` sits in 9,
+`NA_UR` in 7, and `NA_URUK` in 6. A sequence that picks two of those templates
+sends a customer to one site twice.
+
+**A day trip carries the day that leaves the city.** SAFA sleeps in Baghdad, so
+it cannot be the day the trip drives to Mosul. Four codes carry no overnight
+city at all: BANA, BB, MOBKHEB and SUEBDEP.
+
+**Two consecutive codes name cities a car cannot join.** Mosul and Sulaymaniyah
+sit at opposite ends of the north.
+
+### The map the desk holds today
+
+The desk knows an overnight city per code, and nothing else about geography.
+
+Twelve cities carry a night, over 60 codes:
+
+    Baghdad 10   Erbil 12   Najaf 7   Nasiriyah 5   Basra 4
+    Duhok 4      Mosul 4    Sulaymaniyah 4   Karbala 3
+    Korek Mountain 2   Soran 1   and 4 codes with no night
+
+The counted book holds 24 move rules over the sent offers. They say which pairs
+the work actually joins, and how often:
+
+    Erbil -> Erbil          52 of 71     Karbala -> Nasiriyah   104 of 186
+    Rezan -> Erbil          10 of 14     Mosul -> Mosul         134 of 256
+    Sulaymaniyah -> Erbil   19 of 31     Baghdad -> Baghdad     369 of 709
+    Nasiriyah -> Baghdad   102 of 196    Najaf -> Karbala        50 of 100
+    Basra -> Nasiriyah      36 of 79     Baghdad -> Mosul       171 of 709
+    Mosul -> Duhok          61 of 256    Duhok -> Erbil          17 of 66
+    Baghdad -> Karbala     118 of 709    Mosul -> Erbil          53 of 256
+
+**No pair joins Mosul to Sulaymaniyah, in either direction.** The corpus holds
+no such move, which is the same thing the owner said in words.
+
+### What the desk does not hold
+
+No drive time, and no distance. Nothing in the catalogue or the corpus states
+how long a leg takes.
+
+No neighbour list. The move counts say which pairs the work joins, and they say
+nothing about a pair the work has never tried.
+
+No site index across a sequence. `included_sites` sits on each template, and
+nothing compares two templates in one proposal.
+
+No day-trip marker. A reader tells a day trip from a transit only by reading
+the overnight city, and four codes carry none.
