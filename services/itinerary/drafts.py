@@ -86,6 +86,10 @@ class ItineraryDraft:
     parse_warnings: list = field(default_factory=list)
     sequences: list = field(default_factory=list)   # list[ProposedSequence], oldest first
     comments: list = field(default_factory=list)    # list[{"text", "at"}]
+    # What the machine noticed, kept apart from what a human said (ws-03 D33).
+    # `comments` is the raw material of a judged rule, and a note in that list
+    # would enter the rule queue and read as the owner's words.
+    notes: list = field(default_factory=list)       # list[{"text", "at", "source"}]
     # Set once a document is generated, with the sequence that produced it.
     generated_from: Optional[str] = None
     doc_url: str = ""
@@ -267,6 +271,48 @@ def add_comment(draft_id: str, text: str) -> ItineraryDraft:
         "at": at,
         "rule_state": RULE_STATE_NEW,
     })
+    save(draft)
+    return draft
+
+
+NOTE_SOURCE_CHECK = "check"    # the deterministic check wrote it
+NOTE_SOURCE_MODEL = "model"    # Claude wrote it, in session (ws-03 D17)
+NOTE_SOURCES = (NOTE_SOURCE_CHECK, NOTE_SOURCE_MODEL)
+
+
+def add_note(draft_id: str, text: str, source: str = NOTE_SOURCE_MODEL) -> ItineraryDraft:
+    """
+    Record a note the machine made about this draft.
+
+    Pre:  the draft exists, `text` is not empty, and `source` is in NOTE_SOURCES.
+    Post: the note is on `notes` with its time and its source. `comments` is
+          untouched.
+
+    Invariant: a note never enters `comments` (ws-03 D33). `comments` is the raw
+    material of a judged rule, and `GET /api/itinerary/comments` reads it. A
+    machine note there would enter the rule queue and read as the owner's words.
+
+    A note that repeats one already on the draft, from the same source, is not
+    added again. The check runs on every read of a draft, and a list that grew
+    by one on each read would bury the note it was written to show.
+
+    Blame: an unknown source is a caller error and raises. A note with no author
+    cannot be told from the owner's own words later.
+    """
+    if not (text or "").strip():
+        raise DraftError("a note cannot be empty")
+    if source not in NOTE_SOURCES:
+        raise DraftError(f"a note's source must be one of {', '.join(NOTE_SOURCES)}")
+    draft = load(draft_id)
+    if draft is None:
+        raise DraftError(f"no such draft: {draft_id}")
+
+    cleaned = text.strip()
+    if any(note.get("text") == cleaned and note.get("source") == source
+           for note in draft.notes):
+        return draft
+
+    draft.notes.append({"text": cleaned, "at": _now(), "source": source})
     save(draft)
     return draft
 

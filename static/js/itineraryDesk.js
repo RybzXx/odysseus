@@ -155,7 +155,7 @@ async function openWorklistRequest(key) {
     await loadDrafts();
   } catch (e) {
     $("pill-error").innerHTML = `<span class="err">${esc(e.message)}</span>`;
-    $("answer-pane").innerHTML =
+  $("answer-pane").innerHTML =
       `<div class="card"><div class="empty">that request did not open</div></div>`;
   }
   renderPills();
@@ -260,15 +260,67 @@ function normalizedBlock(draft) {
 
 // The two answers are compared position by position. A difference is marked and
 // never resolved here: neither proposer is authoritative.
-function sequenceBlock(sequence, agreement, which) {
+// What the checker found, day by day. A day carrying a fault is marked in the
+// chip row too, because a list of faults under a sequence does not say which
+// day to look at.
+function checkBlock(check) {
+  if (!check) {
+    return `<div class="warn">the check itself failed on this sequence</div>`;
+  }
+  const faults = (check.faults || []).map((f) =>
+    `<div class="fault"><span class="kind">${esc(f.kind)}</span>
+       <span>day ${f.day}: ${esc(f.statement)}</span></div>`).join("");
+  // A flag states what a reviewer would otherwise have to find. It never
+  // refuses a sequence, so it is marked apart from a fault (ws-03 D30).
+  const flagged = (check.flags || []).map((f) =>
+    `<div class="flag"><span class="kind">flag</span>
+       <span>day ${f.day}: ${esc(f.statement)}</span></div>`).join("");
+  const untested = (check.untested || []).map((u) =>
+    `<div class="note">not tested — ${esc(u)}</div>`).join("");
+  const unknown = (check.unknown_codes || []).length
+    ? `<div class="warn">not in the catalogue:
+         ${esc(check.unknown_codes.join(", "))}</div>` : "";
+  const waiting = Object.entries(check.not_yet_found || {}).map(([name, what]) =>
+    `<div class="note">not yet checked — ${esc(name)}: ${esc(what)}</div>`).join("");
+
+  // The summary carries the verdict, because it is the only line a reviewer
+  // reads with the block collapsed. "0 fault(s)" on a sequence nothing checked
+  // reads as a pass, which is the defect this whole check exists to stop.
+  const flags = check.flag_count
+    ? `, ${check.flag_count} flag(s) of ${check.flag_cap}`
+    : "";
+  const headline = check.fault_count
+    ? `${check.fault_count} fault(s)${flags}`
+    : check.flag_count
+      ? `no fault, ${check.flag_count} flag(s) of ${check.flag_cap}`
+      : check.is_clean
+      ? "clean — every check ran and found nothing"
+      : "not checked";
+
+  const verdict = check.is_clean
+    ? `<div class="note ok">every check ran and found nothing</div>`
+    : check.found_no_fault
+      ? `<div class="note">no fault was found, and a check did not run</div>`
+      : "";
+
+  return `<details class="check" ${check.fault_count ? "open" : ""}>
+      <summary class="${check.is_clean && !check.flag_count ? "ok" : ""}">Check — ${esc(headline)}</summary>
+      ${verdict}${faults}${flagged}${unknown}${untested}${waiting}
+    </details>`;
+}
+
+function sequenceBlock(sequence, agreement, which, askedDays) {
   if (!sequence) {
     return `<div class="note">the ${which} proposer has not answered yet</div>`;
   }
   const marks = agreement.positions || [];
+  const check = sequence.check;
+  const faultyDays = new Set((check && check.faults || []).map((f) => f.day));
   const chips = (sequence.day_codes || []).map((code, i) => {
     const mark = marks[i] === "same" ? "same"
       : marks[i] === "differ" ? "differ" : "only";
-    return `<span class="code ${mark}">${i + 1}. ${esc(code)}</span>`;
+    const flagged = faultyDays.has(i + 1) ? " faulty" : "";
+    return `<span class="code ${mark}${flagged}">${i + 1}. ${esc(code)}</span>`;
   }).join("");
   const rejected = (sequence.rejected_codes || []).length
     ? `<div class="warn">Not in the catalogue, so dropped:
@@ -277,14 +329,33 @@ function sequenceBlock(sequence, agreement, which) {
   const stamp = sequence.model
     ? `<span class="note">${esc(sequence.model)} · ${esc(sequence.proposed_at || "")}</span>`
     : `<span class="note">${esc(sequence.proposed_at || "")}</span>`;
+
+  // The customer's day count is the constraint. A sequence shorter or longer
+  // than the request is the defect WP1 already found once, and the desk showed
+  // only the sequence's own length, in a card away from the request's.
+  const given = (sequence.day_codes || []).length;
+  const days = (askedDays === null || askedDays === undefined)
+    ? `<span class="note">${given} day(s), and the request names no day count</span>`
+    : given === askedDays
+      ? `<span class="note">${given} of ${askedDays} day(s)</span>`
+      : `<span class="warn inline">${given} day(s) for a ${askedDays}-day request,
+           ${given < askedDays ? `${askedDays - given} short` : `${given - askedDays} over`}</span>`;
+
+  // A sequence with no codes cannot generate: the route answers 409. Offering
+  // the button anyway is an action that always fails.
+  const canGenerate = given > 0;
   return `
     <div class="row"><span class="tag ${which}">${which}</span>
-      <span class="note">${(sequence.day_codes || []).length} days</span>
-      <span class="grow"></span>${stamp}</div>
+      ${days}<span class="grow"></span>${stamp}</div>
     <div class="seq">${chips || '<span class="note">no codes</span>'}</div>
     ${sequence.note ? `<div class="note">${esc(sequence.note)}</div>` : ""}
     ${rejected}
-    <div class="bar"><button class="generate" data-source="${which}">Generate from this</button></div>`;
+    ${checkBlock(check)}
+    <div class="bar">
+      <button class="generate" data-source="${which}" ${canGenerate ? "" : "disabled"}>
+        Generate from this</button>
+      ${canGenerate ? "" : '<span class="note">no codes to generate from</span>'}
+    </div>`;
 }
 
 // Every comment, and every model answer, oldest first. A comment is shown even
@@ -301,6 +372,23 @@ function thread(draft) {
       <div class="note">${esc((s.day_codes || []).join(" → ")) || "no codes"}</div></div>`);
   });
   return turns.length ? `<div class="thread">${turns.join("")}</div>` : "";
+}
+
+// What the machine noticed. Kept apart from the owner's comments, because a
+// comment is the raw material of a judged rule and a note is not (ws-03 D33).
+function notes(draft) {
+  const list = draft.notes || [];
+  if (!list.length) return "";
+  const rows = list.map((n) =>
+    `<div class="turn"><strong>${esc(n.source === "check" ? "Check" : "Claude")}</strong>
+       <span class="note">${esc(n.at || "")}</span>
+       <div class="note">${esc(n.text)}</div></div>`).join("");
+  return `<div class="card">
+      <h4>Machine notes</h4>
+      <div class="note">Written by the check or in session. These never enter
+        the rule queue.</div>
+      <div class="thread">${rows}</div>
+    </div>`;
 }
 
 function renderDraft(draft) {
@@ -325,15 +413,16 @@ function renderDraft(draft) {
     + `<div class="thread">${submitted || '<div class="note">nothing</div>'}</div>`
     + `<div class="bar"><button id="back-to-form">New request</button></div>`;
 
+  const notesCard = notes(draft);
   $("answer-pane").innerHTML =
     `<div class="card">
        <h4>Proposed sequences</h4>
        ${agreement.same
           ? `<div class="note">Both proposers agree.</div>`
           : `<div class="note">The two answers differ. Neither decides; you do.</div>`}
-       <div style="margin-top:12px">${sequenceBlock(latest.model, agreement, "model")}</div>
+       <div style="margin-top:12px">${sequenceBlock(latest.model, agreement, "model", draft.day_count)}</div>
        <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
-       <div>${sequenceBlock(latest.rules, agreement, "rules")}</div>
+       <div>${sequenceBlock(latest.rules, agreement, "rules", draft.day_count)}</div>
      </div>
      <div class="card">
        <h4>Feedback</h4>
@@ -351,6 +440,7 @@ function renderDraft(draft) {
             : "the model proposer is off; the comment is still saved"}</span>
        </div>
      </div>
+     ${notesCard}
      ${draft.doc_url
         ? `<div class="card"><h4>Document</h4>
              <div class="note">generated from the ${esc(draft.generated_from)} sequence</div>
@@ -450,7 +540,9 @@ async function loadDrafts() {
       + data.drafts.map((d) =>
           `<option value="${esc(d.draft_id)}">${esc(d.request_id || d.draft_id)}
              — ${esc((d.request_row || {}).tripDays || "?")} days</option>`).join("");
-    $("summary").textContent = `${data.count} request(s) on the desk`;
+    // Drafts, not requests. The pill row below counts worklist requests, and
+    // two numbers on one page under one word read as a contradiction.
+    $("summary").textContent = `${data.count} draft(s) open`;
   } catch (e) {
     $("summary").innerHTML = `<span class="err">${esc(e.message)}</span>`;
   }

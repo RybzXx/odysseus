@@ -29,6 +29,7 @@ from services.itinerary.drafts import (
     SOURCE_MODEL,
     SOURCE_RULES,
     DraftError,
+    NOTE_SOURCE_MODEL,
     add_comment,
     add_sequence,
     iter_comments,
@@ -95,6 +96,13 @@ class Comment(BaseModel):
     text: str
 
 
+class Note(BaseModel):
+    # A machine note. Kept apart from a comment, because a comment is the raw
+    # material of a judged rule and a note is not (ws-03 D33).
+    text: str
+    source: str = NOTE_SOURCE_MODEL
+
+
 class GenerateRequest(BaseModel):
     # Which of the two sequences to build from. Never guessed: the record must
     # say which proposer produced the document.
@@ -135,18 +143,69 @@ def _normalized_view(draft) -> dict:
     }
 
 
-def _draft_to_dict(draft) -> dict:
-    """One draft as the desk reads it, with the two answers compared."""
+def _start_date_of(normalized_view: dict):
+    """Post: the trip's first day as a date, or None when the request has none."""
+    from datetime import date
+
+    stamp = normalized_view.get("start_date")
+    if not stamp:
+        return None
+    try:
+        return date.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+
+
+def _draft_to_dict(draft, templates: Optional[dict] = None) -> dict:
+    """
+    One draft as the desk reads it, with the two answers compared and each one
+    checked.
+
+    Pre:  `templates` maps a code to its live template row. A caller reading
+          many drafts loads it one time and passes it, because the pipeline
+          loader reads 60 files from disk on every call.
+    Post: every sequence carries a `check` naming what is wrong with it, and
+          `day_count` naming what the request asked for beside what the
+          sequence answers.
+
+    Blame: a check that cannot run records itself in `untested` rather than
+    reporting a clean sequence. A sequence that raises inside the check keeps
+    its codes and carries `check: None`, because a broken check must not hide
+    the answer a reviewer came to read.
+    """
+    from services.itinerary.sequence_check import check_sequence, check_to_dict
+
+    rows = active_day_templates() if templates is None else templates
+    normalized = _normalized_view(draft)
+    start_date = _start_date_of(normalized)
+
+    sequences = []
+    for sequence in draft.sequences:
+        entry = vars(sequence).copy()
+        try:
+            entry["check"] = check_to_dict(check_sequence(
+                sequence.day_codes, rows, start_date=start_date,
+                request_row=draft.request_row,
+                day_count=normalized.get("day_count") or 0))
+        except Exception:
+            logger.exception("the sequence check failed on %s", draft.draft_id)
+            entry["check"] = None
+        sequences.append(entry)
+
     return {
         "draft_id": draft.draft_id,
         "request_id": draft.request_id,
         "origin": draft.origin,
         "request_row": draft.request_row,
-        "normalized": _normalized_view(draft),
+        "normalized": normalized,
+        "day_count": normalized.get("day_count"),
         "model_proposals_enabled": model_proposals_enabled(),
         "parse_warnings": draft.parse_warnings,
-        "sequences": [vars(s) for s in draft.sequences],
+        "sequences": sequences,
         "comments": draft.comments,
+        # What the machine noticed, kept apart from what a human said
+        # (ws-03 D33). A note never reaches the comment queue.
+        "notes": draft.notes,
         "agreement": sequences_agree(draft),
         "generated_from": draft.generated_from,
         "doc_url": draft.doc_url,
@@ -270,7 +329,10 @@ def setup_itinerary_desk_routes() -> APIRouter:
         require_admin(request)
         # Graded drafts are trips that were already sold, opened only so a
         # read can be marked against them. They are not work on the desk.
-        drafts = [_draft_to_dict(d) for d in iter_drafts(OPEN_REQUEST_ORIGINS)]
+        # One template load for the whole list. The pipeline loader reads 60
+        # files from disk on every call, and this route serialises 11 drafts.
+        rows = active_day_templates()
+        drafts = [_draft_to_dict(d, rows) for d in iter_drafts(OPEN_REQUEST_ORIGINS)]
         return {"count": len(drafts), "drafts": drafts}
 
     @router.get("/drafts/{draft_id}")
@@ -418,6 +480,29 @@ def setup_itinerary_desk_routes() -> APIRouter:
         comments = list(iter_comments(rule_state))
         return {"count": len(comments), "rule_state": rule_state,
                 "comments": comments}
+
+    @router.post("/drafts/{draft_id}/note")
+    async def record_note(request: Request, draft_id: str, body: Note):
+        """
+        Record a note the machine made, kept apart from the owner's comments.
+
+        Pre:  the draft exists and the text is not empty.
+        Post: the note is on `notes` with its time and its source. `comments` is
+              untouched, so `GET /comments` still returns only what a human
+              wrote (ws-03 D33).
+
+        A note that repeats one already on the draft is not added again. The
+        check runs on every read, and a list that grew each time would bury the
+        note it was written to show.
+        """
+        require_admin(request)
+        from services.itinerary.drafts import add_note
+
+        try:
+            draft = add_note(draft_id, body.text, body.source)
+        except DraftError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return _draft_to_dict(draft)
 
     @router.post("/comments/{draft_id}/{comment_id}")
     async def record_comment_verdict(request: Request, draft_id: str,
