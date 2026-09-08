@@ -284,7 +284,7 @@ def _draft_row(draft, templates: Optional[dict] = None) -> dict:
     chosen = newest.get(SOURCE_MODEL) or newest.get(SOURCE_RULES)
     day_codes = list(getattr(chosen, "day_codes", []) or [])
 
-    faults = flags = 0
+    faults = flags = unknown = 0
     if day_codes:
         try:
             normalized = _normalized_view(draft)
@@ -293,6 +293,11 @@ def _draft_row(draft, templates: Optional[dict] = None) -> dict:
                 request_row=draft.request_row,
                 day_count=normalized.get("day_count") or 0)
             faults, flags = len(check.faults), len(check.flags)
+            # A code the catalogue does not hold is not a fault: the checker
+            # blames the catalogue rather than the proposer (phase four). The
+            # row must still say so, or a sequence of two invented codes reads
+            # as "2 days, no faults" and looks like work that is finished.
+            unknown = len(check.unknown_codes)
         except Exception:
             logger.exception("the row check failed on %s", draft.draft_id)
 
@@ -304,11 +309,29 @@ def _draft_row(draft, templates: Optional[dict] = None) -> dict:
         "asked_days": _normalized_view(draft).get("day_count"),
         "fault_count": faults,
         "flag_count": flags,
-        "run_count": len(getattr(draft, "run_ids", []) or []),
+        "unknown_code_count": unknown,
+        # Runs whose record still exists. `run_ids` counts what the draft
+        # names, and a deleted record leaves an id behind: the queue then
+        # offered "has a run" for a draft whose detail pane showed none.
+        "run_count": _readable_run_count(draft),
         "comment_count": len(draft.comments or []),
         "has_document": bool(draft.doc_url),
         "created_at": draft.created_at,
     }
+
+
+def _readable_run_count(draft) -> int:
+    """
+    Post: how many of this draft's runs still have a record on disk.
+
+    Blame: `_run_summaries` already skips a dangling id, so a count taken from
+    `run_ids` disagrees with the pane that renders them. One number, one
+    source.
+    """
+    from services.itinerary.run_record import load as load_run
+
+    return sum(1 for run_id in (getattr(draft, "run_ids", []) or [])
+               if load_run(run_id) is not None)
 
 
 def _run_summaries(draft) -> list:

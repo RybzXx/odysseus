@@ -26,6 +26,18 @@
         ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
 
+  /* Post: `value` as a list, whatever shape it arrived in.
+   *
+   * The card is shared, so one bad record blanks the section on both pages. A
+   * `differences` that was a string raised `differences.filter is not a
+   * function` on 2026-09-08. `brief_to_dict` always sends a list, and a record
+   * written before it did would not. */
+  function asList(value) {
+    if (Array.isArray(value)) return value;
+    if (value === null || value === undefined || value === "") return [];
+    return [value];
+  }
+
   function line(label, value) {
     if (value === null || value === undefined || value === "" ||
         (Array.isArray(value) && !value.length)) return "";
@@ -35,9 +47,10 @@
   }
 
   function diffBlock(kind, heading, statements) {
-    if (!statements.length) return "";
-    const rows = statements
-      .map((s) => `<div class="brief-diff">• ${escapeText(s)}</div>`).join("");
+    const rows = asList(statements)
+      .map((s) => `<div class="brief-diff">• ${escapeText(
+        s && s.statement !== undefined ? s.statement : s)}</div>`).join("");
+    if (!rows) return "";
     return `<div class="brief-diffs ${kind}">
         <div class="brief-diffs-head">${escapeText(heading)}</div>${rows}
       </div>`;
@@ -58,9 +71,9 @@
              `No brief. Layer 1 did not run.</div></div>`;
     }
 
-    const differences = brief.differences || [];
-    const filled = differences.filter((d) => d.applied).map((d) => d.statement);
-    const kept = differences.filter((d) => !d.applied).map((d) => d.statement);
+    const differences = asList(brief.differences);
+    const filled = differences.filter((d) => d && d.applied).map((d) => d.statement);
+    const kept = differences.filter((d) => !(d && d.applied)).map((d) => d.statement);
 
     // A brief written with no conversation can only repeat the request, so the
     // card says so rather than letting the reader assume a screenshot was read.
@@ -82,7 +95,7 @@
         ${line("Start date", brief.start_date)}
         ${diffBlock("filled", "Filled from the conversation", filled)}
         ${diffBlock("kept", "Disagrees with the request", kept)}
-        ${diffBlock("refused", "Refused", brief.refused || [])}
+        ${diffBlock("refused", "Refused", brief.refused)}
         ${unread}${where}
       </div>`;
   }

@@ -1,7 +1,7 @@
 /* static/css/deskShared.css
  *
- * The tokens and the rules the itinerary desk shares with the Operations
- * modal (ws-03 D54, D55).
+ * The tokens the itinerary desk needs, and the rules the brief card needs on
+ * both pages (ws-03 D54, D55).
  *
  * WHY THIS FILE EXISTS
  *
@@ -12,26 +12,36 @@
  * So this file holds the small part both pages need. The app loads it beside
  * `style.css`, and the desk loads it alone.
  *
- * WHY THE TOKENS ARE HERE AND NOT IN style.css
+ * WHY EVERY TOKEN IS SCOPED TO THE DESK
  *
- * Measured 2026-09-08: `--accent`, `--bg-elev`, `--fg-muted`, `--fg-dim`,
- * `--status-warn`, `--status-error` and `--accent-error` appear in
- * `operations.js` and in no `:root` block anywhere. The Operations modal has
- * been rendering on CSS fallbacks. Naming them here gives both pages one
- * answer instead of a fallback each.
+ * Seven tokens the Operations modal reads are defined in no `:root` block
+ * anywhere: `--accent`, `--bg-elev`, `--fg-muted`, `--fg-dim`, `--status-warn`,
+ * `--status-error` and `--accent-error`. Every site that reads one carries its
+ * own CSS fallback, and the fallbacks differ.
+ *
+ * Measured 2026-09-08, after an earlier version of this file defined them on
+ * bare `:root`: 236 call sites across 26 files changed colour, and 192 of them
+ * read `var(--accent, var(--red))`. `theme.js` sets `--red` per theme, so
+ * those 192 followed the reader's own theme and a bare `:root` pinned them all
+ * to one amber.
+ *
+ * So the token block names `html.desk-standalone`, which only the desk sets.
+ * The app keeps its fallbacks and its themes.
+ *
+ * The card's own rules therefore carry a fallback on every token, in the shape
+ * `operations.js` already uses. Without one the card would render unstyled
+ * inside the app, where none of these tokens exists.
  *
  * OWNERSHIP
- *   tokens        both pages
+ *   tokens        the desk alone
  *   .brief-*      both pages, through static/js/briefCard.js
- *   .deskq-*      the desk alone
  */
 
-/* ── tokens ────────────────────────────────────────────────────────────────
- * Dark is the default, because the app is dark and the desk now follows it.
- * The values are the fallbacks `operations.js` already renders, so nothing
- * moves colour when this file lands.
+/* ── the desk's tokens ─────────────────────────────────────────────────────
+ * The values are the ones `operations.js` falls back to, so the desk and the
+ * modal look alike without the desk touching the app's own cascade.
  */
-:root {
+html.desk-standalone {
   --bg: #282c34;
   --fg: #9cdef2;
   --panel: #111;
@@ -49,11 +59,9 @@
 
 /* The light answer.
  *
- * `:root.light` is the app's older switch, and `theme.js` writes tokens
- * directly rather than using it. The desk loads no theme engine, so it answers
- * the reader's own setting instead — scoped to `html.desk-standalone`, which
- * only the desk sets. Without the scope this block would flip the whole app to
- * light for every reader whose system asks for it.
+ * `theme.js` owns the app's palette and writes tokens inline, so the desk
+ * cannot inherit a theme. It answers the reader's own setting instead. The
+ * scope is what keeps this out of the app.
  */
 @media (prefers-color-scheme: light) {
   html.desk-standalone {
@@ -73,46 +81,34 @@
   }
 }
 
-:root.light {
-  --bg: #f5f5f5;
-  --fg: #2b2b2b;
-  --panel: #fff;
-  --border: #bbb;
-
-  --bg-elev: #ececec;
-  --fg-dim: #555;
-  --fg-muted: #6b6862;
-  --accent: #a4661a;
-  --accent-error: #b02a2a;
-  --status-warn: #8a5a1c;
-  --status-error: #a33;
-  --status-ok: #2e7d32;
-}
-
 /* ── the brief card ────────────────────────────────────────────────────────
  * Rendered by static/js/briefCard.js on the desk and in the Operations modal.
  * One definition, because two would drift (ws-03 invariant 3.4).
+ *
+ * Every token carries a fallback. The desk defines them all and the app
+ * defines none of them, so a bare `var()` would render this card unstyled
+ * inside the app.
  */
-.brief-card { font-size: 12px; line-height: 1.5; color: var(--fg); }
+.brief-card { font-size: 12px; line-height: 1.5; color: var(--fg, #eee); }
 
 .brief-summary { white-space: pre-wrap; margin-bottom: 8px; }
 
 .brief-line { margin: 2px 0; }
-.brief-line > strong { color: var(--fg-dim); font-weight: 600; }
+.brief-line > strong { color: var(--fg-dim, #aaa); font-weight: 600; }
 
-.brief-diffs { margin-top: 8px; border-left: 3px solid var(--border);
+.brief-diffs { margin-top: 8px; border-left: 3px solid var(--border, #333);
                padding: 6px 0 6px 8px; }
-.brief-diffs.filled { border-color: var(--status-ok); }
-.brief-diffs.kept { border-color: var(--status-warn); }
-.brief-diffs.refused { border-color: var(--status-error); }
+.brief-diffs.filled { border-color: var(--status-ok, #4caf50); }
+.brief-diffs.kept { border-color: var(--status-warn, #d19a66); }
+.brief-diffs.refused { border-color: var(--status-error, #e06c75); }
 .brief-diffs > .brief-diffs-head { font-size: 11px; text-transform: uppercase;
-  letter-spacing: .04em; color: var(--fg-muted); margin-bottom: 4px; }
+  letter-spacing: .04em; color: var(--fg-muted, #888); margin-bottom: 4px; }
 .brief-diff { margin: 3px 0; }
 
 /* A brief written with no screenshot says so. The desk reported values as read
  * from a conversation that was never read, on 2026-09-07. */
-.brief-unread { margin-top: 6px; color: var(--fg-muted); font-style: italic; }
+.brief-unread { margin-top: 6px; color: var(--fg-muted, #888); font-style: italic; }
 
-.brief-where { margin-top: 8px; font-size: 11px; color: var(--fg-muted); }
+.brief-where { margin-top: 8px; font-size: 11px; color: var(--fg-muted, #888); }
 
-.brief-empty { color: var(--fg-muted); font-style: italic; }
+.brief-empty { color: var(--fg-muted, #888); font-style: italic; }
