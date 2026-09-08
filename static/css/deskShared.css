@@ -1,0 +1,118 @@
+/* static/css/deskShared.css
+ *
+ * The tokens and the rules the itinerary desk shares with the Operations
+ * modal (ws-03 D54, D55).
+ *
+ * WHY THIS FILE EXISTS
+ *
+ * The brief renders on two pages now, and one card in two stylesheets renders
+ * two ways. `style.css` is 41,421 lines, so the desk cannot simply link it: a
+ * standalone page would inherit 41,000 rules nobody tested it against.
+ *
+ * So this file holds the small part both pages need. The app loads it beside
+ * `style.css`, and the desk loads it alone.
+ *
+ * WHY THE TOKENS ARE HERE AND NOT IN style.css
+ *
+ * Measured 2026-09-08: `--accent`, `--bg-elev`, `--fg-muted`, `--fg-dim`,
+ * `--status-warn`, `--status-error` and `--accent-error` appear in
+ * `operations.js` and in no `:root` block anywhere. The Operations modal has
+ * been rendering on CSS fallbacks. Naming them here gives both pages one
+ * answer instead of a fallback each.
+ *
+ * OWNERSHIP
+ *   tokens        both pages
+ *   .brief-*      both pages, through static/js/briefCard.js
+ *   .deskq-*      the desk alone
+ */
+
+/* ── tokens ────────────────────────────────────────────────────────────────
+ * Dark is the default, because the app is dark and the desk now follows it.
+ * The values are the fallbacks `operations.js` already renders, so nothing
+ * moves colour when this file lands.
+ */
+:root {
+  --bg: #282c34;
+  --fg: #9cdef2;
+  --panel: #111;
+  --border: #355a66;
+
+  --bg-elev: #242424;
+  --fg-dim: #aaa;
+  --fg-muted: #888;
+  --accent: #e8a33d;
+  --accent-error: #d33;
+  --status-warn: #d19a66;
+  --status-error: #e06c75;
+  --status-ok: #4caf50;
+}
+
+/* The light answer.
+ *
+ * `:root.light` is the app's older switch, and `theme.js` writes tokens
+ * directly rather than using it. The desk loads no theme engine, so it answers
+ * the reader's own setting instead — scoped to `html.desk-standalone`, which
+ * only the desk sets. Without the scope this block would flip the whole app to
+ * light for every reader whose system asks for it.
+ */
+@media (prefers-color-scheme: light) {
+  html.desk-standalone {
+    --bg: #f5f5f5;
+    --fg: #2b2b2b;
+    --panel: #fff;
+    --border: #bbb;
+
+    --bg-elev: #ececec;
+    --fg-dim: #555;
+    --fg-muted: #6b6862;
+    --accent: #a4661a;
+    --accent-error: #b02a2a;
+    --status-warn: #8a5a1c;
+    --status-error: #a33;
+    --status-ok: #2e7d32;
+  }
+}
+
+:root.light {
+  --bg: #f5f5f5;
+  --fg: #2b2b2b;
+  --panel: #fff;
+  --border: #bbb;
+
+  --bg-elev: #ececec;
+  --fg-dim: #555;
+  --fg-muted: #6b6862;
+  --accent: #a4661a;
+  --accent-error: #b02a2a;
+  --status-warn: #8a5a1c;
+  --status-error: #a33;
+  --status-ok: #2e7d32;
+}
+
+/* ── the brief card ────────────────────────────────────────────────────────
+ * Rendered by static/js/briefCard.js on the desk and in the Operations modal.
+ * One definition, because two would drift (ws-03 invariant 3.4).
+ */
+.brief-card { font-size: 12px; line-height: 1.5; color: var(--fg); }
+
+.brief-summary { white-space: pre-wrap; margin-bottom: 8px; }
+
+.brief-line { margin: 2px 0; }
+.brief-line > strong { color: var(--fg-dim); font-weight: 600; }
+
+.brief-diffs { margin-top: 8px; border-left: 3px solid var(--border);
+               padding: 6px 0 6px 8px; }
+.brief-diffs.filled { border-color: var(--status-ok); }
+.brief-diffs.kept { border-color: var(--status-warn); }
+.brief-diffs.refused { border-color: var(--status-error); }
+.brief-diffs > .brief-diffs-head { font-size: 11px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--fg-muted); margin-bottom: 4px; }
+.brief-diff { margin: 3px 0; }
+
+/* A brief written with no screenshot says so. The desk reported values as read
+ * from a conversation that was never read, on 2026-09-07. */
+.brief-unread { margin-top: 6px; color: var(--fg-muted); font-style: italic; }
+
+.brief-where { margin-top: 8px; font-size: 11px; color: var(--fg-muted); }
+
+.brief-empty { color: var(--fg-muted); font-style: italic; }

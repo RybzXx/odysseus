@@ -274,6 +274,10 @@
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
   <link rel="stylesheet" href="/static/style.css?v=20260808startupshell1">
+  <!-- The tokens and the brief card the Operations modal shares with the
+       itinerary desk. One definition, because two would drift
+       (ws-03 D55, invariant 3.4). -->
+  <link rel="stylesheet" href="/static/css/deskShared.css?v=20260908">
   <!-- Must carry the same ?v= as the <script type="module"> tag below. A
      mismatched query is a different URL, so the preload warms a resource the
      page never requests. --><link rel="modulepreload" href="/static/app.js?v=20260902routefix1">
@@ -1677,6 +1681,15 @@
               <div id="set-utilityChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
+          <!-- The four itinerary layers. One card, four rows, built from
+               /api/itinerary/layers, because each row is the same three
+               controls and four hand-written blocks would drift apart. -->
+          <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M9 20l-5.4-2.7A1 1 0 0 1 3 16.4V4.6a1 1 0 0 1 1.4-.9L9 6m0 14l6-3m-6 3V6m6 11l4.6 2.3a1 1 0 0 0 1.4-.9V6.6a1 1 0 0 0-.6-.9L15 4m0 13V4m0 0L9 6"/></svg>Itinerary layers<span style="flex:1"></span><label class="admin-switch" title="The master switch. Off means no itinerary layer calls any model."><input type="checkbox" id="set-itineraryMasterToggle"><span class="admin-slider"></span></label></h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Each layer reaches only the endpoint you name for it. An unset layer runs nothing and says so — it never borrows the chat or utility model, because a customer's conversation screenshots must not leave a machine you did not choose.</div>
+            <div id="set-itineraryLayers" class="settings-col"></div>
+            <div id="set-itineraryLayersMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+          </div>
           <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Vision<span style="flex:1"></span><label class="admin-switch" title="Analyze images with a vision-capable model"><input type="checkbox" id="set-visionEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Analyze images with a vision-capable model.</div>
@@ -2691,6 +2704,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260815approvalsave1"></script>
 <script type="module" src="/static/js/assistant.js"></script>
+<script src="/static/js/briefCard.js?v=20260908"></script>
 <script type="module" src="/static/js/operations.js"></script>
 <script type="module" src="/static/js/projects.js"></script>
 <script type="module" src="/static/js/overview.js?v=20260902routefix1"></script>

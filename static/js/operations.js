@@ -688,7 +688,8 @@ function _renderEditor(row, container) {
         <span>⚡ Itinerary & Automated Replies</span>
         <div style="display:flex; gap:6px;">
           <button type="button" class="ops-chip ops-itinerary-preview-btn">Preview Itinerary</button>
-          <button type="button" class="ops-chip ops-itinerary-gen-btn" style="border-color:var(--accent, #e8a33d); color:var(--fg, #eee);">⚡ Generate Doc & Reply</button>
+          <button type="button" class="ops-chip ops-offer-create-btn">1 · Create offer</button>
+          <button type="button" class="ops-chip ops-itinerary-gen-btn" style="border-color:var(--accent, #e8a33d); color:var(--fg, #eee);">2 · Approve the build</button>
         </div>
       </div>
       <div class="ops-itinerary-slot" style="margin-top:6px;"></div>
@@ -824,12 +825,107 @@ function _renderItineraryBox(slot, data, isGenerated = false, rowKey = '') {
   });
 }
 
+// Button 1. Read the conversation, reason about it, choose an itinerary.
+// It builds no document (ws-03 item 23.1), so the second button still has
+// something to approve.
+async function _postCreateOffer(key) {
+  const opened = await fetch('/api/itinerary/drafts/from-request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ key }),
+  });
+  if (!opened.ok) throw await _errorFromResponse(opened, 'Failed to open the draft');
+  const draft = await opened.json();
+
+  const res = await fetch(`/api/itinerary/drafts/${encodeURIComponent(draft.draft_id)}/create-offer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ force_read: false }),
+  });
+  if (!res.ok) throw await _errorFromResponse(res, 'The offer run failed');
+  return res.json();
+}
+
+// Operations shows the verdict and the brief. The desk holds every prompt and
+// every answer (ws-03 D44). Two pages showing one trace would drift.
+function _renderOfferBox(slot, data, deskUrl) {
+  const run = data.run || {};
+  const brief = data.brief;
+  const chosen = data.chosen || {};
+  const candidates = (data.candidates && data.candidates.candidates) || [];
+  const picked = candidates.find((c) => c.index === chosen.index) || candidates[0];
+
+  const verdictClass = run.is_complete ? 'high' : (run.failures || []).length ? 'low' : 'moderate';
+  const faults = picked && picked.check ? picked.check.fault_count : 0;
+  const flags = picked && picked.check ? picked.check.flag_count : 0;
+
+  const untested = (run.untested || []).length
+    ? `<div class="ops-itinerary-gaps"><strong>Did not run:</strong><br>${run.untested.map((u) => '• ' + _esc(u)).join('<br>')}</div>`
+    : '';
+  const failures = (run.failures || []).length
+    ? `<div class="ops-itinerary-gaps" style="border-color:#d32f2f; color:#ef5350;"><strong>Failed:</strong><br>${run.failures.map((f) => '• ' + _esc(f)).join('<br>')}</div>`
+    : '';
+
+  // The brief renders through the shared card, so the desk and this modal
+  // show one brief (ws-03 D55, invariant 3.4). `briefCard.js` loads beside
+  // this file and carries its own escaping.
+  const briefHtml = window.BriefCard
+    ? BriefCard.html(brief)
+    : '<div style="opacity:.7;">the brief card did not load</div>';
+
+  const reason = chosen.chose_by_default
+    ? 'The rules ordered this candidate first. Layer 2 did not run.'
+    : (chosen.reason || '');
+
+  slot.innerHTML = `
+    <div class="ops-itinerary-box">
+      <div class="ops-itinerary-meta">
+        <span class="ops-itinerary-pill ${verdictClass}">${_esc(run.statement || 'run')}</span>
+        <span class="ops-itinerary-pill">${(chosen.day_codes || []).length} day(s)</span>
+        <span class="ops-itinerary-pill ${faults ? 'low' : 'high'}">${faults} fault(s)</span>
+        <span class="ops-itinerary-pill ${flags ? 'moderate' : 'high'}">${flags} flag(s)</span>
+        ${picked && picked.day_shortfall ? `<span class="ops-itinerary-pill moderate">${picked.day_shortfall} day(s) short</span>` : ''}
+        ${(run.endpoints_reached || []).length ? `<span class="ops-itinerary-pill">${_esc(run.endpoints_reached.join(', '))}</span>` : '<span class="ops-itinerary-pill">no model ran</span>'}
+      </div>
+      ${failures}
+      ${untested}
+      <div class="ops-field-label" style="margin-top:6px;">What the customer asked for</div>
+      ${briefHtml}
+      <div class="ops-field-label" style="margin-top:8px;">The itinerary that was chosen</div>
+      <div style="margin-bottom:4px;">${_esc((chosen.day_codes || []).join(' → ')) || '(none)'}</div>
+      ${reason ? `<div style="opacity:.85; white-space:pre-wrap;">${_esc(reason)}</div>` : ''}
+      ${data.review_note ? `<div class="ops-itinerary-gaps" style="margin-top:6px;"><strong>Layer 3:</strong><br>${_esc(data.review_note)}</div>` : ''}
+      <div style="margin-top:8px;"><a href="${_esc(deskUrl)}" target="_blank" rel="noopener"
+         style="color:var(--accent, #e8a33d);">Open the desk for every prompt and answer →</a></div>
+    </div>
+  `;
+}
+
 function _wireItinerarySection(wrap, row) {
   const section = wrap.querySelector('.ops-itinerary-section');
   if (!section) return;
   const slot = section.querySelector('.ops-itinerary-slot');
   const previewBtn = section.querySelector('.ops-itinerary-preview-btn');
+  const createBtn = section.querySelector('.ops-offer-create-btn');
   const genBtn = section.querySelector('.ops-itinerary-gen-btn');
+
+  createBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    createBtn.disabled = true;
+    slot.innerHTML = '<div class="ops-loading" style="padding:6px 0;">Reading the conversation, reasoning, and choosing an itinerary…</div>';
+    try {
+      const data = await _postCreateOffer(row.key);
+      // The desk is served at /itinerary. The page reads the draft id from
+      // the query, so the link lands on the run this press produced.
+      _renderOfferBox(slot, data, `/itinerary?draft=${encodeURIComponent(data.draft_id || '')}`);
+    } catch (err) {
+      slot.innerHTML = `<div class="ops-error" style="padding:4px 0;">${_esc(err.message)}</div>`;
+    } finally {
+      createBtn.disabled = false;
+    }
+  });
 
   previewBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -844,7 +940,7 @@ function _wireItinerarySection(wrap, row) {
 
   genBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    slot.innerHTML = '<div class="ops-loading" style="padding:6px 0;">Generating Google Doc proposal and calculating quote… (this takes a few seconds)</div>';
+    slot.innerHTML = '<div class="ops-loading" style="padding:6px 0;">Building the Google Doc from the chosen sequence and calculating the quote…</div>';
     try {
       const data = await _postGenerateItinerary(row.key, true);
       _renderItineraryBox(slot, data, true, row.key);

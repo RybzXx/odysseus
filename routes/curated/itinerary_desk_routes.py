@@ -40,6 +40,7 @@ from services.itinerary.drafts import (
     sequences_agree,
     set_comment_rule_state,
 )
+from services.itinerary.conversation_reader import conversation_link_of
 from services.itinerary.normalizer import normalize_from_dict
 from services.itinerary.propose_sequence import (
     ModelProposalsDisabled,
@@ -101,6 +102,17 @@ class Note(BaseModel):
     # material of a judged rule and a note is not (ws-03 D33).
     text: str
     source: str = NOTE_SOURCE_MODEL
+
+
+class CreateOffer(BaseModel):
+    # Read the screenshots again rather than using the cached text. A cache
+    # keyed on the Drive file id is right until somebody replaces the image
+    # behind the id.
+    force_read: bool = False
+
+
+class ConversationEdit(BaseModel):
+    text: str
 
 
 class GenerateRequest(BaseModel):
@@ -207,10 +219,122 @@ def _draft_to_dict(draft, templates: Optional[dict] = None) -> dict:
         # (ws-03 D33). A note never reaches the comment queue.
         "notes": draft.notes,
         "agreement": sequences_agree(draft),
+        # The runs that produced the sequences, newest first. Only the ids and
+        # a summary: the record holds every prompt, and a list route that
+        # returned all of them would send four prompts per draft to a page
+        # showing eleven drafts (ws-03 D42).
+        "run_ids": list(getattr(draft, "run_ids", []) or []),
+        "runs": _run_summaries(draft),
+        # The brief the newest run produced, so the desk renders the same card
+        # the Operations modal renders (ws-03 D55). It is 1,427 bytes and it
+        # sits in a run step, so a reader would otherwise open the run record
+        # to see what the customer asked for.
+        "brief": _newest_brief(draft),
+        "conversation_link": conversation_link_of(draft.request_row),
         "generated_from": draft.generated_from,
         "doc_url": draft.doc_url,
         "created_at": draft.created_at,
     }
+
+
+def _newest_brief(draft) -> Optional[dict]:
+    """
+    Post: the brief the newest run wrote, or None when no run wrote one.
+
+    Pre:  the draft names its runs in `run_ids`, newest last.
+
+    The brief lives in a run step's result, which is where the run record puts
+    it. Reading it here spares every caller the run record, and it keeps one
+    wire shape: `brief_to_dict` produced it and `briefCard.js` renders it.
+
+    Blame: a run id that resolves to no record is skipped. A deleted record
+    must not empty the card.
+    """
+    from services.itinerary.run_record import STEP_BRIEF
+    from services.itinerary.run_record import load as load_run
+
+    for run_id in reversed(list(getattr(draft, "run_ids", []) or [])):
+        run = load_run(run_id)
+        if run is None:
+            continue
+        step = run.step(STEP_BRIEF)
+        if step is not None and step.result:
+            return step.result
+    return None
+
+
+def _draft_row(draft, templates: Optional[dict] = None) -> dict:
+    """
+    One draft as a list renders it, and nothing more (ws-03 D57).
+
+    Pre:  `templates` maps a code to its live template row, loaded once by the
+          caller for the whole list.
+    Post: the fields a queue row shows: which request, how many days it
+          answers, what the newest sequence's check found, and whether a
+          document exists. No sequence, no check body, no run.
+
+    Blame: `_draft_to_dict` is the detail, and `GET /drafts/{id}` serves it.
+    Measured 2026-09-08: the list route sent 51,646 bytes for 11 drafts, of
+    which 10,178 bytes was one draft's sequences, to render one of them.
+    """
+    from services.itinerary.sequence_check import check_sequence
+
+    rows = active_day_templates() if templates is None else templates
+    newest = draft.latest
+    chosen = newest.get(SOURCE_MODEL) or newest.get(SOURCE_RULES)
+    day_codes = list(getattr(chosen, "day_codes", []) or [])
+
+    faults = flags = 0
+    if day_codes:
+        try:
+            normalized = _normalized_view(draft)
+            check = check_sequence(
+                day_codes, rows, start_date=_start_date_of(normalized),
+                request_row=draft.request_row,
+                day_count=normalized.get("day_count") or 0)
+            faults, flags = len(check.faults), len(check.flags)
+        except Exception:
+            logger.exception("the row check failed on %s", draft.draft_id)
+
+    return {
+        "draft_id": draft.draft_id,
+        "request_id": draft.request_id,
+        "origin": draft.origin,
+        "day_count": len(day_codes),
+        "asked_days": _normalized_view(draft).get("day_count"),
+        "fault_count": faults,
+        "flag_count": flags,
+        "run_count": len(getattr(draft, "run_ids", []) or []),
+        "comment_count": len(draft.comments or []),
+        "has_document": bool(draft.doc_url),
+        "created_at": draft.created_at,
+    }
+
+
+def _run_summaries(draft) -> list:
+    """
+    Post: one short row per run this draft produced, newest first.
+
+    Blame: a run id that resolves to no record is skipped rather than raised.
+    A deleted record must not empty the desk.
+    """
+    from services.itinerary.run_record import load as load_run
+
+    summaries = []
+    for run_id in reversed(list(getattr(draft, "run_ids", []) or [])):
+        run = load_run(run_id)
+        if run is None:
+            continue
+        summaries.append({
+            "run_id": run.run_id,
+            "statement": run.statement,
+            "started_at": run.started_at,
+            "is_complete": run.is_complete,
+            "untested": run.untested,
+            "failures": run.failures,
+            "endpoints_reached": run.endpoints_reached,
+        })
+    return summaries
 
 
 def _request_pill(row: dict, drafts_by_key: dict) -> dict:
@@ -326,13 +450,21 @@ def setup_itinerary_desk_routes() -> APIRouter:
 
     @router.get("/drafts")
     async def list_drafts(request: Request):
+        """
+        Every open draft, as a list row (ws-03 D57).
+
+        Post: one short row per draft. A caller that needs a sequence, a check
+              or a run asks `GET /drafts/{id}` for that one draft.
+
+        Graded drafts are trips that were already sold, opened only so a read
+        can be marked against them. They are not work on the desk.
+
+        One template load for the whole list. The pipeline loader reads 60
+        files from disk on every call.
+        """
         require_admin(request)
-        # Graded drafts are trips that were already sold, opened only so a
-        # read can be marked against them. They are not work on the desk.
-        # One template load for the whole list. The pipeline loader reads 60
-        # files from disk on every call, and this route serialises 11 drafts.
         rows = active_day_templates()
-        drafts = [_draft_to_dict(d, rows) for d in iter_drafts(OPEN_REQUEST_ORIGINS)]
+        drafts = [_draft_row(d, rows) for d in iter_drafts(OPEN_REQUEST_ORIGINS)]
         return {"count": len(drafts), "drafts": drafts}
 
     @router.get("/drafts/{draft_id}")
@@ -423,6 +555,116 @@ def setup_itinerary_desk_routes() -> APIRouter:
         except ProposalError as exc:
             raise HTTPException(502, str(exc)) from exc
         return _draft_to_dict(add_sequence(draft_id, sequence))
+
+    @router.post("/drafts/{draft_id}/create-offer")
+    async def create_offer_for_draft(request: Request, draft_id: str,
+                                     body: Optional[CreateOffer] = None):
+        """
+        Button 1. Read the conversation, reason, choose an itinerary.
+
+        Pre:  the draft exists.
+        Post: a sealed run record, a `model` sequence on the draft, and layer
+              3's note on `notes`. No Google Doc is built and Drive holds no
+              new file (spec item 23.1).
+
+        Blame: a layer the owner did not configure is a configuration state and
+        not a failure. The run records it untested and finishes, because every
+        conversation folder answered 404 until the owner shared them and a run
+        that refused would refuse every request (ws-03 D43).
+        """
+        require_admin(request)
+        from services.itinerary.offer_run import create_offer
+        from services.itinerary.run_record import run_to_dict
+
+        draft = load(draft_id)
+        if draft is None:
+            raise HTTPException(404, "no such draft")
+        try:
+            outcome = create_offer(draft, active_day_templates(),
+                                   force_read=bool(body and body.force_read))
+        except Exception as exc:
+            logger.exception("the offer run failed")
+            raise HTTPException(502, f"the offer run failed: {exc}") from exc
+
+        from services.itinerary.candidates import candidate_set_to_dict
+        from services.itinerary.request_brief import brief_to_dict
+
+        return {
+            "run": run_to_dict(outcome.run),
+            "brief": brief_to_dict(outcome.brief) if outcome.brief else None,
+            "candidates": (candidate_set_to_dict(outcome.candidate_set)
+                           if outcome.candidate_set else None),
+            "chosen": {
+                "index": outcome.ranking.index if outcome.ranking else 0,
+                "day_codes": list(outcome.chosen_codes),
+                "reason": outcome.ranking.reason if outcome.ranking else "",
+                "chose_by_default": (outcome.ranking.chose_by_default
+                                     if outcome.ranking else True),
+            },
+            "review_note": outcome.review_note,
+            **_draft_to_dict(outcome.draft),
+        }
+
+    @router.get("/runs/{run_id}")
+    async def get_run(request: Request, run_id: str):
+        """
+        One run, with every prompt and every answer.
+
+        This is the trace the desk holds and the Operations modal does not
+        (ws-03 D44). A prompt carries the customer's own words, so it is served
+        to an admin and never rendered in a document (invariant 3.3).
+        """
+        require_admin(request)
+        from services.itinerary.run_record import load as load_run
+        from services.itinerary.run_record import run_to_dict
+
+        run = load_run(run_id)
+        if run is None:
+            raise HTTPException(404, "no such run")
+        return run_to_dict(run)
+
+    @router.get("/layers")
+    async def list_layers(request: Request):
+        """
+        Whether each itinerary layer may run, and where it would send.
+
+        Post: one row per layer, naming its switch and the endpoint it would
+              reach. An unconfigured layer states the refusal rather than a
+              blank, because a blank reads as "it works".
+        """
+        require_admin(request)
+        from services.itinerary.layer_access import (
+            MASTER_SWITCH,
+            access_report,
+            master_enabled,
+        )
+
+        return {"master_switch": MASTER_SWITCH, "master_enabled": master_enabled(),
+                "layers": access_report()}
+
+    @router.put("/conversations/{file_id}")
+    async def edit_conversation_text(request: Request, file_id: str,
+                                     body: ConversationEdit):
+        """
+        Record a human's own reading of one screenshot (ws-03 D46, item 17.5).
+
+        Pre:  `file_id` is the Drive id of an image this desk has read.
+        Post: the edit is stored and every later run uses it. The model's own
+              text is kept beside it and never overwritten, because the pair is
+              the evidence for how well the model reads.
+        """
+        require_admin(request)
+        from services.itinerary.conversation_reader import (
+            ConversationError,
+            set_human_text,
+        )
+
+        try:
+            extracted = set_human_text(file_id, body.text)
+        except ConversationError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"file_id": extracted.file_id, "text": extracted.text,
+                "source": extracted.source, "at": extracted.at}
 
     @router.post("/drafts/{draft_id}/generate")
     async def generate(request: Request, draft_id: str, body: GenerateRequest):

@@ -61,6 +61,61 @@ async def _resolve_record_from_key(key: str) -> tuple[str, str, dict]:
     return source, source_id, record
 
 
+def _open_draft_for(key: str, record: dict, source: str, norm_req):
+    """
+    The draft for one worklist request, opened if it has none.
+
+    Pre:  `record` is the raw submitted record, not the worklist's summary.
+    Post: a draft carrying a `rules` sequence. Re-opening the same request
+          returns the existing thread with its history intact.
+
+    Blame: the desk's own route does this too, and both call `open_draft`,
+    which is keyed on the request. Two callers therefore reach one draft rather
+    than opening two beside each other.
+    """
+    from services.itinerary.drafts import ORIGIN_SHEET, SOURCE_RULES, add_sequence, open_draft
+    from services.itinerary.propose_sequence import active_day_templates, propose_by_rules
+
+    draft = open_draft(record, origin=ORIGIN_SHEET, request_id=key,
+                       parse_warnings=norm_req.parse_warnings)
+    if not any(s.source == SOURCE_RULES for s in draft.sequences):
+        draft = add_sequence(draft.draft_id,
+                             propose_by_rules(norm_req, active_day_templates()))
+    return draft
+
+
+def _sequence_of(draft) -> Optional[list]:
+    """
+    Post: the day codes the document should hold, or None.
+
+    The model's sequence wins where there is one, because it is the answer the
+    three layers produced and a reviewer chose to keep. None means the matcher
+    and the binder choose, as they always did.
+    """
+    from services.itinerary.drafts import SOURCE_MODEL, SOURCE_RULES
+
+    newest = draft.latest
+    for source in (SOURCE_MODEL, SOURCE_RULES):
+        codes = list(getattr(newest.get(source), "day_codes", []) or [])
+        if codes:
+            return codes
+    return None
+
+
+def _record_document_on_draft(draft, doc_url: str) -> None:
+    """Post: the draft names the document that was built from it."""
+    from services.itinerary.drafts import SOURCE_MODEL, SOURCE_RULES, load, save
+
+    stored = load(draft.draft_id)
+    if stored is None:
+        return
+    newest = stored.latest
+    stored.generated_from = (SOURCE_MODEL if newest.get(SOURCE_MODEL)
+                             else SOURCE_RULES)
+    stored.doc_url = doc_url
+    save(stored)
+
+
 @router.get("/preview")
 async def get_itinerary_preview(request: Request, key: str):
     require_admin(request)
@@ -97,9 +152,25 @@ async def generate_itinerary_endpoint(request: Request, body: GenerateRequest):
     source, _, record = await _resolve_record_from_key(body.key)
     norm_req = normalize_from_dict(body.key, record, source=source)
 
-    gen_res = execute_generation(norm_req)
+    # Every document has a draft behind it (ws-03 D45, spec item 23.5).
+    #
+    # This route used to render a Google Doc from the matcher's own first
+    # choice, with no draft, no check and no run record. That made a second
+    # door into the desk: a document built here appeared in no count and in no
+    # log, and the desk's own figures were wrong by however many came through.
+    #
+    # The draft is opened before the build, and the document is built from the
+    # sequence the draft holds. `execute_generation` documents the difference:
+    # a caller that holds a chosen sequence and does not pass it gets an
+    # itinerary built from a different one, and nothing on the result says so.
+    draft = _open_draft_for(body.key, record, source, norm_req)
+    chosen = _sequence_of(draft)
+
+    gen_res = execute_generation(norm_req, day_codes=chosen)
     if gen_res.status != "success":
         raise HTTPException(500, f"Generation failed: {gen_res.error_message}")
+
+    _record_document_on_draft(draft, gen_res.doc_url or "")
 
     email_draft = compose_email_reply(norm_req, gen_res.preview, doc_url=gen_res.doc_url, quote=gen_res.quote)
     whatsapp_draft = compose_whatsapp_reply(norm_req, gen_res.preview, doc_url=gen_res.doc_url, quote=gen_res.quote)

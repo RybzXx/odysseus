@@ -427,6 +427,112 @@ async function initDefaultChat() {
   });
 }
 
+/* ── Itinerary layers ──
+   Four layers read a customer's conversation and choose an itinerary. Each one
+   names its own endpoint and never reaches another role's model: `resolve_layer`
+   refuses instead of walking the utility-then-default chain, because
+   `default_model` relays off the machine (ws-03 D38, invariant 3.2). */
+async function initItineraryLayers() {
+  var holder = el('set-itineraryLayers');
+  var master = el('set-itineraryMasterToggle');
+  var msg = el('set-itineraryLayersMsg');
+  if (!holder || !master) return;
+  var _endpoints = [];
+
+  function say(text, bad) {
+    msg.textContent = text;
+    msg.style.color = bad ? 'var(--red)' : 'var(--fg)';
+    if (text) setTimeout(function() { msg.textContent = ''; }, 1800);
+  }
+
+  function rowFor(layer, settings) {
+    var wrap = document.createElement('div');
+    wrap.className = 'settings-col';
+    wrap.style.cssText = 'border-top:1px solid color-mix(in srgb, var(--fg) 12%, transparent);padding-top:8px;margin-top:8px;';
+    wrap.innerHTML =
+      '<div style="display:flex;align-items:center;gap:6px;">'
+      + '<strong style="font-size:12px;">' + layer.layer + '</strong>'
+      + '<span style="font-size:11px;opacity:.6;flex:1;">' + layer.purpose + '</span>'
+      + '<label class="admin-switch" title="Run this layer"><input type="checkbox" class="lay-on"><span class="admin-slider"></span></label>'
+      + '</div>'
+      + '<div class="settings-row"><label class="settings-label">Endpoint</label>'
+      + '<select class="settings-select lay-ep"><option value="">—</option></select></div>'
+      + '<div class="settings-row"><label class="settings-label">Model</label>'
+      + '<select class="settings-select lay-model"><option value="">—</option></select></div>'
+      + '<div class="lay-state" style="font-size:11px;opacity:.6;"></div>';
+
+    var on = wrap.querySelector('.lay-on');
+    var epSel = wrap.querySelector('.lay-ep');
+    var modelSel = wrap.querySelector('.lay-model');
+    var state = wrap.querySelector('.lay-state');
+
+    on.checked = !!settings[layer.switch];
+    _fillEndpointSelect(epSel, _endpoints, settings[layer.layer + '_endpoint_id'] || '', true);
+
+    function refreshModels(selected) {
+      var ep = _endpoints.find(function(e) { return e.id === epSel.value; });
+      _fillModelSelect(modelSel, ep ? ep.models : [], selected, true);
+    }
+    refreshModels(settings[layer.layer + '_model'] || '');
+    state.textContent = layer.may_run ? ('sends to ' + layer.where) : layer.refusal;
+
+    async function save() {
+      var patch = {};
+      patch[layer.switch] = on.checked;
+      patch[layer.layer + '_endpoint_id'] = epSel.value || '';
+      patch[layer.layer + '_model'] = modelSel.value || '';
+      try {
+        await _postSettings(patch);
+        say('Saved', false);
+        await refresh();
+      } catch (e) { say('Failed to save', true); }
+    }
+
+    on.addEventListener('change', save);
+    epSel.addEventListener('change', function() { refreshModels(''); save(); });
+    modelSel.addEventListener('change', save);
+    return wrap;
+  }
+
+  async function refresh() {
+    try {
+      var [layerRes, settingsRes] = await Promise.all([
+        fetch('/api/itinerary/layers', { credentials: 'same-origin' }),
+        fetch('/api/auth/settings', { credentials: 'same-origin' }),
+      ]);
+      if (!layerRes.ok) throw new Error('the layer report could not be read');
+      var report = await layerRes.json();
+      var settings = await settingsRes.json();
+      master.checked = !!report.master_enabled;
+      holder.innerHTML = '';
+      report.layers.forEach(function(layer) {
+        holder.appendChild(rowFor(layer, settings));
+      });
+    } catch (e) {
+      holder.innerHTML = '<div style="font-size:11px;opacity:.6;">'
+        + 'The itinerary layers could not be read.</div>';
+    }
+  }
+
+  try {
+    _endpoints = await _fetchModelEndpoints();
+  } catch (e) { console.warn('Failed to load endpoints for the itinerary layers', e); }
+
+  master.addEventListener('change', async function() {
+    try {
+      await _postSettings({ itinerary_model_proposals_enabled: master.checked });
+      say('Saved', false);
+      await refresh();
+    } catch (e) { say('Failed to save', true); }
+  });
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    refresh();
+  });
+  await refresh();
+}
+
 /* ── Utility Model ── */
 async function initUtilityModel() {
   var epSel = el('set-utilityEpSelect');
@@ -2178,6 +2284,7 @@ function initAll() {
   initDefaultChat();
   initTeacherModel();
   initUtilityModel();
+  initItineraryLayers();
   initImageSettings();
   initVisionSettings();
   initTtsSettings();
