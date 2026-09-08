@@ -878,6 +878,15 @@ class TaskScheduler:
                 db.add(run)
                 db.commit()
 
+            # Tell Bil Weekend's AI Hub this run has started, and open the
+            # marker the ops MCP server tallies into.
+            #
+            # Reported at the start as well as the end so a run that hangs or
+            # dies is visible as one that began and never finished. A hub that
+            # only ever heard about completed runs could not tell "the agent is
+            # working" from "the agent is dead".
+            await self._begin_ops_hub_run(task, run_id)
+
             task_type = task.task_type or "llm"
 
             from src.builtin_actions import TaskDeferred, TaskNoop
@@ -1053,6 +1062,11 @@ class TaskScheduler:
                 )
             except Exception:
                 pass
+
+            # Mirror to Bil Weekend's AI Hub, beside the system-log mirror
+            # above and for the same reason: the run's own record is written,
+            # and a copy belongs where the people who act on it work.
+            await self._finish_ops_hub_run(task, run)
 
             output = task.output_target or "session"
             # Per-task notification gate. Default True (notifications_enabled
@@ -1254,6 +1268,109 @@ class TaskScheduler:
             result_text[:1000],
             category=(task.name or "Task"),
         )
+
+    async def _begin_ops_hub_run(self, task, run_id: str) -> None:
+        """Open a run in Bil Weekend's AI Hub, for ops tasks only.
+
+        Pre: the TaskRun row exists and has flipped to 'running'.
+        Post: for an ops task, the hub holds a 'running' row and the local run
+        marker is open so the ops MCP server can tally into it. For any other
+        task, nothing happens at all.
+        Inv: never raises. Mirroring is a copy; a run must not fail to execute
+        because a copy could not be delivered.
+        """
+        try:
+            from src import ops_hub
+
+            lane = ops_hub.lane_for_task(task.name)
+            if lane is None:
+                return
+
+            ops_hub.begin_run(run_id, task.name, lane)
+            result = await ops_hub.post_run(
+                runRef=run_id,
+                taskName=task.name,
+                lane=lane,
+                status="running",
+                startedAt=ops_hub.as_instant(_utcnow()),
+                prompt=task.prompt,
+                model=task.model,
+                endpoint=task.endpoint_url,
+            )
+            if not result.get("ok") and not result.get("unconfigured"):
+                logger.warning(
+                    "Could not open run %s in the AI Hub: %s",
+                    run_id, result.get("error"),
+                )
+        except Exception:
+            logger.debug("AI Hub start mirror failed", exc_info=True)
+
+    async def _finish_ops_hub_run(self, task, run) -> None:
+        """Close the run in Bil Weekend's AI Hub and clear the local marker.
+
+        Pre: `run` carries its final status, result and timings.
+        Post: for an ops task, the hub's row is closed with the report the run
+        wrote, plus what it actually read and suggested. The marker is cleared
+        either way, so a failed mirror cannot leave the next run tallying into
+        this one's.
+        Inv: never raises, for the same reason as _begin_ops_hub_run.
+        """
+        marker = None
+        try:
+            from src import ops_hub
+
+            lane = ops_hub.lane_for_task(task.name)
+            if lane is None:
+                return
+
+            # Cleared before the post, not after: the marker's job is done the
+            # moment its tally has been read, and leaving it open across a slow
+            # or failing POST is what would let the next run inherit it.
+            marker = ops_hub.end_run() or {}
+
+            finished = run.finished_at or _utcnow()
+            duration_ms = None
+            if run.started_at and finished:
+                duration_ms = max(
+                    0, int((finished - run.started_at).total_seconds() * 1000)
+                )
+
+            result = await ops_hub.post_run(
+                runRef=run.id,
+                taskName=task.name,
+                lane=lane,
+                status=ops_hub.hub_status(run.status),
+                startedAt=ops_hub.as_instant(run.started_at),
+                finishedAt=ops_hub.as_instant(finished),
+                durationMs=duration_ms,
+                tokensUsed=run.tokens_used,
+                model=run.model or task.model,
+                endpoint=task.endpoint_url,
+                response=run.result,
+                error=run.error,
+                # Observed, not assumed. The ops MCP server sets these as it
+                # serves each call, so they say what the run did rather than
+                # what its prompt told it to do — which is the distinction that
+                # matters exactly when a run does something unexpected.
+                readCustomerText=marker.get("read_customer_text"),
+                proposalsPosted=marker.get("proposals_posted"),
+            )
+            if not result.get("ok") and not result.get("unconfigured"):
+                logger.warning(
+                    "Could not close run %s in the AI Hub: %s",
+                    run.id, result.get("error"),
+                )
+        except Exception:
+            logger.debug("AI Hub finish mirror failed", exc_info=True)
+            if marker is None:
+                # The marker was never read, so it is still open. Clear it, or
+                # the next ops run inherits this one's tally.
+                try:
+                    from src import ops_hub as _hub
+
+                    _hub.end_run()
+                except Exception:
+                    pass
 
     async def _execute_action(self, task, run_id: str | None = None) -> tuple:
         """Execute a built-in action (no LLM needed)."""

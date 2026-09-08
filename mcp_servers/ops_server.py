@@ -4,16 +4,27 @@ ops_server.py
 MCP server exposing the Bil Weekend operations worklist and the agent's
 staging channel.
 
-Talks to Supabase directly (the actual data store — bookings, contacts,
-curated_requests, queue_requests, operations_followup, tours) rather than to
-a Bil Weekend website API. That website API (/api/agent/ops/attention,
-/api/agent/ops/proposals) was never built, so this reads the same tables
-Bil Weekend's own admin panel reads, using the service-role key, and does
-the source-table + operations_followup merge in Python instead of in Bil
-Weekend's backend. The merge logic (summary composition, phone formatting,
-sort order, risk verdict) was read directly out of Bil Weekend's actual
-admin source (OperationsWorklist.tsx / operationsWorklist.ts / antiAbuse.ts)
-during a research pass, not guessed.
+Reads and writes go different ways round, and the split is deliberate.
+
+READS talk to Supabase directly (bookings, contacts, curated_requests,
+queue_requests, operations_followup, tours) rather than to Bil Weekend's
+website API, doing the source-table + operations_followup merge in Python.
+The merge logic (summary composition, phone formatting, sort order, risk
+verdict) was read directly out of Bil Weekend's actual admin source
+(OperationsWorklist.tsx / operationsWorklist.ts / antiAbuse.ts) during a
+research pass, not guessed.
+
+WRITES go to Bil Weekend's agent API (src/ops_hub.py), not to Supabase, and
+they must. A suggestion accepted through that API takes the same path an
+admin's own edit takes — the roster check, the version check, and the push
+back to the Google Sheet. Writing the table directly from here skips all
+three, and for a queue row it leaves Supabase and the sheet disagreeing with
+nobody told. Reads have no such requirement, which is why they stay direct.
+
+Everything the agent produces is mirrored to that API so it appears in Bil
+Weekend's AI Hub (/admin/operations/ai): the run, its report, its notes, its
+suggestions and its tool calls. The local tables below are the fallback for
+when the API cannot be reached, never the destination.
 
 Five tools. The split between the first two is a security boundary, not a
 convenience:
@@ -25,16 +36,18 @@ convenience:
                        Classified EXTERNAL_UNTRUSTED, so reading it arms the
                        external-context gate and the run may only report
                        afterwards.
-  stage_change          Writes a patch (status/operator/next_action_date/
-                       moderation) to Odysseus's own local staging table —
-                       never touches Supabase. A human reviews and pushes
-                       staged changes from the Operations panel's Push view.
-                       Replaces the old propose_change, which targeted a
-                       Bil Weekend proposals endpoint that was never built.
-  add_note             leaves a note against one worklist key, visible to the
-                       human operator in Odysseus's Operations panel. Written
-                       to Odysseus's own store, not Supabase's — works even
-                       without SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY set.
+  stage_change         suggests a patch (status/operator/next_action_date/
+                       moderation). Posted to Bil Weekend as a proposal, which
+                       an admin accepts or discards in the AI Hub. Falls back
+                       to Odysseus's local staging table only when the API
+                       refuses it or cannot be reached — one suggestion is
+                       never in both queues at once, because two review queues
+                       for one suggestion is a way to apply it twice.
+  add_note             leaves a note against one worklist key. Written to
+                       Odysseus's own store AND mirrored to Bil Weekend, so it
+                       shows in both panels. The local write is the one that
+                       must succeed; it works even without SUPABASE_URL/
+                       SUPABASE_SERVICE_ROLE_KEY set.
 
 The classification is per tool rather than per response because
 McpManager._do_call builds the result dict and marks untrusted_content only on
@@ -46,7 +59,13 @@ Environment:
   SUPABASE_SERVICE_ROLE_KEY   full read/write access — same names Bil
                                Weekend's own web app uses, so its .env can be
                                copied directly rather than inventing a
-                               separate credential.
+                               separate credential. Reads only, now that
+                               writes go through the agent API.
+  OPS_API_BASE_URL            e.g. https://dev.bilweekend.iq
+  OPS_AGENT_TOKEN             bearer token for the agent API. Without both,
+                               every mirror is skipped and stage_change falls
+                               back to local staging — the tools still work,
+                               nothing reaches the AI Hub.
 
 Neither is ever accepted as a tool argument: the model asks for an action, it
 does not supply the authority for it.
@@ -56,6 +75,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -68,6 +88,7 @@ from mcp.types import Tool, TextContent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.database import SessionLocal, OperationsNote, OperationsStagedChange
+from src import ops_hub
 
 server = Server("ops")
 
@@ -507,6 +528,24 @@ def _write_note(key: str, author: str, text: str) -> dict:
         db.close()
 
 
+async def _mirror_note(key: str, author: str, text: str) -> dict:
+    """Copy one note to Bil Weekend's AI Hub.
+
+    Post: a result dict describing what happened, never an exception. The local
+    note is already written by the time this runs, and losing the copy must not
+    lose the original.
+    """
+    result = await ops_hub.post_notes([{
+        "key": key,
+        "author": author,
+        "body": text,
+        "runRef": (ops_hub.current_run() or {}).get("run_ref"),
+    }])
+    if result.get("ok"):
+        return {"mirrored": True}
+    return {"mirrored": False, "reason": result.get("error")}
+
+
 _PATCH_FIELDS = {"status", "operator", "next_action_date", "moderation"}
 
 
@@ -554,6 +593,70 @@ def _stage_change(
         return _staged_to_dict(row)
     finally:
         db.close()
+
+
+async def _propose_or_stage(
+    key: str,
+    patch: dict,
+    expected_updated_at: str | None,
+    author: str,
+    rationale: str | None,
+) -> dict:
+    """Send one suggestion to Bil Weekend, or stage it locally if that fails.
+
+    Pre: `patch` has passed _validate_patch.
+    Post: exactly one of — the suggestion is a pending proposal in Bil Weekend's
+    AI Hub, or it is a row in Odysseus's local staging table. Never both.
+    Inv: "never both" is the whole contract. A suggestion sitting in two review
+    queues can be accepted in one and pushed from the other, applying the same
+    change twice and defeating the version check that exists to stop exactly
+    that.
+
+    The fallback is not a failure mode to be tidied away. It is what keeps a
+    run's work when the phone has no signal, when the token is unset, and when
+    the suggestion names a queue row — which Bil Weekend refuses on purpose,
+    because the Google Sheet moves those rows without its admin panel acting.
+    """
+    remote = await ops_hub.post_proposals(author, [{
+        "key": key,
+        "patch": patch,
+        "expectedUpdatedAt": expected_updated_at,
+        "rationale": rationale,
+    }])
+
+    if remote.get("ok"):
+        body = remote.get("body") or {}
+        accepted = body.get("accepted") or []
+        if accepted:
+            ops_hub.note_tool_call("stage_change", proposals_posted=1)
+            return {
+                "destination": "bilweekend",
+                "state": "pending",
+                "id": accepted[0].get("id"),
+                "key": key,
+                "patch": patch,
+                "rationale": rationale,
+                "note": "An admin accepts or discards this in /admin/operations/ai.",
+            }
+
+        # A 200 that accepted nothing is a refusal with a reason attached, and
+        # the reason is worth carrying into the fallback: "already has a pending
+        # proposal" and "queue rows are not proposable" call for different
+        # responses from whoever reads the staged row later.
+        refusals = [entry.get("reason") for entry in (body.get("rejected") or [])]
+        refusals += [entry.get("reason") for entry in (body.get("skipped") or [])]
+        reason = "; ".join(filter(None, refusals)) or "the API accepted nothing"
+    else:
+        reason = remote.get("error") or "unknown error"
+
+    staged = _stage_change(key, patch, expected_updated_at, f"agent:{author}", rationale)
+    staged["destination"] = "odysseus-local"
+    staged["fallback_reason"] = reason
+    staged["note"] = (
+        "Bil Weekend did not take this suggestion, so it was staged in Odysseus "
+        "instead. A human pushes or discards it in the Operations panel's Push view."
+    )
+    return staged
 
 
 async def _current_updated_at(source: str, source_id: str) -> str | None:
@@ -741,11 +844,12 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="stage_change",
             description=(
-                "Suggest a follow-up change for one worklist key. Writes to "
-                "Odysseus's own local staging table, not to Supabase — a human "
-                "reviews staged changes in the Operations panel's Push view and "
-                "decides what actually reaches the live worklist. Nothing this "
-                "tool does is visible outside Odysseus until then."
+                "Suggest a follow-up change for one worklist key. Posts it to "
+                "Bil Weekend as a proposal, where an admin accepts or discards "
+                "it in the AI Hub; nothing you suggest changes a record until "
+                "they do. Queue rows are not accepted — read them, skip them. "
+                "If Bil Weekend cannot be reached the suggestion is staged "
+                "locally in Odysseus instead, and the reply says which happened."
             ),
             inputSchema={
                 "type": "object",
@@ -779,10 +883,13 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="add_note",
             description=(
-                "Leave a note against one worklist key, visible to the human "
-                "operator in Odysseus's Operations panel. Does not change the "
-                "worklist itself. Works even without SUPABASE_URL/"
-                "SUPABASE_SERVICE_ROLE_KEY configured."
+                "Leave a note against one worklist key — an observation that "
+                "asks for nothing and changes nothing. Visible to the human "
+                "operator in Odysseus's Operations panel and, when Bil Weekend "
+                "is reachable, in its AI Hub. Use it for what you concluded "
+                "about a request you decided to leave alone; that reasoning is "
+                "otherwise lost when the run ends. Accepted on every source, "
+                "queue rows included."
             ),
             inputSchema={
                 "type": "object",
@@ -831,6 +938,62 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    """Serve one tool call, and tell Bil Weekend it happened.
+
+    The dispatch itself is _dispatch; this wrapper exists only to time it and
+    mirror the outcome as an activity event. It is a wrapper rather than a line
+    in each branch because the events that matter most are the ones a branch
+    never reaches — a call that raised is exactly the call an admin is looking
+    for when a run produced nothing.
+
+    Inv: mirroring never changes what the tool returns. A failed mirror is
+    logged into the void and the tool's own result stands; the alternative is a
+    working suggestion lost because a telemetry POST timed out.
+    """
+    started = time.monotonic()
+    try:
+        payload = await _dispatch(name, arguments)
+    except Exception as exc:
+        await _mirror_activity(
+            name, arguments, "error", started, error=str(exc)[:1000]
+        )
+        raise
+    await _mirror_activity(name, arguments, "completed", started)
+    return payload
+
+
+async def _mirror_activity(
+    name: str,
+    arguments: dict,
+    status: str,
+    started: float,
+    error: str | None = None,
+) -> None:
+    """Post one activity event. Swallows every failure — see call_tool."""
+    try:
+        # note_tool_call both updates the current run's tally and hands back the
+        # run reference, so the event is attributed rather than orphaned.
+        run_ref = ops_hub.note_tool_call(name)
+        key = arguments.get("key") if isinstance(arguments, dict) else None
+        target_source, target_id = (None, None)
+        if isinstance(key, str) and ":" in key:
+            target_source, target_id = key.split(":", 1)
+
+        await ops_hub.post_activity([{
+            "runRef": run_ref,
+            "module": "ops",
+            "action": name,
+            "status": status,
+            "durationMs": int((time.monotonic() - started) * 1000),
+            "targetSource": target_source,
+            "targetId": target_id,
+            "error": error,
+        }])
+    except Exception:
+        pass
+
+
+async def _dispatch(name: str, arguments: dict) -> list[TextContent]:
     if name == "add_note":
         key = arguments.get("key", "")
         author = arguments.get("author", "") or "agent"
@@ -838,6 +1001,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if not key or not text:
             raise OpsApiError("add_note requires both 'key' and 'text'.")
         result = _write_note(key, author, text)
+        # Written locally first, then copied. That order is what makes the note
+        # survive an unreachable API: the store that must succeed is the one
+        # this process owns.
+        result.update(await _mirror_note(key, author, text))
         return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
     if name == "stage_change":
@@ -848,7 +1015,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         expected_updated_at = arguments.get("expected_updated_at")
         if not key:
             raise OpsApiError("stage_change requires 'key'.")
-        result = _stage_change(key, patch, expected_updated_at, f"agent:{author}", rationale)
+        reason = _validate_patch(patch)
+        if reason:
+            raise OpsApiError(f"Invalid patch: {reason}")
+        result = await _propose_or_stage(key, patch, expected_updated_at, author, rationale)
         return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
     if name == "itinerary_preview":
