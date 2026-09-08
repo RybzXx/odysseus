@@ -240,6 +240,18 @@ function _injectStyles() {
     #operations-modal .ops-reply-box { margin-top: 8px; border-top: 1px solid var(--border, #333); padding-top: 8px; }
     #operations-modal .ops-reply-box textarea { width: 100%; box-sizing: border-box; background: var(--bg-elev, #242424); color: var(--fg, #eee); border: 1px solid var(--border, #333); border-radius: 4px; font-family: monospace; font-size: 11px; padding: 6px; resize: vertical; min-height: 80px; }
     #operations-modal .ops-reply-actions { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+    /* The itinerary's two halves: decide, then send. */
+    #operations-modal .ops-itin-tabs { display: flex; gap: 4px; margin: 6px 0 0; border-bottom: 1px solid var(--border, #333); }
+    #operations-modal .ops-itin-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--fg-muted, #888); font: inherit; font-size: 12px; font-weight: 600; padding: 6px 10px; cursor: pointer; }
+    #operations-modal .ops-itin-tab:hover { color: var(--fg, #eee); }
+    #operations-modal .ops-itin-tab.active { color: var(--fg, #eee); border-bottom-color: var(--accent, #e8a33d); }
+    #operations-modal .ops-itin-panel { padding-top: 8px; }
+    #operations-modal .ops-itin-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    /* Who did the work, shared with the itinerary desk through deskShared.css. */
+    #operations-modal .ops-by { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9px; font-weight: 500; letter-spacing: .07em; text-transform: uppercase; padding: 1px 5px; border-radius: 3px; border: 1px solid currentColor; margin-right: 5px; }
+    #operations-modal .ops-by.model { color: var(--by-model, #b98fd8); }
+    #operations-modal .ops-by.rules { color: var(--by-rules, #6fbcd6); }
+    #operations-modal .ops-by.human { color: var(--by-human, #d9a35c); }
   `;
   document.head.appendChild(style);
 }
@@ -463,7 +475,7 @@ function _matchingExcept(pool, except) {
 
 function _notesHtml(key) {
   return `<div class="ops-card-notes" data-notes-for="${_esc(key)}"></div>` +
-    `<button type="button" class="ops-card-add-note" data-note-key="${_esc(key)}" style="margin-top:4px;">+ agent note</button>`;
+    `<button type="button" class="ops-card-add-note" data-note-key="${_esc(key)}" style="margin-top:4px;"><span class="ops-by human">you</span> Add a note</button>`;
 }
 
 function _wireNoteButtons(container) {
@@ -519,7 +531,7 @@ function _renderNotesFor(key, container) {
 }
 
 // ---------------------------------------------------------------------------
-// "+ agent queue" — appends a request to the Agent queue section at the top
+// "+ queue for Claude" — appends a request to the Agent queue section at the top
 // of the Table view (Table editor only; the Board's cards keep just notes).
 // Same inline-textarea interaction as _openNoteEditor, but the note here is
 // optional (appending with no comment is the common case) and it writes to
@@ -542,7 +554,7 @@ function _openAgentQueueEditor(btn, row) {
   editor.innerHTML = `
     <textarea rows="2" placeholder="Note for your agent (optional)…"></textarea>
     <div class="ops-note-editor-actions">
-      <button type="button" class="ops-note-save">Add to agent queue</button>
+      <button type="button" class="ops-note-save">Queue for Claude</button>
       <button type="button" class="ops-chip">Cancel</button>
     </div>`;
   editor.addEventListener('click', (e) => e.stopPropagation());
@@ -678,25 +690,50 @@ function _renderEditor(row, container) {
       ${MODERATIONS.map((m) => `<button type="button" class="ops-mod-pill${draft.moderation === m ? ' active' : ''}" data-mod="${m}">${_esc(m)}</button>`).join('')}
     </div>
     <div class="ops-editor-actions">
-      <button type="button" class="ops-editor-save ops-chip">Stage change</button>
+      <button type="button" class="ops-editor-save ops-chip">Queue this change</button>
       <button type="button" class="ops-chip ops-editor-cancel">Cancel</button>
       <span class="ops-editor-hint"></span>
     </div>
     ${(row.source === 'queue' || row.source === 'curated') ? `<div class="ops-full-detail"><div class="ops-field-label">Full record (live from Supabase)</div><div class="ops-loading" style="padding:6px 0;">Loading…</div></div>` : ''}
     <div class="ops-itinerary-section" data-itinerary-key="${_esc(row.key)}">
-      <div class="ops-field-label" style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
-        <span>⚡ Itinerary & Automated Replies</span>
-        <div style="display:flex; gap:6px;">
-          <button type="button" class="ops-chip ops-itinerary-preview-btn">Preview Itinerary</button>
-          <button type="button" class="ops-chip ops-offer-create-btn">1 · Create offer</button>
-          <button type="button" class="ops-chip ops-itinerary-gen-btn" style="border-color:var(--accent, #e8a33d); color:var(--fg, #eee);">2 · Approve the build</button>
+      <!-- Two tabs, not five buttons. The work has two halves: decide what to
+           offer, then send it. Every control that belonged to a half now lives
+           inside that half, so the order is the tab order and no label needs a
+           number to say when to press it. -->
+      <div class="ops-field-label" style="margin-top:10px;">Itinerary</div>
+      <div class="ops-itin-tabs" role="tablist">
+        <button type="button" class="ops-itin-tab active" role="tab"
+                aria-selected="true" data-itab="decide">Decide what to offer</button>
+        <button type="button" class="ops-itin-tab" role="tab"
+                aria-selected="false" data-itab="send">Send it</button>
+      </div>
+
+      <div class="ops-itin-panel" data-ipanel="decide">
+        <div class="ops-itin-actions">
+          <button type="button" class="ops-chip ops-offer-create-btn">
+            <span class="ops-by model">model</span> Read the request and propose</button>
+          <button type="button" class="ops-chip ops-itinerary-preview-btn">
+            <span class="ops-by rules">rules</span> Match a route only</button>
+        </div>
+        <div class="ops-itinerary-slot" style="margin-top:6px;"></div>
+      </div>
+
+      <div class="ops-itin-panel" data-ipanel="send" hidden>
+        <div class="ops-itin-actions">
+          <button type="button" class="ops-chip ops-itinerary-gen-btn"
+                  style="border-color:var(--accent, #e8a33d); color:var(--fg, #eee);"
+                  title="Creates a real document in Drive. This is the first press that leaves this machine.">
+            Build the Google Doc</button>
+        </div>
+        <div class="ops-itin-send-slot" style="margin-top:6px;">
+          <div style="font-size:11px;opacity:.65;">Build the document first. The
+            reply drafts and the status change appear here.</div>
         </div>
       </div>
-      <div class="ops-itinerary-slot" style="margin-top:6px;"></div>
     </div>
     <div class="ops-card-notes" data-notes-for="${_esc(row.key)}"></div>
-    <button type="button" class="ops-card-add-note" data-note-key="${_esc(row.key)}">+ agent note</button>
-    <button type="button" class="ops-card-add-agent-queue">+ agent queue</button>
+    <button type="button" class="ops-card-add-note" data-note-key="${_esc(row.key)}"><span class="ops-by human">you</span> Add a note</button>
+    <button type="button" class="ops-card-add-agent-queue">Queue for Claude</button>
   `;
   wrap.addEventListener('click', (e) => e.stopPropagation());
 
@@ -786,9 +823,9 @@ function _renderItineraryBox(slot, data, isGenerated = false, rowKey = '') {
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
           <span class="ops-field-label" style="margin:0;">Drafted Customer Email (${_esc(emailDraft.subject || 'Proposal')})</span>
           <div style="display:flex; gap:4px;">
-            <button type="button" class="ops-chip ops-copy-email-btn">Copy Email</button>
-            <button type="button" class="ops-chip ops-copy-wa-btn">Copy WhatsApp</button>
-            ${isGenerated ? `<button type="button" class="ops-chip ops-stage-replied-btn" style="border-color:var(--accent, #e8a33d); color:var(--fg, #eee);">Stage as Replied</button>` : ''}
+            <button type="button" class="ops-chip ops-copy-email-btn">Copy the email draft</button>
+            <button type="button" class="ops-chip ops-copy-wa-btn">Copy the WhatsApp draft</button>
+            ${isGenerated ? `<button type="button" class="ops-chip ops-stage-replied-btn" style="border-color:var(--accent, #e8a33d); color:var(--fg, #eee);" title="Queues the status change. Send the message yourself — this button does not."><span class="ops-by human">you</span> Mark as replied, once you have sent it</button>` : ''}
           </div>
         </div>
         <textarea class="ops-email-draft-textarea" rows="4">${_esc(emailDraft.body_text || '')}</textarea>
@@ -907,6 +944,22 @@ function _wireItinerarySection(wrap, row) {
   const section = wrap.querySelector('.ops-itinerary-section');
   if (!section) return;
   const slot = section.querySelector('.ops-itinerary-slot');
+  const sendSlot = section.querySelector('.ops-itin-send-slot');
+
+  /* Post: the named half is the visible one, and the other is hidden.
+     Pre:  `name` is "decide" or "send". */
+  function showHalf(name) {
+    section.querySelectorAll('.ops-itin-tab').forEach((tab) => {
+      const on = tab.dataset.itab === name;
+      tab.classList.toggle('active', on);
+      tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    section.querySelectorAll('.ops-itin-panel').forEach((panel) => {
+      panel.hidden = panel.dataset.ipanel !== name;
+    });
+  }
+  section.querySelectorAll('.ops-itin-tab').forEach((tab) =>
+    tab.addEventListener('click', (e) => { e.stopPropagation(); showHalf(tab.dataset.itab); }));
   const previewBtn = section.querySelector('.ops-itinerary-preview-btn');
   const createBtn = section.querySelector('.ops-offer-create-btn');
   const genBtn = section.querySelector('.ops-itinerary-gen-btn');
@@ -940,10 +993,12 @@ function _wireItinerarySection(wrap, row) {
 
   genBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    slot.innerHTML = '<div class="ops-loading" style="padding:6px 0;">Building the Google Doc from the chosen sequence and calculating the quote…</div>';
+    showHalf('send');
+    sendSlot.innerHTML = '<div class="ops-loading" style="padding:6px 0;">Building the Google Doc from the chosen sequence and calculating the quote…</div>';
     try {
       const data = await _postGenerateItinerary(row.key, true);
-      _renderItineraryBox(slot, data, true, row.key);
+      _renderItineraryBox(sendSlot, data, true, row.key);
+      showHalf('send');
       if (!_notesByKey.has(row.key)) _notesByKey.set(row.key, []);
       if (data.doc_url) {
         _notesByKey.get(row.key).unshift({
@@ -956,7 +1011,7 @@ function _wireItinerarySection(wrap, row) {
         _renderNotesFor(row.key, wrap);
       }
     } catch (err) {
-      slot.innerHTML = `<div class="ops-error" style="padding:4px 0;">${_esc(err.message)}</div>`;
+      sendSlot.innerHTML = `<div class="ops-error" style="padding:4px 0;">${_esc(err.message)}</div>`;
     }
   });
 }
@@ -1112,7 +1167,7 @@ function _agentQueueHtml() {
   const open = _agentQueueOpen;
   const body = !open ? '' : items.length
     ? `<table class="ops-agent-queue-table">${items.map(_agentQueueRowHtml).join('')}</table>`
-    : '<div class="ops-card-meta" style="padding:6px 0;">Nothing queued yet — expand a request below and use "+ agent queue".</div>';
+    : '<div class="ops-card-meta" style="padding:6px 0;">Nothing queued yet — expand a request below and press "Queue for Claude".</div>';
   return `
     <div class="ops-agent-queue">
       <button type="button" class="ops-chip ops-agent-queue-toggle">Agent queue (${items.length}) ${open ? '▴' : '▾'}</button>
@@ -1459,7 +1514,7 @@ function _renderPush(body) {
   body.innerHTML = `
     <div class="ops-push-view">
       <div class="ops-push-toolbar">
-        <button type="button" class="ops-chip ops-editor-save" id="ops-push-btn">Push ${items.length} change${items.length === 1 ? '' : 's'} to Supabase</button>
+        <button type="button" class="ops-chip ops-editor-save" id="ops-push-btn" title="Writes to the worklist your whole team reads. This cannot be undone from here.">Send ${items.length} change${items.length === 1 ? '' : 's'} to the live worklist</button>
         <span class="ops-editor-hint" id="ops-push-result"></span>
       </div>
       <div id="ops-push-list"></div>
@@ -1537,7 +1592,7 @@ function _getModal() {
         <div class="ops-view-toggle">
           <button type="button" class="ops-view-btn" data-view="board">Board</button>
           <button type="button" class="ops-view-btn active" data-view="table">Table</button>
-          <button type="button" class="ops-view-btn" data-view="push">Push</button>
+          <button type="button" class="ops-view-btn" data-view="push">Waiting to send</button>
         </div>
         <button type="button" class="ops-refresh-btn" id="ops-refresh" title="Refresh">⟳</button>
         <button class="close-btn" id="ops-close">✖</button>

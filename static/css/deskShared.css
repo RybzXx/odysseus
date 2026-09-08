@@ -37,6 +37,42 @@
  *   .brief-*      both pages, through static/js/briefCard.js
  */
 
+/* ── who did the work ──────────────────────────────────────────────────────
+ * Three actors touch a request: a model, the deterministic rules, and a person.
+ * A reader has to tell them apart at a glance, so colour carries provenance and
+ * nothing else on the desk and in the Operations itinerary tabs.
+ *
+ * Severity is not a fourth colour here. A fault stays red because red reads as
+ * a fault everywhere, and a flag is a dashed outline rather than a hue, so a
+ * warning never competes with an actor.
+ *
+ * These three names are new. Checked 2026-09-08: nothing in `static/` read them
+ * before, so a bare `:root` definition cannot move a colour that already
+ * renders — unlike the seven tokens that did, which stay scoped to the desk
+ * below.
+ *
+ * Dark values sit on bare `:root`, because the app's own ground is dark.
+ */
+:root {
+  --by-model: #b98fd8;   /* a model wrote it */
+  --by-rules: #6fbcd6;   /* the catalogue and the checks produced it */
+  --by-human: #d9a35c;   /* a person typed or pressed it */
+}
+
+:root.light {
+  --by-model: #7a3b8c;
+  --by-rules: #1f6f8b;
+  --by-human: #9a6314;
+}
+
+@media (prefers-color-scheme: light) {
+  html.desk-standalone {
+    --by-model: #7a3b8c;
+    --by-rules: #1f6f8b;
+    --by-human: #9a6314;
+  }
+}
+
 /* ── the desk's tokens ─────────────────────────────────────────────────────
  * The values are the ones `operations.js` falls back to, so the desk and the
  * modal look alike without the desk touching the app's own cascade.
