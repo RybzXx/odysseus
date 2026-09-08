@@ -20,6 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 from core.database import (
     Base,
+    CategorisationContest,
     WorkOrganiser,
     EmailOrganiserOverride,
     OverviewCache,
@@ -29,12 +30,15 @@ from core.database import (
 from routes.organisers.organisers_routes import (
     setup_organisers_routes,
     _sample_calibration_emails,
-    _build_calibration_prompt,
-    _parse_calibration_llm_response,
     _recalculate_taxonomy_coverage,
     _matches_rule,
     OrganiserRules,
     CalibratedCategory,
+)
+from services.organisers.review import (
+    build_review_prompt,
+    extract_json_object,
+    raise_review_contests,
 )
 
 
@@ -72,10 +76,19 @@ def client(db_session):
 
 # ================= ADVERSARIAL ATTACK 1: MALFORMED LLM RESPONSES =================
 
-def test_adversarial_llm_syntax_errors_and_junk():
-    """Ensure parser never raises an unhandled exception when given garbage or hostile text."""
-    sampled = [{"uid": "1", "account_key": "acc1", "subject": "Test", "from_address": "a@b.com"}]
-    existing_org = WorkOrganiser(id="1", owner="admin", name="Ops", slug="ops", rules_json="{}")
+def test_adversarial_llm_syntax_errors_and_junk(db_session):
+    """A hostile or broken reply must open no contest and raise nothing.
+
+    The review pass is now the only place a model reply reaches this module.
+    Its contract is that a failure adds no questions rather than bad ones, so
+    the queue is measured after every payload.
+    """
+    emails = [{"uid": "1", "account_key": "acc1", "subject": "Test", "from_address": "a@b.com"}]
+    org = WorkOrganiser(
+        id="1", owner="admin", name="Ops", slug="ops",
+        rules_json='{"keywords": ["test"], "senders": [], "domains": []}',
+        target_accounts="[]",
+    )
 
     hostile_payloads = [
         "",  # Empty
@@ -83,20 +96,20 @@ def test_adversarial_llm_syntax_errors_and_junk():
         "NOT JSON AT ALL",
         "```json\n{ truncated json ...",  # Incomplete JSON
         "```json\n[]\n```",  # List instead of dict
-        '{"categories": "should be a list", "assignments": 123}',  # Wrong types
-        '{"categories": [{"name": null, "slug": null}], "assignments": [{"uid": null}]}',  # Null fields
-        '{"assignments": [{"category_slug": "non-existent-cat", "extracted_keywords": ["kw"]}]}',  # Ghost category
-        '{"categories": [{"name": "<script>alert(1)</script>", "slug": "xss-cat"}]}',  # XSS in category name
-        '{"categories": [{"name": "DROP TABLE work_organisers;--", "slug": "sqli"}]}',  # SQLi string
+        '{"verdicts": "should be a list"}',  # Wrong type
+        '{"verdicts": [{"category_slug": null, "uid": null}]}',  # Null fields
+        '{"verdicts": [{"category_slug": "ghost-cat", "uid": "1", "belongs": true}]}',  # Unknown category
+        '{"verdicts": [{"category_slug": "<script>alert(1)</script>", "uid": "1"}]}',  # XSS in slug
+        '{"verdicts": [{"category_slug": "DROP TABLE work_organisers;--", "uid": "1"}]}',  # SQLi string
         "{'single_quotes': 'not_valid_json'}",  # Invalid python dict string
     ]
 
     for payload in hostile_payloads:
-        rows, cats = _parse_calibration_llm_response(payload, sampled, [existing_org])
-        assert isinstance(rows, list), f"Failed on: {payload}"
-        assert isinstance(cats, list), f"Failed on: {payload}"
-        # All sampled emails must still be represented
-        assert len(rows) == len(sampled)
+        assert isinstance(extract_json_object(payload), dict), f"Failed on: {payload}"
+        opened = raise_review_contests(db_session, "admin", payload, emails, [org], {})
+        assert opened == 0, f"Opened a contest on: {payload}"
+
+    assert db_session.query(CategorisationContest).count() == 0
 
 
 # ================= ADVERSARIAL ATTACK 2: PATHOLOGICAL EMAIL DATA =================
@@ -115,7 +128,7 @@ def test_adversarial_pathological_email_dictionaries():
     assert len(sampled) == 4
 
     # Prompt building must not crash
-    prompt = _build_calibration_prompt(sampled, [], allow_new=True)
+    prompt = build_review_prompt(sampled, [])
     assert len(prompt) == 2
     assert isinstance(prompt[1]["content"], str)
 

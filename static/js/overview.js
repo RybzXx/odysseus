@@ -51,7 +51,7 @@ let _open = false;
 const FETCH_WINDOW_DAYS = 30;
 
 /** Panels the grid can hold, in default column order. */
-const PANEL_IDS = ['emails', 'operations', 'projects'];
+const PANEL_IDS = ['emails', 'operations', 'projects', 'contested'];
 
 /** Where the live layout is kept. Per device, by design — see _persistLayout. */
 const LAYOUT_STORAGE_KEY = 'odysseus.overview.layout';
@@ -72,10 +72,10 @@ const MIN_PANEL_HEIGHT = 120;
 function _defaultLayout() {
   return {
     mode: '2-col',
-    columns: [['emails', 'operations'], ['projects']],
+    columns: [['emails', 'operations'], ['projects', 'contested']],
     split: 50,
     split3: [33, 33, 34],
-    heights: { emails: 440, operations: 320, projects: 440 },
+    heights: { emails: 440, operations: 320, projects: 440, contested: 320 },
     maximizedPanel: null,
   };
 }
@@ -97,6 +97,14 @@ function _newState() {
     presets: [],
     data: null,
     loading: false,
+    // Contests come from their own endpoint: the scan they trigger is heavier
+    // than the overview payload and should not delay the rest of the briefing.
+    contests: [],
+    contestsLoading: false,
+    reviewRunning: false,
+    // Set when the pass cannot run as configured, so the panel explains the
+    // fault instead of silently doing nothing.
+    reviewNotice: '',
   };
 }
 
@@ -560,6 +568,7 @@ const ICONS = {
   operations: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="9.5" y="4" width="5" height="10" rx="1"/><rect x="16" y="4" width="5" height="13" rx="1"/></svg>`,
   checkCircle: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`,
   alertCircle: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+  scales: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M7 21h10"/><path d="M3 8h18"/><path d="M6.5 8 3 15h7z"/><path d="M17.5 8 14 15h7z"/></svg>`,
   clock: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
   externalLink: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
   refresh: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>`,
@@ -1260,6 +1269,7 @@ export function mount(container, _params = {}) {
 
   container.querySelector('[data-refresh-overview]').addEventListener('click', () => {
     _fetchOverviewData(container, true);
+    _fetchContests(container);
   });
 
   _bindPresetControls(container, state);
@@ -1273,6 +1283,7 @@ export function mount(container, _params = {}) {
   // half survives a deploy. Opening the cockpit is exactly the moment a stale
   // briefing is most misleading, so the first read of a mount forces through.
   _fetchOverviewData(container, true);
+  _fetchContests(container);
 }
 
 /**
@@ -1316,6 +1327,140 @@ function _drill(container, viewId, params, legacyOpen) {
  *       failure an unrendered instance shows the error and a rendered one
  *       keeps the data it had.
  */
+/**
+ * Load the contested categorisations into the panel.
+ *
+ * Pre:  `container` holds a mounted overview instance.
+ * Post: on success the instance holds the current contests and has
+ *       re-rendered; on failure it keeps the list it had and logs. The panel
+ *       is advisory, so a failed load must not blank the whole briefing.
+ */
+async function _fetchContests(container) {
+  const state = _instances.get(container);
+  if (!state) return;
+
+  state.contestsLoading = true;
+  try {
+    const res = await fetch(
+      `/api/organisers/contests?days=${FETCH_WINDOW_DAYS}`,
+      { credentials: 'same-origin' },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const payload = await res.json();
+    // The instance may have been unmounted while the request was in flight.
+    if (_instances.get(container) !== state) return;
+    state.contests = payload.contests || [];
+  } catch (err) {
+    console.error('Failed to load contested emails:', err);
+  } finally {
+    if (_instances.get(container) === state) {
+      state.contestsLoading = false;
+      _render(container);
+    }
+  }
+}
+
+/**
+ * Record a human verdict on one contested categorisation.
+ *
+ * Pre:  `verdict` is 'confirmed' or 'rejected'; the contest is still open.
+ * Post: on success the row is gone from the panel and, for a rejection, the
+ *       email no longer belongs to that organiser anywhere. On failure the row
+ *       stays so the verdict can be retried.
+ */
+async function _resolveContest(container, contestId, verdict) {
+  const state = _instances.get(container);
+  if (!state) return;
+
+  try {
+    const res = await fetch(`/api/organisers/contests/${encodeURIComponent(contestId)}/resolve`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verdict }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (_instances.get(container) !== state) return;
+    state.contests = state.contests.filter(c => c.id !== contestId);
+    // A rejection changes membership, so the email panel's organiser chips are
+    // now stale. Refetching is cheaper to reason about than patching them.
+    _render(container);
+    if (verdict === 'rejected') _fetchOverviewData(container, true);
+  } catch (err) {
+    console.error('Failed to resolve contest:', err);
+  }
+}
+
+/**
+ * Assert one verdict across every contest currently listed.
+ *
+ * Pre:  the panel holds the contests to resolve.
+ * Post: the resolved ones are gone; ids the server no longer knows are dropped
+ *       from the panel too, since nothing remains to decide about them.
+ */
+async function _resolveAllContests(container, verdict) {
+  const state = _instances.get(container);
+  if (!state || !state.contests.length) return;
+
+  const ids = state.contests.map(c => c.id);
+  try {
+    const res = await fetch('/api/organisers/contests/resolve', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, verdict }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const payload = await res.json();
+    if (_instances.get(container) !== state) return;
+    const settled = new Set([...(payload.resolved || []), ...(payload.missing || [])]);
+    state.contests = state.contests.filter(c => !settled.has(c.id));
+    _render(container);
+    if (verdict === 'rejected') _fetchOverviewData(container, true);
+  } catch (err) {
+    console.error('Failed to resolve contests:', err);
+  }
+}
+
+/**
+ * Run the review pass and reload what it disputed.
+ *
+ * Pre:  none. A pass that is off or misconfigured answers 409.
+ * Post: the panel holds the new contests, or a notice saying why none came.
+ *       A configuration fault is shown; a transport failure is logged.
+ */
+async function _runContestReview(container) {
+  const state = _instances.get(container);
+  if (!state || state.reviewRunning) return;
+
+  state.reviewRunning = true;
+  state.reviewNotice = '';
+  _render(container);
+  try {
+    const res = await fetch(`/api/organisers/contests/review?days=${FETCH_WINDOW_DAYS}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (_instances.get(container) !== state) return;
+    if (!res.ok) {
+      state.reviewNotice = payload.detail || `The review pass failed (HTTP ${res.status}).`;
+    } else if (!payload.opened) {
+      state.reviewNotice = payload.reason || 'The reviewer agreed with every rule.';
+    }
+  } catch (err) {
+    console.error('Failed to run the review pass:', err);
+    if (_instances.get(container) === state) {
+      state.reviewNotice = 'The review pass could not be reached.';
+    }
+  } finally {
+    if (_instances.get(container) === state) {
+      state.reviewRunning = false;
+      await _fetchContests(container);
+    }
+  }
+}
+
 async function _fetchOverviewData(container, forceRefresh = false) {
   const state = _instances.get(container);
   if (!state) return;
@@ -1376,6 +1521,7 @@ function _render(container) {
 
   const kpis = state.data.kpis || {};
   const emailsData = state.data.email_digest || { accounts: [], emails: [] };
+  const contested = state.contests || [];
   const projectsData = state.data.projects_matrix || [];
   const opsData = state.data.operations_radar || { inquiries: [] };
 
@@ -1795,6 +1941,76 @@ function _render(container) {
           </div>
         </div>
         </div>
+
+        <!-- Contested Emails Panel -->
+        <div class="overview-panel" data-panel-id="contested">
+          <div class="overview-panel-header" data-panel-handle>
+            ${ICONS.scales}
+            <span>Contested Emails${contested.length ? ` (${contested.length})` : ''}</span>
+            <div class="overview-panel-header-actions" style="display:flex;align-items:center;gap:4px;margin-left:auto;">
+              <div class="panel-size-pills" style="display:flex;gap:2px;">
+                <button type="button" class="panel-size-btn" data-panel-height-preset="compact" data-panel-id="contested" title="Compact (240px)">S</button>
+                <button type="button" class="panel-size-btn" data-panel-height-preset="medium" data-panel-id="contested" title="Medium (440px)">M</button>
+                <button type="button" class="panel-size-btn" data-panel-height-preset="large" data-panel-id="contested" title="Large (680px)">L</button>
+              </div>
+              <button type="button" class="overview-btn" data-run-review title="Ask the review model to check these categorisations now">
+                <span>${state.reviewRunning ? 'Reviewing…' : 'Review'}</span>
+              </button>
+              ${contested.length > 1 ? `
+                <button type="button" class="overview-btn" data-contest-bulk="confirmed" title="Confirm every contest listed">
+                  <span>Confirm all</span>
+                </button>
+              ` : ''}
+              <button type="button" class="panel-maximize-btn" data-panel-maximize="contested" title="${state.layout.maximizedPanel === 'contested' ? 'Restore panel' : 'Maximize panel'}">
+                ${state.layout.maximizedPanel === 'contested' ? ICONS.minimize : ICONS.maximize}
+              </button>
+            </div>
+          </div>
+          <div class="overview-panel-body">
+            <div class="overview-panel-scroll" data-panel-scroll style="max-height:${state.layout.heights?.contested || 320}px;">
+              ${state.reviewNotice ? `
+                <div class="overview-empty" style="color:var(--status-error,#e06c75);">${_escape(state.reviewNotice)}</div>
+              ` : ''}
+              ${state.contestsLoading ? '<div class="overview-empty">Checking which categorisations rest on weak evidence…</div>' : ''}
+              ${!state.contestsLoading && contested.length === 0 ? '<div class="overview-empty">No contested categorisations. Every match rests on a sender or domain rule.</div>' : ''}
+              ${contested.map(c => `
+                <div class="overview-inquiry-item" data-contest-row="${_escape(c.id)}">
+                  <div class="overview-inquiry-header">
+                    <span class="overview-triage-chip" style="border-color:${_escape(c.organiser_color)};color:#fff;"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${_escape(c.organiser_color)};margin-right:3px;"></span>${_escape(c.organiser_name)}</span>
+                    <strong style="color:#fff;">${_escape(c.from_name || c.from_address || 'Unknown sender')}</strong>
+                    <span style="font-size:11px;opacity:0.6;margin-left:auto;">${_escape((c.date_iso || '').slice(0, 10))}</span>
+                  </div>
+                  <div style="font-size:12px;opacity:0.85;">${_escape(c.subject || '(no subject)')}</div>
+                  <div style="font-size:11px;opacity:0.65;display:flex;align-items:center;gap:4px;">
+                    ${ICONS.alertCircle} ${_escape(c.reason)}
+                  </div>
+                  ${(c.evidence?.keywords || []).length ? `
+                    <div class="overview-email-meta">
+                      ${c.evidence.keywords.map(k => `<span class="overview-tag-chip">${_escape(String(k))}</span>`).join('')}
+                    </div>
+                  ` : ''}
+                  <div class="overview-inquiry-actions">
+                    <button class="overview-btn" data-contest-verdict="confirmed" data-contest-id="${_escape(c.id)}"
+                            title="${c.claim === 'proposed'
+                              ? 'Yes, file it here — this writes the assignment'
+                              : 'The category is right — the rules keep deciding'}">
+                      <span>${c.claim === 'proposed' ? 'File here' : 'Confirm'}</span>
+                    </button>
+                    <button class="overview-btn" data-contest-verdict="rejected" data-contest-id="${_escape(c.id)}"
+                            title="${c.claim === 'proposed'
+                              ? 'No, leave it where it is'
+                              : 'Wrong category — exclude this email from the organiser'}">
+                      <span>${c.claim === 'proposed' ? 'Leave it' : 'Reject'}</span>
+                    </button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+            <div class="overview-panel-resize" data-panel-resize role="separator"
+                 aria-orientation="horizontal" tabindex="0"
+                 aria-label="Resize contested list"></div>
+          </div>
+        </div>
       </div>
 
       <div class="overview-col-gutter" data-col-gutter="1" role="separator"
@@ -1931,6 +2147,31 @@ function _bindEventListeners(container, body, state) {
       _render(container);
     });
   }
+
+  // Contested Emails verdicts. The button is disabled while the request is in
+  // flight so a double click cannot send two verdicts for one contest.
+  body.querySelectorAll('[data-contest-verdict]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      await _resolveContest(container, btn.dataset.contestId, btn.dataset.contestVerdict);
+    });
+  });
+
+  body.querySelectorAll('[data-contest-bulk]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      await _resolveAllContests(container, btn.dataset.contestBulk);
+    });
+  });
+
+  body.querySelector('[data-run-review]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _runContestReview(container);
+  });
 
   // Active filter chips dismiss
   body.querySelectorAll('[data-remove-account]').forEach(btn => {
@@ -2289,6 +2530,7 @@ export function isOverviewOpen() {
 export function refreshOverview(force = true) {
   for (const container of _instances.keys()) {
     _fetchOverviewData(container, force);
+    _fetchContests(container);
   }
 }
 

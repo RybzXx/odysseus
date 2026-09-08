@@ -595,6 +595,92 @@ async function initUtilityModel() {
   });
 }
 
+/* ── Organiser Review ── */
+// The pass that re-reads how the rules categorised mail and queues what it
+// disputes. Its endpoint list comes from the organisers API rather than the
+// general one: only cloud endpoints may serve it, and the server decides which
+// those are so the picker and the call cannot disagree.
+async function initOrganiserReview() {
+  var enabledToggle = el('set-organiserReviewEnabled');
+  var epSel = el('set-organiserReviewEpSelect');
+  var modelSel = el('set-organiserReviewModelSelect');
+  var intervalSel = el('set-organiserReviewInterval');
+  var msg = el('set-organiserReviewMsg');
+  if (!enabledToggle || !epSel || !modelSel || !intervalSel) return;
+
+  var _allEndpoints = [];
+  var _cloudIds = [];
+  var _note = '';
+
+  function cloudOnly() {
+    return _allEndpoints.filter(function(e) { return _cloudIds.indexOf(e.id) !== -1; });
+  }
+
+  function refreshModels(selectedModel) {
+    var ep = _allEndpoints.find(function(e) { return e.id === epSel.value; });
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
+  }
+
+  function refreshEndpoints(selectedId) {
+    var usable = cloudOnly();
+    _fillEndpointSelect(epSel, usable, selectedId, true);
+    // An empty list is a state the user must be able to act on, so it says why
+    // rather than showing a picker with nothing in it.
+    if (!usable.length) {
+      msg.textContent = _note || 'No cloud endpoint is configured, so the review pass cannot run.';
+      msg.style.color = 'var(--red)';
+    } else if (msg.textContent === _note) {
+      msg.textContent = '';
+    }
+  }
+
+  try {
+    _allEndpoints = await _fetchModelEndpoints();
+    var res = await fetch('/api/organisers/contests/endpoints', { credentials: 'same-origin' });
+    var payload = await res.json();
+    _cloudIds = (payload.endpoints || []).map(function(e) { return e.id; });
+    _note = payload.note || '';
+  } catch (e) {
+    console.warn('Failed to load review endpoints', e);
+  }
+
+  try {
+    var sres = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    var settings = await sres.json();
+    enabledToggle.checked = !!settings.organiser_review_enabled;
+    refreshEndpoints(settings.organiser_review_endpoint_id || '');
+    refreshModels(settings.organiser_review_model || '');
+    intervalSel.value = String(settings.organiser_review_interval_hours || 24);
+  } catch (e) {
+    console.warn('Failed to load organiser review settings', e);
+    refreshEndpoints('');
+  }
+
+  async function saveReview() {
+    try {
+      await _postSettings({
+        organiser_review_enabled: !!enabledToggle.checked,
+        organiser_review_endpoint_id: epSel.value || '',
+        organiser_review_model: modelSel.value || '',
+        organiser_review_interval_hours: parseInt(intervalSel.value, 10) || 24,
+      });
+      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      setTimeout(function() { msg.textContent = ''; }, 1500);
+    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+  }
+
+  enabledToggle.addEventListener('change', saveReview);
+  epSel.addEventListener('change', function() { refreshModels(''); saveReview(); });
+  modelSel.addEventListener('change', saveReview);
+  intervalSel.addEventListener('change', saveReview);
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _allEndpoints = endpoints;
+    refreshEndpoints(epSel.value);
+    refreshModels(modelSel.value);
+  });
+}
+
 /* ── Teacher Model ── */
 // SOTA model called automatically when a self-hosted student model
 // fails an agent-mode task. Stored as a single `teacher_model` string
@@ -2285,6 +2371,7 @@ function initAll() {
   initTeacherModel();
   initUtilityModel();
   initItineraryLayers();
+  initOrganiserReview();
   initImageSettings();
   initVisionSettings();
   initTtsSettings();

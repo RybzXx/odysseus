@@ -2175,6 +2175,93 @@ class EmailOrganiserOverride(TimestampMixin, Base):
     )
 
 
+class CategorisationContest(TimestampMixin, Base):
+    """One disputed claim by an organiser on an email, awaiting a human verdict.
+
+    A contest is raised, never decided, by the machine. It records that some
+    source doubts a categorisation: today the rule layer itself, when a match
+    rests only on a keyword found in a subject or snippet; later the review
+    pass, when a model disagrees with what the rules concluded.
+
+    Resolving a contest writes nothing new about membership. Confirming leaves
+    the rules to keep deciding as they already do; rejecting writes an ordinary
+    ``EmailOrganiserOverride`` exclusion. So ``email_belongs_to_organiser``
+    stays the only definition of membership, and a contest is a question about
+    that definition rather than a second answer to it.
+
+    Inv: at most one open contest per (owner, account_key, uid, organiser_id),
+         so a rule that keeps firing weakly does not accumulate duplicates.
+    """
+    __tablename__ = "categorisation_contests"
+
+    id            = Column(String(64), primary_key=True, index=True)
+    owner         = Column(String(64), nullable=True, index=True)
+
+    # Identifies the message the way email_organiser_overrides does.
+    account_key   = Column(String(64), nullable=False, default="")
+    uid           = Column(String(64), nullable=False)
+
+    organiser_id  = Column(String(64), nullable=False, index=True)
+
+    # Which way the claim runs, which decides what a verdict means.
+    # "asserted": the rules already place this email under the organiser, so
+    #   confirming changes nothing and rejecting writes an exclusion.
+    # "proposed": nothing places it there, so confirming writes an assignment
+    #   and rejecting changes nothing.
+    claim         = Column(String(16), nullable=False, default="asserted")
+
+    # What raised the doubt: "rule_weak" from the rule layer, "llm" from the
+    # review pass.
+    source        = Column(String(32), nullable=False, default="rule_weak")
+    # The tokens the match rested on, so the reviewer sees the whole claim.
+    evidence_json = Column(Text, nullable=False, default="{}")
+    reason        = Column(Text, nullable=False, default="")
+
+    # open -> confirmed | rejected. A resolved contest is kept so the same
+    # weak match is not raised again the next time the corpus is scanned.
+    state         = Column(String(16), nullable=False, default="open", index=True)
+    resolved_at   = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_categorisation_contests_message", "owner", "account_key", "uid"),
+        UniqueConstraint(
+            "owner", "account_key", "uid", "organiser_id",
+            name="uq_categorisation_contest",
+        ),
+    )
+
+
+class MessageReview(Base):
+    """That the review pass examined one message, whatever it concluded.
+
+    A contest records a disagreement, so contests alone cannot say whether a
+    message was looked at: one the reviewer read and accepted leaves no trace.
+    Without this row an uncategorised message is indistinguishable from one
+    nothing has reached yet, which is the exact confusion the four states exist
+    to remove.
+
+    Inv: at most one row per (owner, account_key, uid). A later pass updates
+         the timestamp rather than adding a second row.
+    """
+    __tablename__ = "message_reviews"
+
+    id          = Column(String(64), primary_key=True, index=True)
+    owner       = Column(String(64), nullable=True, index=True)
+
+    account_key = Column(String(64), nullable=False, default="")
+    uid         = Column(String(64), nullable=False)
+
+    reviewed_at = Column(DateTime, nullable=False, default=utcnow_naive)
+    # The taxonomy the verdict was made against. When the rules change this no
+    # longer matches, and the message is worth re-reading.
+    rules_digest = Column(String(64), nullable=False, default="")
+
+    __table_args__ = (
+        Index("ix_message_reviews_message", "owner", "account_key", "uid"),
+        UniqueConstraint("owner", "account_key", "uid", name="uq_message_review"),
+    )
+
+
 class CalibrationDraft(TimestampMixin, Base):
     """Working draft state for taxonomy and rule calibration studio."""
     __tablename__ = "calibration_drafts"
@@ -2357,6 +2444,31 @@ def _migrate_project_status_reason():
                 except Exception as e:
                     logger.warning(f"Failed to migrate projects table for status_reason: {e}")
 
+def _migrate_contest_claim_direction():
+    """Add ``claim`` to a contests table created before the column existed.
+
+    Contests were first raised only by the rule layer, where every claim was
+    already asserted. The review pass also proposes matches nothing asserts,
+    and a verdict means the opposite thing on those, so the direction has to be
+    recorded rather than assumed.
+    """
+    with engine.connect() as conn:
+        if engine.dialect.name == "sqlite":
+            try:
+                conn.execute(text("SELECT claim FROM categorisation_contests LIMIT 1"))
+            except Exception:
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE categorisation_contests "
+                        "ADD COLUMN claim VARCHAR(16) NOT NULL DEFAULT 'asserted'"
+                    ))
+                    conn.commit()
+                    logger.info("Migrated: added 'claim' column to categorisation_contests")
+                except Exception as e:
+                    # Absent table is the ordinary case: create_all makes it below.
+                    logger.debug(f"No categorisation_contests table to migrate: {e}")
+
+
 def init_db():
     """
     Initialize the database by creating all tables.
@@ -2365,6 +2477,7 @@ def init_db():
     _migrate_model_endpoints()
     _migrate_project_agent_summary()
     _migrate_project_status_reason()
+    _migrate_contest_claim_direction()
     Base.metadata.create_all(bind=engine)
     # Lock the DB file (and any SQLite sidecars) to 0o600 — it holds bearer-token
     # + bcrypt hashes and encrypted provider keys. POSIX only; safe_chmod no-ops

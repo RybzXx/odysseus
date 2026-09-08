@@ -95,6 +95,15 @@ DEFAULT_SETTINGS = {
     "serper_api_key": "",
     "research_endpoint_id": "",
     "research_model": "",
+    # The organiser review pass: a model re-reads how the rules categorised
+    # recent mail and proposes rule changes for a human to assert. Off by
+    # default because it spends tokens on a schedule rather than on request.
+    # Only a cloud endpoint may serve it -- see cloud_endpoints in
+    # services/organisers/review.py for why the restriction lives there.
+    "organiser_review_enabled": False,
+    "organiser_review_endpoint_id": "",
+    "organiser_review_model": "",
+    "organiser_review_interval_hours": 24,
     "research_search_provider": "",
     "research_max_tokens": 16384,
     "research_extraction_timeout_seconds": 90,
@@ -297,6 +306,9 @@ _PER_USER_KEYS = {
     "default_endpoint_id", "default_model",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",
+    # Organisers are per-owner, so the pass that reviews them is too.
+    "organiser_review_enabled", "organiser_review_endpoint_id",
+    "organiser_review_model", "organiser_review_interval_hours",
 }
 
 
