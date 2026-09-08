@@ -327,6 +327,7 @@ def create_offer(draft, templates: dict, owner: Optional[str] = None,
     owner shared them and a run that refused would refuse every request.
     """
     from services.itinerary import run_record as runs
+    from services.itinerary.drafts import add_run_id
 
     run = runs.start_run(draft.draft_id, request_key=draft.request_id)
     outcome = RunOutcome(run=run, draft=draft)
@@ -338,6 +339,10 @@ def create_offer(draft, templates: dict, owner: Optional[str] = None,
         # forever (invariant 3.7). A step that raised is already recorded.
         if not run.is_sealed:
             runs.seal(run)
+        # Every run must remain reachable from its draft, including a run that
+        # found no candidate or raised after it recorded a failed step. The
+        # detail page cannot explain a hidden run.
+        outcome.draft = add_run_id(draft.draft_id, run.run_id)
 
 
 def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
@@ -364,7 +369,6 @@ def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
         SOURCE_MODEL,
         ProposedSequence,
         add_note,
-        add_run_id,
         add_sequence,
     )
     from services.itinerary.normalizer import normalize_from_dict
@@ -510,7 +514,6 @@ def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
         note=f"candidate {ranking.index} of {len(candidate_set.candidates)}. "
              f"{chosen.statement}. {reason}",
         model=ranking.where, endpoint=""))
-    draft = add_run_id(draft.draft_id, run.run_id)
     if outcome.review_note:
         draft = add_note(draft.draft_id, outcome.review_note, NOTE_SOURCE_MODEL)
     outcome.draft = draft

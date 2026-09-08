@@ -219,7 +219,9 @@ def test_a_request_no_route_matches_seals_the_run_and_names_every_step():
                                      origin=drafts_module.ORIGIN_SHEET,
                                      request_id="queue:qr-6")
     run = create_offer(draft, {}).run
+    stored = drafts_module.load(draft.draft_id)
 
     assert run.is_sealed is True
     assert run.is_complete is False
     assert [s.name for s in run.steps] == list(STEPS)
+    assert run.run_id in stored.run_ids

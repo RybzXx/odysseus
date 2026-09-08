@@ -615,6 +615,52 @@ function notesBody(draft) {
 
 /* ── the strip, and the whole pane ────────────────────────────────────────── */
 
+/**
+ * Explain why the newest run produced no usable proposal.
+ *
+ * Post: a prominent error panel when the run failed or produced no day codes.
+ *       A usable proposal with only optional untested steps shows no panel.
+ */
+function runResultHtml(draft) {
+  const run = draft.run || (draft.runs || [])[0];
+  if (!run) return "";
+  const failures = run.failures || [];
+  const untested = run.untested || [];
+  const responseCodes = (draft.chosen && draft.chosen.day_codes) || [];
+  const savedModelCodes = (draft.sequences || [])
+    .filter((sequence) => sequence.source === "model")
+    .flatMap((sequence) => sequence.day_codes || []);
+  const hasProposal = responseCodes.length > 0 || savedModelCodes.length > 0;
+  if (hasProposal && !failures.length) return "";
+
+  const problems = [...failures, ...untested];
+  const visible = problems.slice(0, 4);
+  const hiddenCount = Math.max(0, problems.length - visible.length);
+  const title = hasProposal ? "The proposal finished with errors"
+    : "No itinerary was proposed";
+  const explanation = hasProposal
+    ? "The run kept its proposal, but one or more steps failed."
+    : "The run finished, but it could not build a candidate. Open What ran for the full trace.";
+  return `<section id="run-result" class="run-result error" role="alert">
+      <h2>${esc(title)}</h2>
+      <p>${esc(explanation)}</p>
+      ${visible.length ? `<ul>${visible.map((problem) =>
+        `<li>${esc(problem)}</li>`).join("")}</ul>` : ""}
+      ${hiddenCount ? `<p style="margin-top:8px">${hiddenCount} more issue(s) appear below.</p>` : ""}
+    </section>`;
+}
+
+function showRunRequestError(message) {
+  const detail = $("detail");
+  if (!detail) return;
+  detail.querySelector("#run-result")?.remove();
+  detail.insertAdjacentHTML("afterbegin",
+    `<section id="run-result" class="run-result error" role="alert">
+       <h2>The proposal request failed</h2>
+       <p>${esc(message || "The server did not return a usable answer.")}</p>
+     </section>`);
+}
+
 function stripHtml(draft) {
   const normalized = draft.normalized || {};
   const newest = {};
@@ -686,6 +732,7 @@ function renderDetail(draft) {
     || (brief.refused || []).length);
 
   $("detail").innerHTML = `
+    ${runResultHtml(draft)}
     <div class="who-line">
       <h2>${esc(normalized.customer_name || draft.request_id || draft.draft_id)}</h2>
       <div class="note">${esc(draft.request_id || draft.draft_id)} · ${esc(draft.origin)}${
@@ -795,6 +842,7 @@ async function loadRuleBooks() {
  */
 async function runTheLayers() {
   if (!current) return;
+  $("run-result")?.remove();
   const button = document.querySelector(".run-offer");
   if (button) { button.disabled = true; button.textContent = "reading…"; }
   try {
@@ -805,8 +853,7 @@ async function runTheLayers() {
     await loadDrafts();
     renderQueue();
   } catch (e) {
-    $("detail").insertAdjacentHTML("afterbegin",
-      `<div class="warn" style="margin:12px 18px">${esc(e.message)}</div>`);
+    showRunRequestError(e.message);
     if (button) { button.disabled = false; }
   }
 }
