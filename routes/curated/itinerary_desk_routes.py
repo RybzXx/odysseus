@@ -377,8 +377,15 @@ def _request_pill(row: dict, drafts_by_key: dict) -> dict:
         "name": row.get("name"),
         "email": row.get("email"),
         "summary": row.get("summary") or [],
+        "operator": row.get("operator"),
         "next_action_date": row.get("next_action_date"),
+        "moderation": row.get("moderation"),
         "created_at": row.get("created_at"),
+        # The desk stages a change of its own now, and `POST /api/operations/
+        # stage` checks this against Supabase before it writes. Without it the
+        # desk would have to stage with no expectation, which turns an
+        # optimistic write into a blind one.
+        "updated_at": row.get("updated_at"),
         "risk": row.get("risk"),
         "draft_id": draft.draft_id if draft else None,
         "has_document": bool(draft and draft.doc_url),
@@ -724,7 +731,29 @@ def setup_itinerary_desk_routes() -> APIRouter:
         draft.generated_from = body.source
         draft.doc_url = built.doc_url or ""
         save(draft)
-        return {"ok": True, "warnings": [], **_draft_to_dict(draft)}
+
+        # The reply drafts travel with the document, so the desk can finish the
+        # request without a second surface. The Operations modal has returned
+        # them since it was built; a reviewer who generated here had to open
+        # Operations for the wording alone.
+        from services.itinerary import compose_email_reply, compose_whatsapp_reply
+
+        try:
+            email_draft = compose_email_reply(normalized, built.preview,
+                                              doc_url=built.doc_url,
+                                              quote=built.quote)
+            whatsapp_draft = compose_whatsapp_reply(normalized, built.preview,
+                                                    doc_url=built.doc_url,
+                                                    quote=built.quote)
+        except Exception:
+            # A document that exists is the result. A composer that raised is
+            # worth reporting, and it must not lose the build that succeeded.
+            logger.exception("the reply drafts could not be composed")
+            email_draft, whatsapp_draft = None, ""
+
+        return {"ok": True, "warnings": [],
+                "draft_email": email_draft, "draft_whatsapp": whatsapp_draft,
+                **_draft_to_dict(draft)}
 
     @router.get("/comments")
     async def list_comments(request: Request, rule_state: Optional[str] = None):
