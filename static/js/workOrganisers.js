@@ -31,6 +31,8 @@ let _availableAccounts = [];
 let _allProjects = [];
 let _activeView = 'organisers'; // 'organisers' | 'calibrate'
 let _calLoading = false;
+const CAL_PAGE_SIZE = 60;
+
 let _calState = {
   emails: [],
   categories: [],
@@ -38,6 +40,12 @@ let _calState = {
   totalEmails: 0,
   matchedUnique: 0,
   unassignedCount: 0,
+  // Per-state tallies from the server. They partition the window, so they add
+  // up to totalEmails rather than overlapping the way the old pair did.
+  stateCounts: {},
+  // The table pages through the whole window now, rather than showing a
+  // 60-message sample of it.
+  page: { offset: 0, limit: CAL_PAGE_SIZE, total: 0 },
   filterCat: 'all',
   searchQuery: '',
 };
@@ -667,6 +675,40 @@ function _esc(s) {
   }[c]));
 }
 
+/**
+ * Describe one row's categorisation state, and the evidence behind it.
+ *
+ * Pre:  `state` is one of the four the server derives, or absent on an older
+ *       payload, in which case the match flag alone is reported.
+ * Post: a coloured line saying what holds this email and how firmly. A weak
+ *       match names the keyword it rests on, because that is the whole reason
+ *       it is worth a second look.
+ */
+function _stateLabel(state, evidence, isMatched, matchedCats) {
+  const ev = evidence || {};
+  if (state === 'assigned') {
+    const on = (ev.domains || []).concat(ev.senders || []);
+    const why = ev.source === 'human'
+      ? 'you assigned it'
+      : (on.length ? `on ${_esc(on.join(', '))}` : 'on a sender or domain rule');
+    return `<span style="color:#98c379;">&check; ${_esc(matchedCats.join(', ')) || 'Held'} &mdash; ${why}</span>`;
+  }
+  if (state === 'weak') {
+    const kws = (ev.keywords || []).map(k => `'${_esc(k)}'`).join(', ');
+    return `<span style="color:#e5c07b;">&bull; Weak &mdash; keyword ${kws || 'match'} only</span>`;
+  }
+  if (state === 'declined') {
+    return '<span style="color:#e5c07b;">&bull; Reviewed, no category fits</span>';
+  }
+  if (state === 'pending') {
+    return '<span style="opacity:0.6;">&bull; Not reviewed yet</span>';
+  }
+  // Older payloads carry no state; fall back to the match flag alone.
+  return isMatched
+    ? `<span style="color:#98c379;">&check; Matches (${_esc(matchedCats.join(', '))})</span>`
+    : '<span style="color:#e5c07b;">&bull; No rule match</span>';
+}
+
 function _getModal() {
   if (!_modal) {
     _injectStyles();
@@ -836,7 +878,14 @@ async function _createNewOrganiser() {
 
 // ================= TAXONOMY CALIBRATION STUDIO =================
 
-async function _startCalibration() {
+/**
+ * Open the studio, or move it to another page of the window.
+ *
+ * Pre:  `offset` is a message index inside the window; 0 opens fresh.
+ * Post: the state holds that page's rows and the window's counts. Opening
+ *       fresh clears the filter and search; paging keeps them.
+ */
+async function _startCalibration(offset = 0) {
   _activeView = 'calibrate';
   _calLoading = true;
   _render();
@@ -846,19 +895,29 @@ async function _startCalibration() {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ days: 14, limit: 60, allow_new_categories: true }),
+      body: JSON.stringify({
+        days: 14,
+        limit: CAL_PAGE_SIZE,
+        offset,
+        allow_new_categories: true,
+      }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     _calState = {
+      ..._calState,
       emails: data.emails || [],
       categories: data.categories || [],
       matchMap: data.match_map || {},
       totalEmails: data.total_emails || 0,
       matchedUnique: data.matched_unique || 0,
       unassignedCount: data.unassigned_count || 0,
-      filterCat: 'all',
-      searchQuery: '',
+      stateCounts: data.state_counts || {},
+      page: data.page || { offset, limit: CAL_PAGE_SIZE, total: 0 },
+      // A page change keeps the filter and the search; only a fresh open
+      // clears them.
+      filterCat: offset === 0 ? 'all' : _calState.filterCat,
+      searchQuery: offset === 0 ? '' : _calState.searchQuery,
     };
   } catch (err) {
     alert(`Calibration extraction failed: ${err.message}`);
@@ -887,6 +946,7 @@ async function _recalculateCoverage(layout) {
     _calState.totalEmails = data.total_emails || 0;
     _calState.matchedUnique = data.matched_unique || 0;
     _calState.unassignedCount = data.unassigned_count || 0;
+    if (data.state_counts) _calState.stateCounts = data.state_counts;
     _renderCalibrationStudio(layout);
   } catch (err) {
     alert(`Recalculation failed: ${err.message}`);
@@ -938,6 +998,12 @@ function _renderCalibrationStudio(layout) {
   const emails = _calState.emails || [];
   const categories = _calState.categories || [];
   const matchMap = _calState.matchMap || {};
+  const sc = _calState.stateCounts || {};
+  const pg = _calState.page || { offset: 0, limit: CAL_PAGE_SIZE, total: emails.length };
+  const pageStart = pg.total ? pg.offset + 1 : 0;
+  const pageEnd = Math.min(pg.offset + pg.limit, pg.total);
+  const hasPrev = pg.offset > 0;
+  const hasNext = pageEnd < pg.total;
 
   const filteredEmails = emails.filter(e => {
     if (_calState.filterCat === '__unassigned__') {
@@ -971,7 +1037,11 @@ function _renderCalibrationStudio(layout) {
             ${ICONS.sparkle} AI Taxonomy Calibration Studio
           </div>
           <div class="calibrate-stats-badge">
-            ${_calState.totalEmails} total &bull; <strong style="color:#98c379;">${_calState.matchedUnique} matched</strong> &bull; <strong style="color:#e5c07b;">${_calState.unassignedCount} unassigned</strong>
+            ${_calState.totalEmails} total
+            &bull; <strong style="color:#98c379;">${sc.assigned || 0} held</strong>
+            &bull; <strong style="color:#e5c07b;">${sc.weak || 0} weak</strong>
+            &bull; <strong style="opacity:0.7;">${sc.pending || 0} unreviewed</strong>
+            &bull; <strong style="color:#e5c07b;">${sc.declined || 0} no fit</strong>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -1012,7 +1082,13 @@ function _renderCalibrationStudio(layout) {
           `).join('')}
         </select>
         <input type="text" id="cal-search-input" class="org-input" placeholder="Search sender, subject, keywords..." value="${_esc(_calState.searchQuery)}" style="margin-left:8px;padding:4px 8px;font-size:11.5px;border-radius:4px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#fff;width:260px;">
-        <span style="margin-left:auto;font-size:11px;opacity:0.6;">Showing ${filteredEmails.length} of ${emails.length} sampled emails</span>
+        <span style="margin-left:auto;font-size:11px;opacity:0.6;">
+          Showing ${filteredEmails.length} of ${emails.length} on this page${
+            _calState.page.total > emails.length
+              ? ` &bull; ${_calState.page.total} in the window`
+              : ''
+          }
+        </span>
       </div>
 
       <!-- Table of emails and parameters -->
@@ -1034,6 +1110,11 @@ function _renderCalibrationStudio(layout) {
               const emailKey = `${e.account_key}:${e.uid}`;
               const matchedCats = matchMap[emailKey] || [];
               const isMatched = matchedCats.length > 0;
+              // A category deleted or renamed since the row was built leaves a
+              // slug no option matches. The browser then shows the first
+              // option, so the row read as unassigned when it was not.
+              const knownCategory = !e.proposed_category
+                || categories.some(c => c.slug === e.proposed_category);
               const dateStr = e.date_iso ? e.date_iso.slice(5, 10) : '';
 
               return `
@@ -1074,16 +1155,17 @@ function _renderCalibrationStudio(layout) {
                   <td>
                     <select class="calibrate-row-cat-select org-input" data-email-key="${_esc(emailKey)}" style="width:100%;font-size:11.5px;padding:3px 6px;border-radius:4px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#fff;">
                       <option value="" ${!e.proposed_category ? 'selected' : ''}>-- Unassigned --</option>
+                      ${knownCategory ? '' : `
+                        <option value="${_esc(e.proposed_category)}" selected>Missing: ${_esc(e.proposed_category)}</option>
+                      `}
                       ${categories.map(c => `
                         <option value="${_esc(c.slug)}" ${e.proposed_category === c.slug ? 'selected' : ''}>${_esc(c.name)}</option>
                       `).join('')}
                     </select>
                     <div style="font-size:10px;margin-top:3px;">
-                      ${isMatched ? `
-                        <span style="color:#98c379;">&check; Matches (${_esc(matchedCats.join(', '))})</span>
-                      ` : `
-                        <span style="color:#e5c07b;">&bull; No rule match</span>
-                      `}
+                      ${!knownCategory ? `
+                        <span style="color:#e06c75;">&bull; Category '${_esc(e.proposed_category)}' no longer exists</span>
+                      ` : _stateLabel(e.state, e.state_evidence, isMatched, matchedCats)}
                     </div>
                   </td>
                   <td>
@@ -1097,6 +1179,16 @@ function _renderCalibrationStudio(layout) {
           </tbody>
         </table>
       </div>
+
+      <!-- Pager. The table holds one page of the window, so a filter applies
+           to this page; the counts above always describe the whole window. -->
+      ${pg.total > pg.limit ? `
+        <div class="calibrate-pager" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:1px solid rgba(255,255,255,0.08);">
+          <button class="overview-btn" id="cal-page-prev" ${hasPrev ? '' : 'disabled'}>&larr; Previous</button>
+          <span style="font-size:11px;opacity:0.7;">${pageStart}&ndash;${pageEnd} of ${pg.total}</span>
+          <button class="overview-btn" id="cal-page-next" ${hasNext ? '' : 'disabled'}>Next &rarr;</button>
+        </div>
+      ` : ''}
     </div>
   `;
 
@@ -1116,6 +1208,14 @@ function _wireCalibrationEvents(layout) {
   if (recalcBtn) {
     recalcBtn.addEventListener('click', () => _recalculateCoverage(layout));
   }
+
+  const pg = _calState.page || { offset: 0, limit: CAL_PAGE_SIZE, total: 0 };
+  layout.querySelector('#cal-page-prev')?.addEventListener('click', () => {
+    _startCalibration(Math.max(0, pg.offset - pg.limit));
+  });
+  layout.querySelector('#cal-page-next')?.addEventListener('click', () => {
+    _startCalibration(pg.offset + pg.limit);
+  });
 
   const applyBtn = layout.querySelector('#cal-apply-btn');
   if (applyBtn) {

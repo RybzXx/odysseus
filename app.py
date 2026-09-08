@@ -1356,6 +1356,25 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
 
+    # Organiser review — re-reads how the rules categorised recent mail and
+    # queues what it disputes under Contested Emails. Off unless
+    # `organiser_review_enabled` is set; cadence from
+    # `organiser_review_interval_hours` (default 24). It only ever opens
+    # questions, so a failed run leaves categorisation exactly as it was.
+    async def _organiser_review_loop():
+        from services.organisers.scheduled_review import (
+            review_interval_seconds,
+            run_scheduled_review,
+        )
+        while True:
+            await asyncio.sleep(review_interval_seconds())
+            try:
+                await run_scheduled_review()
+            except Exception as e:
+                logger.warning(f"Scheduled organiser review failed: {e}")
+
+    _startup_tasks.append(asyncio.create_task(_organiser_review_loop()))
+
     # Cookbook serve lifecycle — kills scheduler-launched serves whose
     # window-end has passed. Paired with the cookbook_serve builtin
     # action; both are no-ops unless a scheduled task actually launches

@@ -2560,6 +2560,7 @@ export function openEmailLibrary(opts = {}) {
   if (opts.folder) state._libFolder = opts.folder;
   state._libPendingExpandUid = opts.uid || null;
   _fetchOrganisersForEmailLib();
+  _fetchContestedKeys();
 
   const modal = document.createElement('div');
   modal.className = 'modal';
@@ -2607,6 +2608,7 @@ export function openEmailLibrary(opts = {}) {
                 <option value="undone">Undone</option>
                 <option value="reminders">Reminders</option>
                 <option value="unanswered">Unanswered</option>
+                <option value="contested">Contested</option>
                 <option value="pending_30d">Pending · 30d</option>
                 <option value="stale_30d">Stale · &gt;30d</option>
                 <optgroup label="Tags">
@@ -2801,6 +2803,9 @@ export function openEmailLibrary(opts = {}) {
     state._libFilter = e.target.value;
     _syncUnreadWindowGlow();
     _syncReminderClearButton();
+    // Selecting Contested runs a fresh scan, so a rule edited since the modal
+    // opened is judged now rather than on the next open.
+    if (state._libFilter === 'contested') _fetchContestedKeys().then(_renderGrid);
     _loadEmailsFresh();
     // Sync quick-toggle active states so they mirror the dropdown.
     document.getElementById('email-undone-btn')?.classList.toggle('active', state._libFilter === 'undone');
@@ -4479,6 +4484,7 @@ const _EMAIL_FILTER_ICONS = {
   'tag:urgent':    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   'tag:reply-soon':'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/><circle cx="18" cy="6" r="2" fill="currentColor" stroke="none"/></svg>',
   'tag:spam':      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>',
+  'contested':     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M7 21h10"/><path d="M3 8h18"/><path d="M6.5 8 3 15h7z"/><path d="M17.5 8 14 15h7z"/></svg>',
 };
 
 function _filterIcon(value) {
@@ -4520,6 +4526,28 @@ async function _fetchOrganisersForEmailLib() {
     }
   } catch (e) {
     console.debug('Failed loading organisers for emailLibrary:', e);
+  }
+}
+
+/**
+ * Load the contested categorisations so the Contested filter can select on them.
+ *
+ * Pre:  none. Safe to call before any organiser has loaded.
+ * Post: state._contestedKeys holds "account_key:uid" for every open contest.
+ *       On failure it is left empty, so the filter shows nothing rather than
+ *       showing the wrong emails.
+ */
+async function _fetchContestedKeys() {
+  try {
+    const res = await fetch(`${API_BASE}/api/organisers/contests`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    state._contestedKeys = new Set(
+      (data.contests || []).map(c => `${c.account_key}:${c.uid}`)
+    );
+  } catch (e) {
+    console.debug('Failed loading contested emails:', e);
+    state._contestedKeys = new Set();
   }
 }
 
@@ -5018,6 +5046,10 @@ function _renderGrid() {
   grid.innerHTML = '';
 
   let filtered = state._libEmails;
+  if (state._libFilter === 'contested') {
+    const keys = state._contestedKeys || new Set();
+    filtered = filtered.filter(em => keys.has(`${em.account_key || em.account_id || ''}:${em.uid}`));
+  }
   if (state._libFilter && state._libFilter.startsWith('organiser:')) {
     const slug = state._libFilter.replace('organiser:', '');
     const org = (state._organisersList || []).find(o => o.slug === slug || o.id === slug);

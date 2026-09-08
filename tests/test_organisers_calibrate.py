@@ -1,8 +1,7 @@
 """tests/test_organisers_calibrate.py
 
 Deterministic tests for the AI email taxonomy calibration workflow:
-- Extraction & prompt building
-- LLM response parsing into candidate categories and parameter rules
+- Sampling for the working draft
 - Pure deterministic recalculation across corpus
 - Codification to WorkOrganiser and OverviewCache reset
 - Human override precedence preservation
@@ -34,8 +33,6 @@ from core.database import (
 from routes.organisers.organisers_routes import (
     setup_organisers_routes,
     _sample_calibration_emails,
-    _build_calibration_prompt,
-    _parse_calibration_llm_response,
     _recalculate_taxonomy_coverage,
     OrganiserRules,
     CalibratedCategory,
@@ -98,83 +95,6 @@ def test_sample_calibration_emails_balances_inbound_and_outbound():
 
     assert outbound_count >= 2
     assert inbound_count >= 5
-
-
-def test_parse_calibration_llm_response_extracts_rules_and_assignments():
-    mock_llm_output = """```json
-{
-  "categories": [
-    {
-      "slug": "receipts-and-payments",
-      "name": "Receipts and Payments",
-      "description": "Invoices, payment receipts, and billing notifications.",
-      "category_group": "finance"
-    },
-    {
-      "slug": "developer-infrastructure",
-      "name": "Developer Infrastructure",
-      "description": "Cloud hosting, GitHub, and dev services.",
-      "category_group": "tech"
-    }
-  ],
-  "assignments": [
-    {
-      "uid": "101",
-      "account_key": "acc1",
-      "category_slug": "receipts-and-payments",
-      "extracted_senders": ["Stripe Billing"],
-      "extracted_domains": ["stripe.com"],
-      "extracted_keywords": ["invoice", "receipt"],
-      "reasoning": "Invoice confirmation from Stripe."
-    },
-    {
-      "uid": "102",
-      "account_key": "acc1",
-      "category_slug": "developer-infrastructure",
-      "extracted_senders": ["GitHub Notifications"],
-      "extracted_domains": ["github.com"],
-      "extracted_keywords": ["security alert"],
-      "reasoning": "Repository security advisory."
-    }
-  ]
-}
-```"""
-
-    sampled = [
-        {"uid": "101", "account_key": "acc1", "subject": "Stripe invoice ready", "from_name": "Stripe", "from_address": "billing@stripe.com", "snippet": "Your receipt for $49"},
-        {"uid": "102", "account_key": "acc1", "subject": "Security alert on repo", "from_name": "GitHub", "from_address": "support@github.com", "snippet": "Advisory GHSA-1234"},
-        {"uid": "103", "account_key": "acc1", "subject": "Unmatched newsletter", "from_name": "News", "from_address": "news@daily.com", "snippet": "Morning briefing"},
-    ]
-
-    existing_org = WorkOrganiser(
-        id="org1",
-        owner="admin",
-        name="Receipts and Payments",
-        slug="receipts-and-payments",
-        description="",
-        rules_json="{}",
-    )
-
-    rows, categories = _parse_calibration_llm_response(mock_llm_output, sampled, [existing_org])
-
-    assert len(categories) == 2
-    receipts_cat = next(c for c in categories if c.slug == "receipts-and-payments")
-    assert "stripe.com" in receipts_cat.rules.domains
-    assert "invoice" in receipts_cat.rules.keywords
-
-    dev_cat = next(c for c in categories if c.slug == "developer-infrastructure")
-    assert dev_cat.is_new is True
-    assert "github.com" in dev_cat.rules.domains
-
-    assert len(rows) == 3
-    row101 = next(r for r in rows if r.uid == "101")
-    assert row101.proposed_category == "receipts-and-payments"
-    assert row101.reasoning == "Invoice confirmation from Stripe."
-
-    # Email 103 was not assigned by LLM, should gracefully degrade to pending calibration
-    row103 = next(r for r in rows if r.uid == "103")
-    assert row103.proposed_category == ""
-    assert "daily.com" in row103.extracted_domains
 
 
 def test_recalculate_pure_deterministic():

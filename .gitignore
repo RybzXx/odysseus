@@ -38,6 +38,11 @@ data/
 # counterparty names only — scanned, no customer emails or phone numbers.
 !services/itinerary/data/
 !services/itinerary/data/**
+# The starting organiser taxonomy. The classifier reads it at import, so an
+# untracked copy means a fresh clone cannot categorise anything. Category names
+# and the sender/domain/keyword rules that define them — no message content.
+!services/organisers/data/
+!services/organisers/data/**
 logs/
 *.log
 *.db

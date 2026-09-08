@@ -1,0 +1,294 @@
+[
+  {
+    "slug": "receipts-and-payments",
+    "name": "Receipts and Payments",
+    "category_group": "finance",
+    "icon": "credit-card",
+    "color": "#e5c07b",
+    "priority": "normal",
+    "rules": {
+      "senders": [
+        "Anthropic, PBC",
+        "Google Play",
+        "Stripe",
+        "Apple",
+        "Vercel Inc."
+      ],
+      "domains": [
+        "mail.anthropic.com",
+        "stripe.com"
+      ],
+      "keywords": [
+        "receipt",
+        "invoice",
+        "payment",
+        "subscription",
+        "declined",
+        "suspended",
+        "paid",
+        "billing",
+        "statement"
+      ]
+    },
+    "description": "Invoices, automated software/SaaS receipts, payment confirmations, and subscription billing alerts.",
+    "order": 0,
+    "reason": "Payment confirmation, invoice receipt, or subscription billing notice.",
+    "catch_all": false
+  },
+  {
+    "slug": "financial-intelligence",
+    "name": "Financial Intelligence & Market Research",
+    "category_group": "finance",
+    "icon": "trending-up",
+    "color": "#c678dd",
+    "priority": "normal",
+    "rules": {
+      "senders": [
+        "research@rs.iq",
+        "zmohanad@rs.iq",
+        "RS Research"
+      ],
+      "domains": [
+        "rs.iq"
+      ],
+      "keywords": [
+        "سوق العراق للأوراق المالية",
+        "تداولات",
+        "نشرة",
+        "isx",
+        "stocks",
+        "market",
+        "economy"
+      ]
+    },
+    "description": "Daily and weekly Iraq Stock Exchange (ISX) reports, market research, macroeconomic data, and equity valuations.",
+    "order": 1,
+    "reason": "Market intelligence, Iraq Stock Exchange (ISX) report, or equity research.",
+    "catch_all": false
+  },
+  {
+    "slug": "bilweekend-tour-ops",
+    "name": "Bil Weekend Tour Operations & Bookings",
+    "category_group": "operations",
+    "icon": "compass",
+    "color": "#98c379",
+    "priority": "high",
+    "rules": {
+      "senders": [
+        "Adrian Matache",
+        "Nivine Ismail",
+        "Ali Bil Weekend",
+        "Thikaa",
+        "Zaharia Sebastian",
+        "Mariacristina Gasparini",
+        "Tamara García Duque",
+        "Dave Mani"
+      ],
+      "domains": [
+        "bilweekend.com",
+        "againstthecompass.com",
+        "davemani.com"
+      ],
+      "keywords": [
+        "tour",
+        "booking",
+        "pax",
+        "kurdistan",
+        "marshes",
+        "unesco",
+        "itinerary",
+        "quotation",
+        "private tour",
+        "trip",
+        "collaboration",
+        "rates",
+        "hotel"
+      ]
+    },
+    "description": "Direct traveler inquiries, customized private tour itineraries, booking quotations, and traveler operations across Iraq and Kurdistan.",
+    "order": 2,
+    "reason": "Direct traveler booking inquiry or itinerary operations in Iraq/Kurdistan.",
+    "catch_all": false
+  },
+  {
+    "slug": "tourism-b2b-partnerships",
+    "name": "B2B Tourism Partnerships & Suppliers",
+    "category_group": "partnerships",
+    "icon": "briefcase",
+    "color": "#61afef",
+    "priority": "normal",
+    "rules": {
+      "senders": [
+        "Murtaza Kalender",
+        "DMC dal Mondo",
+        "World Travel Market London",
+        "World Trade Show Navi",
+        "Europe Coaches",
+        "Miracle Oman DMC",
+        "Best of Tickets",
+        "FiNE",
+        "Zivotrip Sales",
+        "DMCFinder",
+        "TravelShop Booking",
+        "Seat Unique",
+        "Bilitom Hotel",
+        "Uzakrota"
+      ],
+      "domains": [
+        "adatours.com",
+        "workshoptravelshop.com",
+        "dmcdalmondo.com",
+        "portfolio.wtm.com",
+        "worldtradeshow.tv",
+        "europecoaches.com",
+        "partnerwithfine.com",
+        "dmcfinder.com",
+        "seatunique.com",
+        "easymail-pro.it",
+        "brevosend.com"
+      ],
+      "keywords": [
+        "dmc",
+        "b2b",
+        "partner",
+        "partnership",
+        "trade show",
+        "wtm",
+        "roadshow",
+        "van rentals",
+        "coaches",
+        "exhibitor",
+        "workshop",
+        "invitation",
+        "wholesale",
+        "buyers"
+      ]
+    },
+    "description": "Global DMC partners, international travel trade exhibitions (WTM London), wholesale rate circulars, and B2B supplier networks.",
+    "order": 3,
+    "reason": "B2B tourism partner circular, DMC supplier network, or international travel trade event.",
+    "catch_all": false
+  },
+  {
+    "slug": "tech-security-infrastructure",
+    "name": "Technical Infrastructure & Security",
+    "category_group": "tech",
+    "icon": "shield",
+    "color": "#e06c75",
+    "priority": "high",
+    "rules": {
+      "senders": [
+        "Google",
+        "GitHub",
+        "Vercel Inc.",
+        "Proton"
+      ],
+      "domains": [
+        "github.com",
+        "vercel.com",
+        "google.com",
+        "proton.me"
+      ],
+      "keywords": [
+        "security alert",
+        "ssh",
+        "oauth",
+        "verification",
+        "claude",
+        "ollama",
+        "vercel",
+        "github",
+        "protection"
+      ]
+    },
+    "description": "Cloud infrastructure, developer tooling, repository alerts, domain DNS, and account security notifications.",
+    "order": 4,
+    "reason": "Infrastructure security alert, protection upgrade, or developer notification.",
+    "catch_all": false
+  },
+  {
+    "slug": "bilweekend-team-strategy",
+    "name": "Internal Team Strategy & Proposals",
+    "category_group": "strategy",
+    "icon": "target",
+    "color": "#56b6c2",
+    "priority": "normal",
+    "rules": {
+      "senders": [
+        "Mustafa Nabil",
+        "Mohammed Alawadi",
+        "Noor Ahmed",
+        "Ghada Al Makhzomy",
+        "Mustafa Simani"
+      ],
+      "domains": [
+        "bilweekend.iq"
+      ],
+      "keywords": [
+        "proposal",
+        "app",
+        "meeting",
+        "agreement",
+        "strategy",
+        "school",
+        "team",
+        "shareholder"
+      ]
+    },
+    "description": "Internal company strategy, shareholder discussions, platform app development, team operations, and executive planning.",
+    "order": 5,
+    "reason": "Internal company strategy discussion, team meeting, or executive planning.",
+    "catch_all": false
+  },
+  {
+    "slug": "personal-logistics",
+    "name": "Personal Logistics & Lifestyle",
+    "category_group": "personal",
+    "icon": "coffee",
+    "color": "#abb2bf",
+    "priority": "normal",
+    "rules": {
+      "senders": [
+        "Secret Escapes",
+        "Pinterest",
+        "Steam",
+        "Reddit",
+        "ElevenLabs",
+        "Toters",
+        "talabat",
+        "Agoda Price Alerts",
+        "LinkedIn",
+        "Pegasus",
+        "Roots by fern"
+      ],
+      "domains": [
+        "secretescapes.com",
+        "pinterest.com",
+        "steampowered.com",
+        "redditmail.com",
+        "em.talabat.com",
+        "agoda-emails.com",
+        "linkedin.com",
+        "crm.flypgs.com",
+        "watchfern.com"
+      ],
+      "keywords": [
+        "sale",
+        "escapes",
+        "gift",
+        "delivery",
+        "points",
+        "order",
+        "grocery",
+        "price drops",
+        "profile views",
+        "flight",
+        "design"
+      ]
+    },
+    "description": "Personal lifestyle, grocery and food delivery, recreational travel alerts, personal newsletters, and social network pings.",
+    "order": 6,
+    "reason": "Personal lifestyle, travel alert, consumer newsletter, or professional networking notice.",
+    "catch_all": true
+  }
+]

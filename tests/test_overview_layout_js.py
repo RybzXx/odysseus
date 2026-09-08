@@ -17,6 +17,7 @@ than the presence of source text.
 import json
 import shutil
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -31,14 +32,23 @@ pytestmark = pytest.mark.skipif(
 
 
 def _run_node(script: str) -> dict:
-    """Execute a Node script that prints one JSON object, and return it."""
-    result = subprocess.run(
-        ["node", "--input-type=module", "-e", textwrap.dedent(script)],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    """Execute a Node script that prints one JSON object, and return it.
+
+    The script carries the whole body template, which grows with every panel
+    added. Passing it as an argv element caps it at the command-line limit
+    (32 KB on Windows), so it goes to a temp .mjs file instead: a file has no
+    such ceiling, and the extension gives module semantics without a flag.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        entry = Path(tmp) / "layout_probe.mjs"
+        entry.write_text(textwrap.dedent(script), encoding="utf-8")
+        result = subprocess.run(
+            ["node", str(entry)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
     if result.returncode != 0:
         pytest.fail(f"node exited {result.returncode}:\n{result.stderr}")
     tail = [ln for ln in result.stdout.strip().splitlines() if ln.startswith("{")]
@@ -47,11 +57,13 @@ def _run_node(script: str) -> dict:
     return json.loads(tail[-1])
 
 
-def test_grid_markup_nests_into_two_columns_around_one_gutter():
-    """Every panel must land inside a column, and the gutter between them.
+def test_grid_markup_nests_every_panel_into_a_column():
+    """Every panel must land inside a column, and each gutter between them.
 
     An unclosed wrapper still renders, so this counts the tree rather than the
-    tags: three panels, two columns, and the projects panel in the second.
+    tags: four panels across the two columns the default layout fills, with the
+    projects panel in the second. A third column is present but empty -- it
+    holds panels only in 3-col mode, which _applyLayout switches to later.
     """
     source = OVERVIEW_JS.read_text(encoding="utf-8")
 
@@ -102,6 +114,9 @@ def test_grid_markup_nests_into_two_columns_around_one_gutter():
       return out;
     }};
     const root = stack[0];
+    // The panel-size buttons carry data-panel-id as well, so the attribute
+    // alone does not identify a panel -- only a div holding one does.
+    const isPanel = n => n.tag === 'div' && n.attrs.includes('data-panel-id=');
     const grid = findAll(root, n => n.attrs.includes('data-main-grid'))[0];
     const columns = grid ? findAll(grid, n => n.attrs.includes('data-column=')) : [];
 
@@ -113,10 +128,10 @@ def test_grid_markup_nests_into_two_columns_around_one_gutter():
         ? grid.children.filter(c => c.attrs.includes('data-col-gutter')).length
         : 0,
       panelsPerColumn: columns.map(
-        c => findAll(c, n => n.attrs.includes('data-panel-id=')).length
+        c => findAll(c, isPanel).length
       ),
       secondColumnHasProjects: columns.length > 1
-        ? findAll(columns[1], n => n.attrs.includes('data-panel-id="projects"')).length
+        ? findAll(columns[1], n => isPanel(n) && n.attrs.includes('data-panel-id="projects"')).length
         : 0,
     }}));
     """
@@ -128,12 +143,13 @@ def test_grid_markup_nests_into_two_columns_around_one_gutter():
         f"panels would reparent into the wrong column"
     )
     assert got["gridFound"] is True
-    assert got["columnCount"] == 2, f"expected two columns, found {got['columnCount']}"
-    assert got["gutterIsDirectGridChild"] == 1, (
-        "the gutter must be a direct grid child, or it is not a grid track"
+    assert got["columnCount"] == 3, f"expected three columns, found {got['columnCount']}"
+    assert got["gutterIsDirectGridChild"] == 2, (
+        "each gutter must be a direct grid child, or it is not a grid track"
     )
-    assert got["panelsPerColumn"] == [2, 1], (
-        f"default arrangement should be two panels then one: {got['panelsPerColumn']}"
+    assert got["panelsPerColumn"] == [2, 2, 0], (
+        f"default arrangement should be two panels in each filled column, "
+        f"and none in the third: {got['panelsPerColumn']}"
     )
     assert got["secondColumnHasProjects"] == 1
 
