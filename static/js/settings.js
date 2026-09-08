@@ -46,12 +46,17 @@ let _authPolicy = { password_min_length: 8 };
  */
 async function _postSettings(body) {
   try {
-    return await fetch('/api/auth/settings', {
+    const response = await fetch('/api/auth/settings', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Settings save failed (${response.status})`);
+    }
+    return response;
   } finally {
     invalidateSettings();
   }

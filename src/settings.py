@@ -128,6 +128,21 @@ DEFAULT_SETTINGS = {
     # leaves the machine, and no chokepoint enforces it yet, so the desk asks
     # only when the owner turns this on.
     "itinerary_model_proposals_enabled": False,
+    # Each model layer is opt-in and names its endpoint explicitly. These keys
+    # must be registered here because /api/auth/settings accepts only keys in
+    # DEFAULT_SETTINGS.
+    "itinerary_read_enabled": False,
+    "itinerary_read_endpoint_id": "",
+    "itinerary_read_model": "",
+    "itinerary_brief_enabled": False,
+    "itinerary_brief_endpoint_id": "",
+    "itinerary_brief_model": "",
+    "itinerary_rank_enabled": False,
+    "itinerary_rank_endpoint_id": "",
+    "itinerary_rank_model": "",
+    "itinerary_review_enabled": False,
+    "itinerary_review_endpoint_id": "",
+    "itinerary_review_model": "",
     "agent_max_tool_calls": 0,
     "agent_max_rounds": 20,  # per-message agent step cap (clamped 1..200)
     # Soft input-token budget for the agent loop. The DEFAULT value (6000) is the
