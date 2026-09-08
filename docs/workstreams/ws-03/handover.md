@@ -1396,3 +1396,186 @@ stands.
 `test_sequence_check.py`, `test_day_shape.py` and `test_named_pair_rules.py`.
 
 The 14 files the frame prompt names still pass at 430.
+
+---
+
+## 2026-09-08: the layers, the desk, and the phone
+
+Two phases landed and reached the phone. Phase five built four model layers, a
+run record and the guards around them. Phase six rebuilt the desk as a queue
+and one detail pane.
+
+`phase-five-spec.md` and `phase-six-spec.md` carry the decisions, the
+invariants and the work packages. This section records what happened.
+
+### The four layers
+
+Seven steps run on one press: read the link, extract the screenshots, write a
+brief, build the candidates, check them, rank them, and read the result against
+the request. Four steps are deterministic and three call a model.
+
+Nothing calls a model today. `itinerary_model_proposals_enabled` is off, and a
+layer that cannot run records itself as untested rather than reporting that it
+found nothing.
+
+Seven modules are new. `record_paths` gives one record id one file inside one
+directory. `run_record` holds the seven steps. `layer_access` says which layer
+may run and where it may send. `conversation_reader` turns a Drive screenshot
+into text. `request_brief` reads what the customer asked for. `candidates`
+builds one itinerary per route that ties at the top score. `offer_run` runs the
+seven steps.
+
+### The Drive folders opened
+
+The owner shared the conversation folders on 2026-09-07. All six live links
+read, and each names one `image/jpeg` file rather than a folder. That answered
+the phase five open item 16.1.
+
+### What the model measured
+
+The owner lifted D17 for one test. Ten offers that were already sold ran
+against `gemma4:31b-cloud`.
+
+| Measurement | Value |
+|---|---|
+| Nights in position, three layers | 40 of 87 |
+| Nights in position, the rules alone | 19 of 87 |
+| Layer 2 against candidate 1 of the same set | 20 against 10 |
+| Runs where layer 2 chose worse | 0 of 10 |
+| Brief day count right | 4 of 10 |
+| One run, four layers | 4 to 7 seconds |
+
+The rules scored 7 of 87 before the normalizer read a graded row's `day_count`.
+That one repair took them to 19.
+
+### The desk
+
+The desk was a dropdown of drafts beside a strip of ten request pills, with a
+"Show ten more" button and no filter. It is now a queue and one detail pane.
+
+The filter bar is the Operations bar, with a fifth control for the desk's own
+state. `GET /drafts` sends a list: 51,646 bytes became 3,153.
+
+The detail pane carries a strip of input, run and output above sections that
+open on their own content. The seven steps render with their timings and their
+endpoints. A prompt opens in a drawer, because three steps carry 16,205
+characters against under 10,000 bytes of everything else.
+
+One file renders the brief on both pages.
+
+### What the live worklist says
+
+| Fact | Value |
+|---|---|
+| Tour requests | 43. 37 curated, 6 queue |
+| Status New | 9 |
+| New rows carrying the risk `confirmed-spam` | 8 |
+| New rows that are not spam | 1 |
+| Open drafts | 10 |
+| Requests carrying no operator | 17 of 43 |
+| Requests carrying a next action date | 1 of 43 |
+
+Item 27.5 said one press reaches 9 rows. The cross-tab says 8 of those 9 are
+spam, so the count read spam as work. The item carries an amendment and the
+figure is 1.
+
+### Nineteen defects found by attacking the code
+
+Five in the first pass over phase five. `PUT /conversations/{file_id}` wrote
+wherever the id pointed: three files landed in the repository root and one in
+`C:\Windows\Temp`. A run was left unsealed when the draft write failed. Four
+presses at once wrote four run records and the draft named one. A screenshot
+could close its own fence. A brief number had no ceiling.
+
+Seven in the second. `column_is_blank` called an unknown column blank, so a
+brief overwrote a value the record held. The diff said "the conversation says"
+when no conversation was read. The model echoed the office's own figures back:
+two entirely different requests gave one identical brief. The cache sat behind
+Drive. Named cities could not reach candidate generation. The prose summary
+varied at temperature zero while the fields did not, and layer 2 decided on the
+prose.
+
+Six in the third. A queue row never marked its regions defaulted on one branch
+and did on the other. A placeholder read as more certain than a blank. An
+unparsable day count read as a value the record gave. A record number had no
+ceiling. A human edit on a folder id hid the folder.
+
+Five in the fourth. The shared stylesheet defined seven tokens on bare `:root`,
+and 236 call sites across 26 files changed colour. 192 of them read
+`var(--accent, var(--red))`, and `theme.js` sets `--red` per theme. A draft that
+named no request appeared in no queue row. A queue row read two invented day
+codes as two finished days. `run_count` counted ids rather than records. The
+brief card raised on a `differences` that was not a list.
+
+Every one is pinned in `test_phase_five_attacks.py` or
+`test_phase_five_attacks_two.py`.
+
+### Two things measured that nobody had measured
+
+None of the seven tokens the Operations modal reads is defined in any `:root`
+block. The modal has been rendering on CSS fallbacks.
+
+The app links to neither standalone page. `itinerary_desk.html` and
+`offers_review.html` share ten CSS tokens and no navigation, and the one walked
+path into the desk is the link in the Operations modal.
+
+### The deployment
+
+Four commits went to `origin/daily-driver` at `18d7079..b543292`.
+
+The phone pulled from `4e30a3f` to `b543292`, nine commits, a fast-forward.
+Its uvicorn had been up 4 days 23 hours. A SIGTERM to it let
+`supervise_services.sh` call `Start_All.sh` within 75 seconds, which is the
+restart that design asks for. `/api/itinerary/layers` answers 401 there now
+rather than 404.
+
+`data/` is gitignored, so 111 MB went over Tailscale as one archive in 69
+seconds, checksum verified on arrival. `tar -k` extracted it, so no existing
+file could be overwritten. The phone's `data/` went from 89 MB to 223 MB.
+
+Five entries were held back by the owner's decision: `app.db`,
+`scheduled_emails.db`, `projects`, `logs` and `email_urgency_cache`. The phone
+keeps its own `app.db` of 839,680 bytes.
+
+Two more were held back on Claude's reading. `.app_key` is on both machines and
+the phone reads its own encrypted data with it. `auth.json` is on the phone's
+neither side, and adding it would change who can sign in to a device that gates
+on login.
+
+The phone now holds a Google service-account private key and this machine's
+`settings.json`. That file names `default_endpoint_id: 182e58cc`, which is a
+row in this machine's `app.db` and not in the phone's.
+
+### What is open
+
+Item 29.4 is built and untested. Every run record on disk has the layers off,
+so no step carries a prompt and no drawer button renders. Measurement 14.4
+reads zero for that reason and not because a prompt was hidden.
+
+Two items in `phase-six-spec.md` state that Claude chose them: the shared
+stylesheet at 24.1, and sections that open on their own content at 28.3.
+
+Two items in `phase-five-spec.md` state the same: the flag cap at 12.4 and the
+judged book placement at 15.1.
+
+Item 22.6 of phase five is blocked and the specification is wrong about it. It
+asks the reader layer to reuse the `vision` role. `_resolve_vl_model`
+auto-detects across every configured endpoint when `vision_model` is empty, and
+its first candidates are hosted models, so reusing it would break invariant
+3.2. The reader carries a role of its own.
+
+`tests/test_signature_route_hardening.py` errors on
+`test_signature_png_normalization_rejects_invalid_inputs`. It errors with every
+change of these two phases stashed, so it predates them.
+
+The `daily-driver` worktree at `odysseus-fork` sits at `a7869cb`, 54 commits
+behind its own remote.
+
+### Tests
+
+Eight new files hold 175 tests: `test_layer_access.py`, `test_run_record.py`,
+`test_conversation_reader.py`, `test_candidates.py`, `test_request_brief.py`,
+`test_offer_run.py`, `test_phase_five_attacks.py` and
+`test_phase_five_attacks_two.py`.
+
+The itinerary and offers suites pass at 441.
