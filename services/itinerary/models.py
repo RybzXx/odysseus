@@ -28,7 +28,19 @@ class NormalizedRequest:
     travel_year: str = ""
     special_notes: list[str] = field(default_factory=list)
     parse_warnings: list[str] = field(default_factory=list)
+    # The fields this request holds a default for, because the record said
+    # nothing. `pax` defaults to 2 and `day_count` to 5, so the value alone
+    # cannot tell a caller whether a customer asked for it (ws-03 D39).
+    #
+    # Only the normalizer knows. A caller that guessed by column name reads a
+    # record shape it was not told about as blank, and then a brief overwrites
+    # a value the record actually holds.
+    defaulted_fields: list[str] = field(default_factory=list)
     raw_record: dict[str, Any] = field(default_factory=dict)
+
+    def was_defaulted(self, field_name: str) -> bool:
+        """Post: whether this field came from a default rather than the record."""
+        return field_name in self.defaulted_fields
 
 
 @dataclass

@@ -32,7 +32,13 @@ from googleapiclient.discovery import build
 from services.itinerary.pipeline import config
 
 SCOPES = [
+    # The renderer creates a document and grants itself access to that document.
     "https://www.googleapis.com/auth/drive.file",
+    # A customer's conversation screenshots. `drive.file` reaches only files
+    # this service account created, so it answers 404 for a folder somebody
+    # else shared. Read only: nothing in this repository writes to Drive except
+    # the renderer, and the renderer uses `drive.file` above (ws-03 17.3, 17.8).
+    "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/spreadsheets",
 ]

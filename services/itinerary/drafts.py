@@ -20,6 +20,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Iterator, Optional
@@ -90,6 +92,11 @@ class ItineraryDraft:
     # `comments` is the raw material of a judged rule, and a note in that list
     # would enter the rule queue and read as the owner's words.
     notes: list = field(default_factory=list)       # list[{"text", "at", "source"}]
+    # The runs that produced the sequences above, oldest first (ws-03 D42).
+    # Only the ids: a run holds every prompt and every answer, and a draft that
+    # carried them would grow with each press until the sequence a reviewer
+    # came for sat below four prompts.
+    run_ids: list = field(default_factory=list)
     # Set once a document is generated, with the sequence that produced it.
     generated_from: Optional[str] = None
     doc_url: str = ""
@@ -129,23 +136,94 @@ def draft_id_for(request_row: dict, request_id: str = "") -> str:
 
 
 def _path(draft_id: str) -> str:
-    return os.path.join(ITINERARY_DRAFT_DIR, f"{draft_id}.json")
+    """Post: the file this draft names. Raises RecordIdError on anything else."""
+    from services.itinerary.record_paths import record_path
+
+    return record_path(ITINERARY_DRAFT_DIR, draft_id)
+
+
+# One lock per draft, held across load, change and save.
+#
+# Every writer below reads the draft, changes it and writes it back. Two
+# writers at once therefore lose one of the two changes: four presses of the
+# create button on 2026-09-07 wrote four run records and the draft named one.
+#
+# The lock is per process. One uvicorn worker serves this desk, so that is the
+# whole of it. A second worker would need a lock on disk.
+_draft_locks: dict = {}
+_locks_guard = threading.Lock()
+
+
+def draft_lock(draft_id: str) -> threading.RLock:
+    """
+    Post: the one lock for this draft, created on first use.
+
+    Reentrant, because a writer that calls another writer would otherwise wait
+    for itself.
+    """
+    with _locks_guard:
+        lock = _draft_locks.get(draft_id)
+        if lock is None:
+            lock = threading.RLock()
+            _draft_locks[draft_id] = lock
+        return lock
 
 
 def save(draft: ItineraryDraft) -> str:
-    """Post: the draft is on disk, written atomically."""
+    """
+    Post: the draft is on disk, written whole.
+
+    `os.replace` is atomic where it works. On Windows it raises
+    PermissionError while another handle holds the target open, and a reader
+    holds one for as long as it takes to parse. Two presses at once produced
+    that error twice on 2026-09-07, so the replace is retried briefly rather
+    than losing the write.
+    """
     os.makedirs(ITINERARY_DRAFT_DIR, exist_ok=True)
     target = _path(draft.draft_id)
-    temporary = target + ".tmp"
+    temporary = f"{target}.{os.getpid()}.{threading.get_ident()}.tmp"
     with open(temporary, "w", encoding="utf-8") as fh:
         json.dump(asdict(draft), fh, ensure_ascii=False, indent=2)
-    os.replace(temporary, target)
+    _replace_with_retry(temporary, target)
     return target
 
 
+def _replace_with_retry(temporary: str, target: str,
+                        attempts: int = 10, pause: float = 0.05) -> None:
+    """
+    Post: `temporary` has become `target`.
+
+    Blame: a PermissionError that outlasts every attempt is raised, and the
+    temporary file is removed. Swallowing it would report a saved draft that
+    holds the older answer.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(temporary, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                try:
+                    os.remove(temporary)
+                except OSError:
+                    pass
+                raise
+            time.sleep(pause)
+
+
 def load(draft_id: str) -> Optional[ItineraryDraft]:
-    """Post: the draft, or None when there is no such thread."""
-    path = _path(draft_id)
+    """
+    Post: the draft, or None when there is no such thread.
+
+    An id that names no draft and an id that could name no draft both answer
+    None, which is what every caller already does with a missing draft.
+    """
+    from services.itinerary.record_paths import RecordIdError
+
+    try:
+        path = _path(draft_id)
+    except RecordIdError:
+        return None
     if not os.path.exists(path):
         return None
     try:
@@ -203,19 +281,22 @@ def open_draft(request_row: dict, origin: str = ORIGIN_TYPED,
     """
     named = (request_id or request_row.get("Customize") or "").strip()
     draft_id = draft_id_for(request_row, request_id)
-    existing = load(draft_id)
-    if existing is not None:
-        return existing
-    draft = ItineraryDraft(
-        draft_id=draft_id,
-        request_row=dict(request_row),
-        origin=origin,
-        request_id=named,
-        parse_warnings=list(parse_warnings or []),
-        created_at=_now(),
-    )
-    save(draft)
-    return draft
+    # The read and the create are one act. Two callers opening the same request
+    # at once would otherwise both find nothing and both create.
+    with draft_lock(draft_id):
+        existing = load(draft_id)
+        if existing is not None:
+            return existing
+        draft = ItineraryDraft(
+            draft_id=draft_id,
+            request_row=dict(request_row),
+            origin=origin,
+            request_id=named,
+            parse_warnings=list(parse_warnings or []),
+            created_at=_now(),
+        )
+        save(draft)
+        return draft
 
 
 def add_sequence(draft_id: str, sequence: ProposedSequence) -> ItineraryDraft:
@@ -231,13 +312,14 @@ def add_sequence(draft_id: str, sequence: ProposedSequence) -> ItineraryDraft:
     """
     if sequence.source not in (SOURCE_MODEL, SOURCE_RULES):
         raise DraftError(f"unknown source: {sequence.source!r}")
-    draft = load(draft_id)
-    if draft is None:
-        raise DraftError(f"no such draft: {draft_id}")
-    sequence.proposed_at = sequence.proposed_at or _now()
-    draft.sequences.append(sequence)
-    save(draft)
-    return draft
+    with draft_lock(draft_id):
+        draft = load(draft_id)
+        if draft is None:
+            raise DraftError(f"no such draft: {draft_id}")
+        sequence.proposed_at = sequence.proposed_at or _now()
+        draft.sequences.append(sequence)
+        save(draft)
+        return draft
 
 
 def comment_id_for(draft_id: str, text: str, at: str) -> str:
@@ -261,18 +343,19 @@ def add_comment(draft_id: str, text: str) -> ItineraryDraft:
     """
     if not (text or "").strip():
         raise DraftError("a comment cannot be empty")
-    draft = load(draft_id)
-    if draft is None:
-        raise DraftError(f"no such draft: {draft_id}")
-    at = _now()
-    draft.comments.append({
-        "comment_id": comment_id_for(draft_id, text.strip(), at),
-        "text": text.strip(),
-        "at": at,
-        "rule_state": RULE_STATE_NEW,
-    })
-    save(draft)
-    return draft
+    with draft_lock(draft_id):
+        draft = load(draft_id)
+        if draft is None:
+            raise DraftError(f"no such draft: {draft_id}")
+        at = _now()
+        draft.comments.append({
+            "comment_id": comment_id_for(draft_id, text.strip(), at),
+            "text": text.strip(),
+            "at": at,
+            "rule_state": RULE_STATE_NEW,
+        })
+        save(draft)
+        return draft
 
 
 NOTE_SOURCE_CHECK = "check"    # the deterministic check wrote it
@@ -303,18 +386,44 @@ def add_note(draft_id: str, text: str, source: str = NOTE_SOURCE_MODEL) -> Itine
         raise DraftError("a note cannot be empty")
     if source not in NOTE_SOURCES:
         raise DraftError(f"a note's source must be one of {', '.join(NOTE_SOURCES)}")
-    draft = load(draft_id)
-    if draft is None:
-        raise DraftError(f"no such draft: {draft_id}")
+    with draft_lock(draft_id):
+        draft = load(draft_id)
+        if draft is None:
+            raise DraftError(f"no such draft: {draft_id}")
 
-    cleaned = text.strip()
-    if any(note.get("text") == cleaned and note.get("source") == source
-           for note in draft.notes):
+        cleaned = text.strip()
+        if any(note.get("text") == cleaned and note.get("source") == source
+               for note in draft.notes):
+            return draft
+
+        draft.notes.append({"text": cleaned, "at": _now(), "source": source})
+        save(draft)
         return draft
 
-    draft.notes.append({"text": cleaned, "at": _now(), "source": source})
-    save(draft)
-    return draft
+
+def add_run_id(draft_id: str, run_id: str) -> ItineraryDraft:
+    """
+    Name a run this draft produced (ws-03 D42, spec item 16.2).
+
+    Pre:  the draft exists and `run_id` is not empty.
+    Post: the id is last in `run_ids`, and an id already there is not added
+          again. Earlier ids are kept, because a second press is a second run
+          and both records stand.
+
+    Blame: this stores an id and never reads the record behind it. A run whose
+    file is gone leaves an id that resolves to nothing, which a reader can see.
+    Storing the record here instead would grow the draft on every press.
+    """
+    if not (run_id or "").strip():
+        raise DraftError("a run id cannot be empty")
+    with draft_lock(draft_id):
+        draft = load(draft_id)
+        if draft is None:
+            raise DraftError(f"no such draft: {draft_id}")
+        if run_id not in draft.run_ids:
+            draft.run_ids.append(run_id)
+            save(draft)
+        return draft
 
 
 def set_comment_rule_state(draft_id: str, comment_id: str, state: str) -> ItineraryDraft:
@@ -330,14 +439,15 @@ def set_comment_rule_state(draft_id: str, comment_id: str, state: str) -> Itiner
     """
     if state not in RULE_STATES:
         raise DraftError(f"unknown rule state: {state!r}")
-    draft = load(draft_id)
-    if draft is None:
-        raise DraftError(f"no such draft: {draft_id}")
-    for comment in draft.comments:
-        if comment.get("comment_id") == comment_id:
-            comment["rule_state"] = state
-            save(draft)
-            return draft
+    with draft_lock(draft_id):
+        draft = load(draft_id)
+        if draft is None:
+            raise DraftError(f"no such draft: {draft_id}")
+        for comment in draft.comments:
+            if comment.get("comment_id") == comment_id:
+                comment["rule_state"] = state
+                save(draft)
+                return draft
     raise DraftError(f"no comment {comment_id} on {draft_id}")
 
 

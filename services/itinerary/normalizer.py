@@ -62,34 +62,124 @@ HOTEL_TIER_MAP = {
 }
 
 
-def _parse_int_safe(val: Any, default: int = 1) -> int:
+# What a request may hold, before it stops describing a trip.
+#
+# The catalogue holds 60 active day templates and the longest sold route is far
+# below that, so a request over 60 days is a misreading rather than a trip.
+# `DEFAULT_GROUP_SIZES` tops out at 22 travellers, and 100 leaves room for a
+# charter.
+#
+# The ceilings bound the request, not the reader that filled it. A record
+# holding a billion days reached the candidate builder before this, and
+# `tied_routes` then sorted every route by its distance from a billion
+# (measured 2026-09-08).
+MAX_DAY_COUNT = 60
+MAX_PARTY_SIZE = 100
+
+
+def _parse_int_safe(val: Any, default: int = 1, ceiling: int = MAX_PARTY_SIZE) -> int:
+    """
+    Post: a whole number between 1 and `ceiling`.
+
+    Blame: a list, a dict or a boolean is not a number and answers the default.
+    `str({"n": 8})` holds an 8, so a container used to read as eight.
+    """
+    if isinstance(val, bool) or isinstance(val, (list, tuple, set, dict)):
+        return default
     if val is None or val == "":
         return default
     if isinstance(val, int):
-        return max(val, 1)
+        return min(max(val, 1), ceiling)
     m = re.search(r"\d+", str(val))
     if m:
         try:
-            return max(int(m.group(0)), 1)
+            return min(max(int(m.group(0)), 1), ceiling)
         except ValueError:
             return default
     return default
 
 
 def _resolve_day_count(val: Any) -> int:
+    if isinstance(val, bool) or isinstance(val, (list, tuple, set, dict)):
+        return 5
     if val is None or val == "":
         return 5
     if isinstance(val, int):
-        return max(val, 1)
+        return min(max(val, 1), MAX_DAY_COUNT)
     s = str(val).strip()
     range_match = re.search(r"(\d+)\s*[-–—to]+\s*(\d+)", s, re.IGNORECASE)
     if range_match:
         try:
             low, high = int(range_match.group(1)), int(range_match.group(2))
-            return max(round((low + high) / 2), 1)
+            return min(max(round((low + high) / 2), 1), MAX_DAY_COUNT)
         except ValueError:
             pass
-    return _parse_int_safe(s, default=5)
+    return _parse_int_safe(s, default=5, ceiling=MAX_DAY_COUNT)
+
+
+def _holds_a_number(value: Any) -> bool:
+    """
+    Post: whether a record value gives a whole number a resolver can read.
+
+    Emptiness is not the test. `_resolve_day_count` answers 5 for "eight" as
+    well as for "", and a caller told that the record gave a value would then
+    refuse a brief that read the real number (measured 2026-09-08).
+    """
+    if isinstance(value, bool) or isinstance(value, (list, tuple, set, dict)):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    text = str(value or "").strip()
+    if not text or text.casefold() in _QUEUE_PLACEHOLDERS:
+        return False
+    return bool(re.search(r"\d", text))
+
+
+def _names_a_region(value: Any) -> bool:
+    """
+    Post: whether a record value names at least one region the catalogue holds.
+
+    `_normalize_regions` answers ["Central Iraq"] for an empty list and for a
+    list of placeholders alike, so its result cannot say whether a customer
+    named anything. Reading the raw value here is what tells the two apart.
+    """
+    if value is None:
+        return False
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.replace(";", ",").split(",")]
+    elif isinstance(value, (list, set, tuple)):
+        parts = [str(p).strip() for p in value]
+    else:
+        return False
+    return any(p and p.casefold() not in _REGION_PLACEHOLDERS for p in parts)
+
+
+def defaulted_fields_of(record: dict, *, day_value: Any, pax_value: Any,
+                        raw_regions: Any, date_value: Any) -> list:
+    """
+    Post: the names of the request fields that carry a default, because the
+          record gave nothing a resolver could use.
+
+    Pre:  each argument is the raw value the branch read out of the record,
+          before any resolver ran. `raw_regions` is the record's own value and
+          never the normalised list, which is never empty.
+
+    A resolved value cannot answer this question: `_resolve_day_count` returns
+    5 for an empty cell, for a placeholder and for unreadable text. A caller
+    that needs to know asks here rather than guessing a column name, because a
+    record shape this module was not told about would read as blank and let a
+    model overwrite a real value (ws-03 D39).
+    """
+    defaulted = []
+    if not _holds_a_number(day_value):
+        defaulted.append("day_count")
+    if not _holds_a_number(pax_value):
+        defaulted.append("pax")
+    if not _names_a_region(raw_regions):
+        defaulted.append("requested_regions")
+    if _parse_exact_date(date_value) is None:
+        defaulted.append("start_date")
+    return defaulted
 
 
 def _resolve_vehicle(pax: int) -> str:
@@ -168,12 +258,22 @@ def normalize_curated_record(key: str, data: dict) -> NormalizedRequest:
     phone_raw = data.get("phone") or ""
     phone = f"{country_code} {phone_raw}".strip() if phone_raw else None
 
-    pax = _parse_int_safe(data.get("numberOfPeople"), default=2)
-    day_count = _resolve_day_count(data.get("tripDays"))
+    # A graded record names its length `day_count`, because `sequence_grade`
+    # writes it, not the intake form. Without this a sold eight-day trip
+    # normalised to the five-day default and the rules proposed three days for
+    # every graded request (measured 2026-09-07 over ten of them).
+    raw_days = data.get("tripDays")
+    if raw_days is None or str(raw_days).strip() == "":
+        raw_days = data.get("day_count")
+    raw_pax = data.get("numberOfPeople")
+
+    pax = _parse_int_safe(raw_pax, default=2)
+    day_count = _resolve_day_count(raw_days)
     tour_type = "group" if pax >= 10 else "individual"
     hotel_tier = _resolve_hotel_tier(data.get("accommodation"))
     vehicle_type = _resolve_vehicle(pax)
-    regions = _normalize_regions(data.get("regions"))
+    raw_regions = data.get("regions")
+    regions = _normalize_regions(raw_regions)
 
     date_mode = (data.get("travelDateMode") or "").strip().lower()
     exact_date = _parse_exact_date(data.get("exactDate")) if date_mode == "exact" else None
@@ -211,6 +311,9 @@ def normalize_curated_record(key: str, data: dict) -> NormalizedRequest:
         special_notes=special_notes,
         parse_warnings=[f"the catalogue has no region called {r}"
                         for r in unmapped_regions(regions)],
+        defaulted_fields=defaulted_fields_of(
+            data, day_value=raw_days, pax_value=raw_pax, raw_regions=raw_regions,
+            date_value=data.get("exactDate") if date_mode == "exact" else None),
         raw_record=data,
     )
 
@@ -250,6 +353,8 @@ def normalize_queue_record(key: str, record: dict) -> NormalizedRequest:
     email = record.get("customer_email") or record.get("respondent_email") or None
     phone = _queue_value(record, "phone") or None
 
+    raw_days = _queue_value(record, "trip_days")
+    raw_pax = _queue_value(record, "number_of_people")
     day_count = _resolve_day_count(record.get("trip_days"))
     # Read, not assumed. This branch used to hard-code pax 2, tier 3star and an
     # individual tour whatever the record said, so a request for one traveller
@@ -294,6 +399,9 @@ def normalize_queue_record(key: str, record: dict) -> NormalizedRequest:
         special_notes=special_notes,
         parse_warnings=[f"the catalogue has no region called {r}"
                         for r in unmapped_regions(regions)],
+        defaulted_fields=defaulted_fields_of(
+            record, day_value=raw_days, pax_value=raw_pax,
+            raw_regions=record.get("regions"), date_value=travel_date_str),
         raw_record=record,
     )
 
