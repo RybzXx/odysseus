@@ -1006,6 +1006,17 @@ async def serve_bilweekend_role(request: Request):
     )
     return serve_html_with_nonce(request, document_path)
 
+@app.get("/website-request-process")
+async def serve_website_request_process(request: Request):
+    """Serve the plain-language website request and payment process."""
+    document_path = abs_join(BASE_DIR, "docs/website-request-process.html")
+    return serve_html_with_nonce(request, document_path)
+
+@app.get("/website-work-and-ideas.pdf")
+async def serve_website_work_and_ideas_pdf():
+    """Serve the current work and ideas document."""
+    return FileResponse(abs_join(BASE_DIR, "output/pdf/website-work-and-ideas.pdf"), media_type="application/pdf")
+
 @app.get("/overview")
 async def serve_overview(request: Request):
     return await serve_index(request)

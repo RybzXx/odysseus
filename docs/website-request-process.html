@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Website request process and additional work payment terms.">
+<title>Website Request Process</title>
+<style>
+  :root { --paper:#fbfcfa; --panel:#f1f5f2; --ink:#16211e; --muted:#5c6b67; --rule:#d8e2dd; --accent:#0e6e63; --accent-soft:#e4f0ed; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font-family:Inter,Segoe UI,Arial,sans-serif; line-height:1.55; }
+  main { width:min(900px, calc(100% - 32px)); margin:40px auto 80px; }
+  header { border-bottom:2px solid var(--ink); padding-bottom:22px; margin-bottom:28px; }
+  h1,h2,h3 { line-height:1.15; margin:0 0 12px; }
+  h1 { font:600 38px Georgia,serif; letter-spacing:-.02em; }
+  h2 { font-size:22px; margin-top:34px; }
+  h3 { font-size:16px; margin-top:24px; }
+  p { max-width:72ch; margin:0 0 14px; }
+  .eyebrow { color:var(--accent); font-size:12px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; margin-bottom:10px; }
+  .meta { color:var(--muted); font-size:14px; }
+  .toolbar { display:flex; gap:10px; flex-wrap:wrap; margin:20px 0 30px; }
+  button { border:1px solid var(--accent); background:var(--accent); color:white; border-radius:6px; padding:10px 15px; font:600 14px inherit; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--accent); }
+  .notice { background:var(--accent-soft); border-left:4px solid var(--accent); padding:16px 18px; margin:18px 0; }
+  .sheet { border:1px solid var(--rule); background:white; padding:24px; margin-top:20px; }
+  .label { color:var(--muted); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+  .line { border-bottom:1px solid var(--rule); min-height:28px; margin:4px 0 18px; }
+  .box { border:1px solid var(--rule); min-height:76px; margin:6px 0 18px; padding:10px; color:#8b9792; }
+  .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0 20px; }
+  th,td { border:1px solid var(--rule); text-align:left; vertical-align:top; padding:10px; }
+  th { background:var(--panel); font-size:13px; }
+  ul,ol { margin:8px 0 18px 22px; padding:0; }
+  li { margin:5px 0; }
+  .small { color:var(--muted); font-size:13px; }
+  .status { color:var(--accent); min-height:20px; font-size:13px; }
+  @media (max-width:650px) { main { width:min(100% - 22px, 900px); margin-top:24px; } h1 { font-size:31px; } .grid { grid-template-columns:1fr; } .sheet { padding:17px; } }
+  @media print { .toolbar,.status { display:none; } body { background:white; } main { width:auto; margin:0; } .sheet { break-inside:avoid; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Bil Weekend · internal process</div>
+    <h1>Website Request Process</h1>
+    <p class="meta">An email template and a plain-language request form.</p>
+  </header>
+
+  <div class="toolbar" aria-label="Copy actions">
+    <button id="copyAll" type="button">Copy email and form</button>
+    <button id="copyEmail" class="secondary" type="button">Copy email only</button>
+    <button id="copyForm" class="secondary" type="button">Copy form only</button>
+    <span id="status" class="status" role="status" aria-live="polite"></span>
+  </div>
+
+  <article id="email" class="sheet">
+    <div class="eyebrow">Email</div>
+    <p><strong>Subject:</strong> Website Request Process and Additional Work Payment Terms</p>
+    <p>Hello,</p>
+    <p>To reduce confusion, every new website request must be written down before work starts. The request should state the intended result, the work included, the work excluded, the person who will provide information, and the person who will approve the result.</p>
+    <h2>Normal work and additional work</h2>
+    <p>Normal work includes keeping existing websites working and keeping their regular information current. New features, new sections, major changes, new processes, and separate projects are additional work.</p>
+    <p>The attached form records which category applies. It also records the expected result and the way completion will be checked.</p>
+    <h2>Payment for additional work</h2>
+    <p>The company is currently facing low liquidity and significant debt. Approved additional work may therefore remain unpaid until the financial crisis ends. The work remains recorded as payable.</p>
+    <p>Each approved request receives a value when the work is created or approved. The value is calculated as:</p>
+    <div class="notice"><strong>Base value + impact adjustment = total recorded value</strong></div>
+    <p>The base value is agreed before the work starts. The impact adjustment uses one of four categories: limited, useful, important, or major. The selected category and its percentage must be written in the request form.</p>
+    <p>Large requests use stages. Each stage has its own result, acceptance check, base value, impact category, and payment record.</p>
+    <h2>When payment becomes due</h2>
+    <p>Payment becomes due after the agreed result is complete and accepted by the named approver. If the financial crisis delays payment, the request must record a written payment trigger. This trigger can be management confirmation that the crisis ended, confirmation that funds became available, an agreed review date, or a new written payment agreement.</p>
+    <h2>How to request work</h2>
+    <p>Complete the form below for each request. A change to the approved scope requires a new review. The review records any change to the result, value, impact category, stages, or acceptance check.</p>
+    <p>Thank you,<br>Mahdi</p>
+  </article>
+
+  <section id="form" class="sheet">
+    <div class="eyebrow">Document below the email</div>
+    <h2>Website Request Form</h2>
+    <p class="small">Complete one form for one request. Use ordinary words. Add examples when they help.</p>
+    <h3>1. Request identity</h3>
+    <div class="grid"><div><div class="label">Request name</div><div class="line"></div></div><div><div class="label">Date</div><div class="line"></div></div><div><div class="label">Requester</div><div class="line"></div></div><div><div class="label">Business owner</div><div class="line"></div></div><div><div class="label">Person who approves the result</div><div class="line"></div></div><div><div class="label">Area or department</div><div class="line"></div></div></div>
+    <h3>2. The problem</h3><p class="small">What problem are you trying to solve?</p><div class="box"></div>
+    <h3>3. The people affected</h3><p class="small">Who needs this? Who will use it? Who will keep the information current?</p><div class="box"></div>
+    <h3>4. The desired result</h3><p class="small">What should be possible after the work is complete?</p><div class="box"></div>
+    <h3>5. The requested change</h3><p class="small">What should be added, changed, removed, or improved?</p><div class="box"></div>
+    <h3>6. Scope</h3><div class="grid"><div><div class="label">Work included</div><div class="box"></div></div><div><div class="label">Work excluded</div><div class="box"></div></div><div><div class="label">Information, files, or images required</div><div class="box"></div></div><div><div class="label">People or approvals required</div><div class="box"></div></div></div>
+    <h3>7. Completion check</h3><p class="small">How will you know that the work is complete?</p><div class="box"></div>
+    <h3>8. Importance and timing</h3><table><tr><th>Importance</th><th>Choose one</th><th>Desired date or event</th></tr><tr><td>Nice to have · Useful · Important · Urgent</td><td></td><td></td></tr></table><div class="label">What happens if the work is delayed?</div><div class="box"></div>
+    <h3>9. Dependencies</h3><p class="small">Who must provide information? Does another activity need to finish first?</p><div class="box"></div>
+    <h3>10. Work category</h3><table><tr><th>Category</th><th>Mark one</th></tr><tr><td>Normal responsibility</td><td>☐</td></tr><tr><td>Additional paid work</td><td>☐</td></tr><tr><td>Not yet decided</td><td>☐</td></tr></table>
+    <h3>11. Payment record for additional work</h3><div class="grid"><div><div class="label">Base value</div><div class="line"></div></div><div><div class="label">Currency</div><div class="line"></div></div><div><div class="label">Impact category</div><div class="line"></div></div><div><div class="label">Impact percentage</div><div class="line"></div></div><div><div class="label">Total recorded value</div><div class="line"></div></div><div><div class="label">Payment trigger</div><div class="line"></div></div></div>
+    <h3>12. Stages for a large request</h3><table><tr><th>Stage</th><th>Expected result</th><th>Acceptance check</th><th>Value</th></tr><tr><td>1</td><td></td><td></td><td></td></tr><tr><td>2</td><td></td><td></td><td></td></tr><tr><td>3</td><td></td><td></td><td></td></tr></table>
+    <h3>13. Approval</h3><div class="grid"><div><div class="label">Requester approval</div><div class="line"></div></div><div><div class="label">Approver name</div><div class="line"></div></div><div><div class="label">Approval date</div><div class="line"></div></div><div><div class="label">Changes after approval</div><div class="line"></div></div></div>
+  </section>
+</main>
+<script>
+(() => {
+  const status = document.getElementById('status');
+  const textOf = (node) => node.innerText.replace(/\n{3,}/g, '\n\n').trim();
+  const htmlOf = (node) => node.innerHTML;
+  const copy = async (node, label) => {
+    const text = textOf(node);
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([new ClipboardItem({'text/html': new Blob([htmlOf(node)], {type:'text/html'}), 'text/plain': new Blob([text], {type:'text/plain'})})]);
+      } else {
+        const range = document.createRange(); range.selectNode(node);
+        const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        document.execCommand('copy'); selection.removeAllRanges();
+      }
+      status.textContent = label + ' copied. Paste it into your email or document.';
+    } catch (error) { status.textContent = 'Copy did not work. Select the text and press Ctrl+C.'; }
+  };
+  document.getElementById('copyEmail').addEventListener('click', () => copy(document.getElementById('email'), 'Email'));
+  document.getElementById('copyForm').addEventListener('click', () => copy(document.getElementById('form'), 'Form'));
+  document.getElementById('copyAll').addEventListener('click', () => copy(document.querySelector('main'), 'Email and form'));
+})();
+</script>
+</body>
+</html>
