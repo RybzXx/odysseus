@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Bil Weekend Operations Manager role and responsibilities.">
+<title>Bil Weekend Operations Manager</title>
+
+<style>
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/static/fonts/Inter-Regular.woff2") format("woff2");
+  }
+
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/static/fonts/Inter-Medium.woff2") format("woff2");
+  }
+
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("/static/fonts/Inter-SemiBold.woff2") format("woff2");
+  }
+
+  /* ── Tokens. The bare :root holds the complete light palette. ───────────── */
+  :root {
+    --paper:      #FCFCFA;
+    --panel:      #F3F5F3;
+    --ink:        #16211E;
+    --muted:      #5C6B67;
+    --rule:       #DCE3E0;
+    --rule-firm:  #B6C2BE;
+    --accent:     #0E6E63;
+    --accent-dim: #E4EFEC;
+
+    --serif: "Iowan Old Style", Georgia, "Times New Roman", serif;
+    --sans:  "Inter", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono:  "SF Mono", Consolas, "Liberation Mono", monospace;
+
+    --measure: 68ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #101815;
+      --panel:      #17211D;
+      --ink:        #E7EDEA;
+      --muted:      #93A39E;
+      --rule:       #26312D;
+      --rule-firm:  #3B4A45;
+      --accent:     #4FBFAE;
+      --accent-dim: #17251F;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #101815;
+    --panel:      #17211D;
+    --ink:        #E7EDEA;
+    --muted:      #93A39E;
+    --rule:       #26312D;
+    --rule-firm:  #3B4A45;
+    --accent:     #4FBFAE;
+    --accent-dim: #17251F;
+  }
+
+  /* ── Page ──────────────────────────────────────────────────────────────── */
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 78ch;
+    margin: 0 auto;
+    padding: clamp(2rem, 6vw, 4.5rem) clamp(1.1rem, 5vw, 3rem) 5rem;
+  }
+
+  article { display: flex; flex-direction: column; gap: 2.6rem; }
+
+  /* ── Masthead ──────────────────────────────────────────────────────────── */
+  .masthead { display: flex; flex-direction: column; gap: 0.35rem; }
+
+  .firm {
+    font-family: var(--sans);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .venture {
+    font-size: 0.86rem;
+    color: var(--muted);
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(1.9rem, 5vw, 2.6rem);
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.012em;
+    text-wrap: balance;
+    margin: 0.5rem 0 0;
+  }
+
+  .standfirst {
+    font-family: var(--serif);
+    font-size: 1.12rem;
+    color: var(--muted);
+    max-width: var(--measure);
+    margin: 0.15rem 0 0;
+  }
+
+  .byline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.6rem;
+    margin-top: 1.1rem;
+    padding-top: 1rem;
+    border-top: 2px solid var(--rule-firm);
+    font-size: 0.86rem;
+    color: var(--muted);
+  }
+  .byline b { color: var(--ink); font-weight: 500; }
+
+  /* ── Parts and headings ────────────────────────────────────────────────── */
+  section { display: flex; flex-direction: column; gap: 1rem; }
+
+  .part {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding-bottom: 0.55rem;
+    border-bottom: 1px solid var(--rule-firm);
+  }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 1.6rem;
+    font-weight: 600;
+    line-height: 1.22;
+    letter-spacing: -0.008em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  h3 {
+    font-family: var(--serif);
+    font-size: 1.16rem;
+    font-weight: 600;
+    line-height: 1.3;
+    text-wrap: balance;
+    margin: 1.4rem 0 0;
+  }
+
+  h3 .qualifier {
+    display: block;
+    font-family: var(--sans);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.15rem;
+  }
+
+  p { margin: 0; max-width: var(--measure); }
+  section > p + p, section > div > p + p { margin-top: 0.85rem; }
+  h3 + p { margin-top: 0.5rem; }
+
+  strong { font-weight: 600; }
+  code { font-family: var(--mono); font-size: 0.88em; color: var(--accent); }
+
+  ul { margin: 0.6rem 0 0; padding-left: 1.15rem; max-width: var(--measure); }
+  li { margin-bottom: 0.3rem; }
+  li::marker { color: var(--rule-firm); }
+
+  .lede {
+    font-family: var(--serif);
+    font-size: 1.14rem;
+  }
+
+  /* ── Tables ────────────────────────────────────────────────────────────── */
+  .wide { overflow-x: auto; margin-top: 0.4rem; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 30rem;
+    font-size: 0.92rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  th, td {
+    text-align: left;
+    vertical-align: top;
+    padding: 0.6rem 1rem 0.6rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  th:last-child, td:last-child { padding-right: 0; }
+
+  thead th {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1.5px solid var(--rule-firm);
+    padding-bottom: 0.5rem;
+  }
+
+  tbody tr:last-child td { border-bottom: 1.5px solid var(--rule-firm); }
+
+  td.reported {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  td.owns { font-weight: 500; }
+  td.when { font-family: var(--mono); font-size: 0.82rem; white-space: nowrap; color: var(--muted); }
+
+  .caption {
+    font-size: 0.84rem;
+    color: var(--muted);
+    max-width: var(--measure);
+    margin-top: 0.7rem;
+  }
+
+  /* ── The one lifted block, used once ───────────────────────────────────── */
+  .rule-statement {
+    background: var(--accent-dim);
+    border-left: 3px solid var(--accent);
+    padding: 1.1rem 1.3rem;
+    max-width: var(--measure);
+    font-family: var(--serif);
+    font-size: 1.1rem;
+  }
+  .rule-statement p + p { margin-top: 0.6rem; }
+
+  /* ── Copy control ──────────────────────────────────────────────────────── */
+  .toolbar {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10;
+  }
+
+  #copy {
+    font-family: var(--sans);
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--paper);
+    background: var(--accent);
+    border: none;
+    border-radius: 3px;
+    padding: 0.55rem 1rem;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  }
+  #copy:hover { filter: brightness(1.08); }
+  #copy:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  #copy[data-state="done"] { background: var(--ink); color: var(--paper); }
+  #copy[data-state="failed"] { background: #9B2C2C; color: #fff; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    #copy { transition: background 140ms ease, filter 140ms ease; }
+  }
+
+  @media print {
+    .toolbar { display: none; }
+    body { background: #fff; color: #000; }
+    .sheet { max-width: none; padding: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button id="copy" type="button" data-state="idle">Copy for Google Docs</button>
+</div>
+
+<div class="sheet">
+<article id="document">
+
+  <header class="masthead">
+    <div class="firm">Rehlat Al-Utla for Travel and Tourism</div>
+    <div class="venture">Venture: Bil Weekend</div>
+    <h1>Role and Responsibilities — Operations Manager</h1>
+    <p class="standfirst">What this post owns, who it deals with, and what falls outside it.</p>
+    <div class="byline">
+      <span>Prepared by <b>M Mahdi AboAlQamachi</b></span>
+      <span>Date prepared <b>9 September 2026</b></span>
+    </div>
+  </header>
+
+  <!-- ═══════════════ PART ONE ═══════════════ -->
+  <section>
+    <div class="part">The role</div>
+
+    <p class="lede">The Operations Manager turns an enquiry into a trip that can run, and holds the commercial relationships that supply it. The post prices the trip, writes the offer, commits the hotels, guides and vehicles behind it, obtains the entry documents, and represents the company to the trade abroad.</p>
+
+    <p>The work is reported to management in four categories. Those four categories cover six distinct areas of ownership.</p>
+
+    <div class="wide">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Reported as</th>
+            <th scope="col">What the post owns</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="reported">Communications</td><td class="owns">Partner and commercial relations</td></tr>
+          <tr><td class="reported">Operations</td><td class="owns">Quotation and itinerary authorship</td></tr>
+          <tr><td class="reported">Operations</td><td class="owns">Resources, suppliers and tour delivery</td></tr>
+          <tr><td class="reported">Operations</td><td class="owns">Travel documents and government liaison</td></tr>
+          <tr><td class="reported">Exhibitions</td><td class="owns">Fairs, industry bodies, creators and press</td></tr>
+          <tr><td class="reported">Office work</td><td class="owns">Company systems and administration</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="caption">Three separate areas of ownership are reported under one word. Each is described in full below.</p>
+
+    <p>The post sits in Operations. It works with management, communications, customer operations and administration. A request that needs pricing, a supplier commitment or a partner decision reaches this post.</p>
+
+    <p><strong>Building new software is not part of this post.</strong> Keeping the published websites correct and available is. The difference is set out in <em>Work outside the post</em>, below.</p>
+  </section>
+
+  <!-- ═══════════════ PART TWO ═══════════════ -->
+  <section>
+    <div class="part">The role in detail</div>
+
+    <h3><span class="qualifier">Communications</span>Partner and commercial relations</h3>
+    <p>The post holds the company's inbound trade accounts and is the primary author of the offers issued to them.</p>
+    <ul>
+      <li><strong>Accounts held:</strong> Against the Compass, Macondo Expeditions, Pinto Lopes Viagens, Oriental Tours, Kanon, Nomadic Tribe, Atlaseek, Rift Valley, 365 Travel Asia, Shukran Middle East, BEFRS, Migola Travel, TravelShop Turkey, Qaflh, Viajes y Viajes, Value Group, The Gallery Travel and Orient DMC.</li>
+      <li><strong>Season rate cards</strong> issued to partners for the 2026 and 2027 seasons.</li>
+      <li><strong>The representative agreement</strong> that governs how a foreign operator sells Iraq through the company.</li>
+      <li><strong>Guaranteed-departure programmes</strong>, published in English and in Spanish.</li>
+      <li><strong>Familiarisation trips</strong> — design, hosting and follow-through, which is how a new partner account opens.</li>
+    </ul>
+
+    <h3><span class="qualifier">Operations</span>Quotation and itinerary authorship</h3>
+    <p>The post prices the trip and writes the document the customer reads.</p>
+    <p>It owns the commercial model: a default markup, a bank-transfer surcharge, free-of-charge places above set party sizes, and the dinar-to-dollar conversion applied to hotel rates quoted in IQD. It also owns the day-code vocabulary the company builds routes from — <code>ARRBG</code> for a Baghdad arrival, <code>NA2BG</code> for Nasiriyah back to Baghdad, <code>MOBKHEB</code> for Mosul through Bakhdida to Erbil — 62 coded days that compose into a trip of any length.</p>
+    <p>Recurring work: quotations for private parties and for groups, revision after a partner's counter-proposal, and the offer document itself.</p>
+
+    <h3><span class="qualifier">Operations</span>Resources, suppliers and tour delivery</h3>
+    <p>The post commits the company's supply before a customer pays, and maintains the rate catalogue that commitment is priced from.</p>
+    <ul>
+      <li><strong>20 contracted hotels</strong> across ten cities, each at three star tiers, quoted in IQD or USD.</li>
+      <li><strong>Three guide grades</strong> — the main English-speaking guide, the local city guide and coordinator, and a female guide for shrine access.</li>
+      <li><strong>Four vehicle classes</strong>, from a standard car to a group coach.</li>
+      <li><strong>76 ticketed sites</strong> and three food tiers.</li>
+    </ul>
+    <p>Recurring work: room blocks and B2B rate agreements with Millennium, Rotana, DDK, Ramada Plaza Mosul, Mövenpick and Baalbeck Sama; guide and driver assignment against each departure; and cross-border transfers. The post also leads tours on the ground.</p>
+
+    <h3><span class="qualifier">Operations</span>Travel documents and government liaison</h3>
+    <p>The post is the company's route into the Iraqi visa system, and operates the eVisa portal account directly.</p>
+    <p>It handles group passport collection, Kurdistan region visas, fast-track arrival, and the government paperwork behind a group entry. It also obtains outbound documents for staff and partners — Jordan, Egypt, the United Arab Emirates and Schengen.</p>
+
+    <h3><span class="qualifier">Exhibitions</span>Fairs, industry bodies, creators and press</h3>
+    <p>The post represents the company outside Iraq.</p>
+    <ul>
+      <li><strong>Fairs attended or booked:</strong> FITUR Madrid, ITB Berlin, WTM London, ATM Dubai, EMITT Istanbul, Uzakrota Baku, Uzakrota Global Istanbul, the DMC dal Mondo roadshow across Italy, and FiNE Exclusive London.</li>
+      <li><strong>Industry bodies:</strong> the IITC General Assembly, the SILT General Assembly, and the Relink forum.</li>
+      <li><strong>Written assessment</strong> after each fair. The 2025 FITUR report covered stand placement, design execution, programming, booth circulation and staffing.</li>
+      <li><strong>Creator and press relations:</strong> the Atlaseek hub, Paulina on the Road, Nora the Explorah, Kach, Dave Mani, Alex Ayling, and a Deutsche Welle enquiry on tourism in Iraq.</li>
+    </ul>
+
+    <h3><span class="qualifier">Office work</span>Company systems and administration</h3>
+    <p>The post runs the company's own infrastructure.</p>
+    <ul>
+      <li><strong>Mail and accounts:</strong> provisioned the <code>bilweekend.iq</code> mail domain and issues Google Workspace accounts to staff.</li>
+      <li><strong>Domains and DNS</strong> for <code>bilweekend.com</code>, <code>rehlatalutla.com.iq</code> and <code>downtown-hotel.iq</code>, including renewals.</li>
+      <li><strong>Brand and print:</strong> the destination catalogue, business cards, A4 material, guide uniform artwork, and the company profile.</li>
+      <li><strong>Corporate documents:</strong> company registration, travel-insurance sale authorisation, and business-account applications with banks in Jordan.</li>
+      <li><strong>Website upkeep:</strong> tour and article content, spotlights, link pages, and the security and performance passes that keep the published sites correct and available.</li>
+    </ul>
+  </section>
+
+  <!-- ═══════════════ PART THREE ═══════════════ -->
+  <section>
+    <div class="part">Work outside the post</div>
+
+    <h2>Building the systems the operation runs on</h2>
+
+    <div class="rule-statement">
+      <p>Upkeep keeps what already exists working, and belongs to the post above.</p>
+      <p>Building creates what did not exist. Everything on this page is the second kind.</p>
+    </div>
+
+    <p>Two production systems carry the operation today, and neither existed before they were built.</p>
+
+    <h3>The Bil Weekend website and admin panel</h3>
+    <p>68 of the site's 71 commits. Delivered in 2026:</p>
+    <div class="wide">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Date</th>
+            <th scope="col">Delivered</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="when">24 Jun</td><td>Security hardening — session secret, row-level security, content-security policy — with an image and performance pass</td></tr>
+          <tr><td class="when">15–19 Aug</td><td>Queue Requests: an admin section for enquiries taken by hand, synchronised both ways with the data-entry Google Sheet</td></tr>
+          <tr><td class="when">17 Aug</td><td>The Operations hub — one follow-up model across all five inbound sources</td></tr>
+          <tr><td class="when">18–19 Aug</td><td>The worklist — request age, drill-through, shareable filters and bulk moderation</td></tr>
+          <tr><td class="when">25 Aug</td><td>Phone-number normalisation and a working intake honeypot</td></tr>
+          <tr><td class="when">8 Sep</td><td>The AI Hub and the agent interface behind it</td></tr>
+          <tr><td class="when">9 Sep</td><td>The bookings desk — reply templates, priced itineraries on demand, Gmail drafts, and a mailbox check that reports which registrations were answered</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Odysseus — the itinerary and operations engine</h3>
+    <p>202 commits: 78 features, 50 fixes, 34 records. It holds the itinerary engine end to end — a request normaliser, a route matcher, a day binder, a document generator and a Google Docs writer — together with the pricing calculator that carries the commercial model described above. It runs continuously on a phone acting as the company's always-on node.</p>
+
+    <p>The same engine also serves the Rehlat Al-Utla platform and its Google Sheets sourcing pipeline.</p>
+  </section>
+
+  <!-- ═══════════════ APPENDIX ═══════════════ -->
+  <section>
+    <div class="part">Basis</div>
+
+    <h2>What this document was drawn from</h2>
+
+    <div class="wide">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Record</th>
+            <th scope="col">As it stands</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="owns">Rate catalogue</td>
+            <td>20 hotels across 10 cities at 3 tiers; 3 guide grades; 4 vehicle classes; 76 ticketed sites; 3 food tiers; markup, surcharge and free-of-charge rules</td>
+          </tr>
+          <tr>
+            <td class="owns">Itinerary corpus</td>
+            <td>164 routes, one to seventeen days, composed from 62 day templates</td>
+          </tr>
+          <tr>
+            <td class="owns">Published website</td>
+            <td>15 tours, 9 articles, 22 spotlights, 12 link entries, 10,014 recorded page views</td>
+          </tr>
+          <tr>
+            <td class="owns">Admin panel</td>
+            <td>5 inbound request sources merged into one worklist; 124 requests recorded; 10 operators on the roster</td>
+          </tr>
+          <tr>
+            <td class="owns">Repositories</td>
+            <td>68 of 71 website commits; 202 Odysseus commits</td>
+          </tr>
+          <tr>
+            <td class="owns">Booked calendar</td>
+            <td>Fairs, general assemblies and tours scheduled through March 2027</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="caption">Sources: the company mailboxes, June 2024 to September 2026; the operations rate catalogue and itinerary corpus; the website and Odysseus repositories; and the project and calendar record.</p>
+  </section>
+
+</article>
+</div>
+
+<script nonce="{{CSP_NONCE}}">
+  (function () {
+    "use strict";
+
+    var button = document.getElementById("copy");
+    var article = document.getElementById("document");
+
+    // Google Docs reads inline attributes on table cells and ignores <style>.
+    // Pre:  `root` is a detached clone, never the live article.
+    // Post: every table in `root` carries visible rules after a Docs paste.
+    // Inv:  the live document is not touched, so the page never restyles itself.
+    function inlineTableRules(root) {
+      var LINE = "1px solid #b6c2be";
+      root.querySelectorAll("table").forEach(function (table) {
+        table.setAttribute("cellspacing", "0");
+        table.style.borderCollapse = "collapse";
+        table.style.width = "100%";
+      });
+      root.querySelectorAll("th, td").forEach(function (cell) {
+        cell.style.border = LINE;
+        cell.style.padding = "6px 10px";
+        cell.style.verticalAlign = "top";
+        cell.style.textAlign = "left";
+      });
+      root.querySelectorAll("thead th").forEach(function (cell) {
+        cell.style.background = "#eef2f0";
+        cell.style.fontWeight = "600";
+      });
+      return root;
+    }
+
+    // Post: the string a word processor receives. Colour is dropped on purpose —
+    // the palette is a screen decision and does not belong in someone's document.
+    function payload() {
+      var clone = article.cloneNode(true);
+      inlineTableRules(clone);
+      return clone.innerHTML;
+    }
+
+    function report(state, label) {
+      button.dataset.state = state;
+      button.textContent = label;
+      window.setTimeout(function () {
+        button.dataset.state = "idle";
+        button.textContent = "Copy for Google Docs";
+      }, 2400);
+    }
+
+    // Used where ClipboardItem is missing. Selecting the live article and asking
+    // the browser to copy carries the rendered formatting across.
+    function copyBySelection() {
+      var selection = window.getSelection();
+      var range = document.createRange();
+      range.selectNodeContents(article);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      var copied = document.execCommand("copy");
+      selection.removeAllRanges();
+      return copied;
+    }
+
+    // Post: exactly one copy attempt reaches the clipboard. `copyBySelection`
+    // clears the selection it made, so a second call would find nothing.
+    function fallback() {
+      var copied = copyBySelection();
+      report(copied ? "done" : "failed",
+             copied ? "Copied — paste into Docs" : "Press Ctrl+C to copy");
+    }
+
+    button.addEventListener("click", function () {
+      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        navigator.clipboard.write([
+          new ClipboardItem({
+            "text/html": new Blob([payload()], { type: "text/html" }),
+            "text/plain": new Blob([article.innerText], { type: "text/plain" })
+          })
+        ]).then(function () {
+          report("done", "Copied — paste into Docs");
+        }).catch(fallback);
+        return;
+      }
+      fallback();
+    });
+  })();
+</script>
+</body>
+</html>

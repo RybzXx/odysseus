@@ -996,6 +996,16 @@ async def serve_itinerary_desk(request: Request):
     """
     return FileResponse(os.path.join(STATIC_DIR, "itinerary_desk.html"))
 
+
+@app.get("/bilweekend-role")
+async def serve_bilweekend_role(request: Request):
+    """Serve Mahdi's Bil Weekend role and responsibilities document."""
+    document_path = abs_join(
+        BASE_DIR,
+        "docs/bilweekend-role-and-responsibilities.html",
+    )
+    return serve_html_with_nonce(request, document_path)
+
 @app.get("/overview")
 async def serve_overview(request: Request):
     return await serve_index(request)
