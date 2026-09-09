@@ -1,5 +1,6 @@
-"""Contract tests for the Bil Weekend role document."""
+"""Contract tests for the Bil Weekend role description."""
 
+import re
 from pathlib import Path
 
 
@@ -20,9 +21,34 @@ def test_page_is_a_complete_standalone_document():
 def test_page_preserves_the_role_boundary():
     html = PAGE.read_text(encoding="utf-8")
 
-    assert "Keeping the published websites correct and available is" in html
-    assert "Building new software is not part of this post" in html
-    assert "Work outside the post" in html
+    assert "Website upkeep is part of the Operations Manager role" in html
+    assert "is a separate objective" in html
+    assert "Website development line-up" in html
+
+
+def test_page_reads_as_a_role_description_not_an_evidence_report():
+    html = PAGE.read_text(encoding="utf-8")
+    visible_text = re.sub(r"<[^>]+>", " ", html)
+
+    assert "Expected standards" in html
+    assert "What this document was drawn from" not in html
+    assert "Sources:" not in html
+    assert "commits" not in visible_text.lower()
+    assert "recorded page views" not in visible_text.lower()
+
+
+def test_page_does_not_name_specific_agencies_or_operational_counts():
+    html = PAGE.read_text(encoding="utf-8")
+    article = re.search(r'<article id="document">(.*?)</article>', html, re.DOTALL)
+    assert article is not None
+    visible_text = re.sub(r"<[^>]+>", " ", article.group(1))
+
+    assert "Against the Compass" not in html
+    assert "Pinto Lopes" not in html
+    assert "Millennium" not in html
+    assert "164 routes" not in html
+    assert "20 contracted hotels" not in html
+    assert not re.search(r"\d", visible_text)
 
 
 def test_copy_control_supplies_rich_and_plain_text():
