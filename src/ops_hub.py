@@ -199,6 +199,94 @@ async def post_activity(events: list[dict]) -> dict:
     return await _post("/api/agent/ops/activity", {"events": events})
 
 
+# ------------------------------------------------------ the bookings desk ---
+#
+# Four calls that run the other way, or that carry something no other endpoint
+# does. `claim_offer_jobs` is the only GET here, and it is the only place where
+# Bil Weekend gives Odysseus work rather than receiving a record from it.
+
+
+async def _get(path: str, params: dict | None = None) -> dict:
+    """One GET to the agent API.
+
+    Post: same shape as `_post`. Never raises, for the same reason: a poll that
+    could not reach the site has not lost anything, and the next one will.
+    """
+    config = hub_config()
+    if config is None:
+        return {
+            "ok": False,
+            "error": "OPS_API_BASE_URL and OPS_AGENT_TOKEN are not both set.",
+            "unconfigured": True,
+        }
+    base_url, token = config
+
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+            response = await client.get(
+                f"{base_url}{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                params=params or {},
+            )
+    except Exception as exc:
+        return {"ok": False, "error": f"Could not reach {base_url}{path}: {exc}"}
+
+    if response.status_code >= 300:
+        return {
+            "ok": False,
+            "error": f"{path} returned {response.status_code}: {response.text[:300]}",
+            "status_code": response.status_code,
+        }
+
+    try:
+        return {"ok": True, "body": response.json() if response.text else {}}
+    except ValueError:
+        return {"ok": False, "error": f"{path} returned a body that is not JSON."}
+
+
+async def claim_offer_jobs(limit: int = 10) -> dict:
+    """Take pricing work waiting for this agent.
+
+    Post: {"ok": True, "body": {"jobs": [...]}} — and the jobs it names are now
+    claimed on the site. A second call gets different ones.
+    Inv: every job returned carries a tour and a party size and no customer
+    text, so a run may read this and still act afterwards. That is what lets one
+    run both price a job and report the answer.
+    """
+    return await _get("/api/agent/ops/jobs", {"limit": limit})
+
+
+async def post_job_result(job_id: str, **fields: Any) -> dict:
+    """Report what a pricing run produced. Closes the job either way.
+
+    Pre: `fields` carries `emailBody` or `error`. A result saying neither is
+    refused, because a finished job with an empty draft tells the operator
+    nothing about why.
+    """
+    return await _post(f"/api/agent/ops/jobs/{job_id}/result", fields)
+
+
+async def post_booking_templates(templates: list[dict]) -> dict:
+    """Push the wording operations sends a registration.
+
+    Unfilled, placeholders and all. The panel shows it before anything has run,
+    and fills the deposit one itself — a group departure is priced already.
+    """
+    if not templates:
+        return {"ok": True, "body": {"accepted": 0, "rejected": []}}
+    return await _post("/api/agent/ops/booking-templates", {"templates": templates})
+
+
+async def post_booking_replies(replies: list[dict]) -> dict:
+    """Report which registrations the Sent folder already answered.
+
+    Evidence, never a decision. Nothing this posts writes a follow-up field.
+    """
+    if not replies:
+        return {"ok": True, "body": {"accepted": 0, "rejected": []}}
+    return await _post("/api/agent/ops/booking-replies", {"replies": replies})
+
+
 # ------------------------------------------------------- the run marker -----
 
 # Which run is currently executing, shared between two processes.
