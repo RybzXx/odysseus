@@ -1,7 +1,7 @@
 """
 services/bookings/desk_task.py
 
-The two things Odysseus does for the bookings desk, on a schedule.
+What Odysseus does for the bookings desk, on a schedule.
 
 `run_offer_jobs` takes pricing work the website left and answers it.
 `run_reply_scan` reads the Sent folder and says which registrations it answered.
@@ -12,6 +12,11 @@ Odysseus's external-context gate exists to stop, and these two are built so the
 question never arises. Pricing reads a tour and a party size. Matching reads
 HMACs. The greeting is `str.replace`, done by the website afterwards.
 
+`run_draft_appends` files approved replies into Gmail Drafts. It is the one
+task here that handles a customer's name, and it is safe for the opposite
+reason to the others: `draft_append` calls no model, so there is no reasoning
+step for injected text to reach.
+
 `run_templates_push` sends the wording once, so the panel can show an operator
 what will be sent before any button is pressed.
 """
@@ -21,6 +26,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 
+from services.bookings.draft_append import file_draft
 from services.bookings.offer_jobs import price_and_build
 from services.bookings.reply_scan import ReplyScanError, scan
 from services.bookings.templates import NAME_PLACEHOLDERS, raw_templates
@@ -41,6 +47,7 @@ class DeskRunReport:
     """What one run of either task has to say. Read into the run's `response`."""
     priced: int = 0
     failed: int = 0
+    filed: int = 0
     answered: int = 0
     templates_pushed: int = 0
     notes: list = field(default_factory=list)
@@ -49,6 +56,8 @@ class DeskRunReport:
         parts = []
         if self.priced or self.failed:
             parts.append(f"priced {self.priced}, failed {self.failed}")
+        if self.filed:
+            parts.append(f"filed {self.filed} drafts")
         if self.answered:
             parts.append(f"{self.answered} registrations already answered")
         if self.templates_pushed:
@@ -90,6 +99,43 @@ async def run_offer_jobs() -> DeskRunReport:
         else:
             report.failed += 1
             report.notes.append(f"job {job['id']}: {outcome.error}")
+
+    return report
+
+
+async def run_draft_appends() -> DeskRunReport:
+    """
+    File the replies an operator approved into Gmail Drafts.
+
+    Post: every append this poll claimed is closed, as `done` or as `error`.
+    Inv:  no model is called at any point, and nothing is sent. A filed draft
+          waits in Drafts until a person opens Gmail and presses send.
+    Inv:  a failed append is not retried here. One that landed and then lost its
+          answer would file a second draft on a retry, and two drafts in Gmail
+          are one message sent twice.
+    """
+    report = DeskRunReport()
+
+    claimed = await ops_hub.claim_draft_appends(JOBS_PER_POLL)
+    if not claimed.get("ok"):
+        report.notes.append(f"could not claim appends: {claimed.get('error')}")
+        return report
+
+    for append in (claimed.get("body") or {}).get("appends") or []:
+        outcome = file_draft(append)
+        posted = await ops_hub.post_draft_append_result(
+            append["id"], **outcome.as_result_payload())
+        if not posted.get("ok"):
+            report.notes.append(
+                f"append {append['id']} filed but the result did not post: "
+                f"{posted.get('error')}")
+            report.failed += 1
+            continue
+        if outcome.ok:
+            report.filed += 1
+        else:
+            report.failed += 1
+            report.notes.append(f"append {append['id']}: {outcome.error}")
 
     return report
 
@@ -201,6 +247,7 @@ async def _fetch_recipients():
 __all__ = [
     "DeskRunReport",
     "NAME_PLACEHOLDERS",
+    "run_draft_appends",
     "run_offer_jobs",
     "run_reply_scan",
     "run_templates_push",

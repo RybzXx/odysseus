@@ -296,3 +296,81 @@ def test_the_withheld_render_still_refuses_other_placeholders():
             render_quote(tour_name="T", party_size=1, ask_to_confirm=False)
     finally:
         templates.QUOTE_BODY = original
+
+
+# ------------------------------------------------------- filing a draft ----
+#
+# `draft_append` is the one path in this package that handles a customer's
+# name. These tests hold the reason that is safe: it builds a message and files
+# it, and it reasons about nothing.
+
+def test_the_appender_imports_no_model():
+    """
+    The invariant the whole design rests on, checked rather than asserted.
+
+    A model reached from here would be a model reading text a stranger wrote,
+    inside a process that can write to a mailbox.
+    """
+    import inspect
+
+    from services.bookings import draft_append
+
+    source = inspect.getsource(draft_append)
+    for forbidden in ("openai", "ollama", "anthropic", "llm", "chat_completion",
+                      "generate(", "model="):
+        assert forbidden not in source.lower(), forbidden
+
+
+def test_build_message_leaves_the_text_alone():
+    """The operator read this on screen. Filing must not edit it."""
+    from services.bookings.draft_append import build_message
+
+    body = "Dear Giulio,\n\nPlease find the requested itinerary.\n"
+    message = build_message(recipient="a@example.com", subject="Ur & The Marshes",
+                            body=body, from_address="book@bilweekend.com",
+                            display_name="Bilweekend Booking")
+    assert message["To"] == "a@example.com"
+    assert message["Subject"] == "Ur & The Marshes"
+    assert message["From"] == "Bilweekend Booking <book@bilweekend.com>"
+    assert message.get_content() == body
+    assert message.get_content_type() == "text/plain"
+
+
+def test_an_empty_append_is_refused_before_any_connection():
+    """
+    Pre violated is a caller bug, and it must not open a mailbox to find out.
+
+    The server action reads the recipient from the booking, so an empty one
+    means the caller skipped it.
+    """
+    from services.bookings.draft_append import file_draft
+
+    outcome = file_draft({"id": "x", "recipient": "", "subject": "s", "body": "b"})
+    assert not outcome.ok
+    assert "recipient" in outcome.error
+
+
+def test_the_result_payload_says_folder_or_error():
+    """The route refuses a result carrying neither."""
+    from services.bookings.draft_append import DraftAppendOutcome
+
+    ok = DraftAppendOutcome(folder="[Gmail]/Drafts", appended_uid="42")
+    assert ok.as_result_payload() == {
+        "folder": "[Gmail]/Drafts", "appendedUid": "42", "error": None}
+
+    bad = DraftAppendOutcome(error="no drafts folder")
+    assert bad.as_result_payload()["error"] == "no drafts folder"
+    assert bad.as_result_payload()["folder"] is None
+
+
+def test_uid_is_optional():
+    """
+    Gmail usually answers APPEND with APPENDUID and is not required to.
+
+    An empty uid means the append landed and the server did not name it, which
+    is evidence enough. Reading it as a failure would file every draft twice.
+    """
+    from services.bookings.draft_append import _uid_from
+
+    assert _uid_from([b"[APPENDUID 12 4321] (Success)"]) == "4321"
+    assert _uid_from([b"(Success)"]) == ""

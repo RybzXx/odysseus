@@ -10,12 +10,26 @@ watch suggestions appear in the worklist with no way to learn which run produced
 them, what that run was asked, what it read, or what it concluded about
 everything it did not propose on. Mirroring here is what closes that gap.
 
-Four endpoints, documented in the website repo at `docs/agent-api.md`:
+Documented in the website repo at `docs/agent-api.md`. Four post the agent's
+record to a site that can read it:
 
     POST /api/agent/ops/runs        a run reporting itself, twice per run
     POST /api/agent/ops/proposals   a suggested change, inert until accepted
     POST /api/agent/ops/notes       an observation that asks for nothing
     POST /api/agent/ops/activity    telemetry, one event per tool call
+
+The bookings desk adds calls that run the other way, because the phone has no
+inbound route and work must wait where the phone already looks:
+
+    GET  /api/agent/ops/jobs            pricing work, carrying no customer text
+    GET  /api/agent/ops/draft-appends   approved replies, carrying the name
+    GET  /api/agent/ops/booking-recipients   HMACs, not addresses
+    POST /api/agent/ops/booking-replies      what the sent folder answered
+    POST /api/agent/ops/booking-templates    the wording, unfilled
+
+The difference between the first two GETs is the whole safety story. A pricing
+job names a tour and a party size, because the run that consumes it reasons. An
+append names a person, because the run that consumes it does not.
 
 Environment:
     OPS_API_BASE_URL   e.g. https://dev.bilweekend.iq
@@ -45,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT_SECONDS = 20.0
 
-# The two ambient operations tasks, by name.
+# The operations tasks that mirror to the hub, by name.
 #
 # Single source of truth: create_ops_agent_tasks.py creates exactly these, and
 # task_scheduler mirrors a run to the hub only when its task is one of them.
@@ -59,6 +73,7 @@ OPS_TASK_LANES = {
     # watching a draft that never arrived should find out where it stopped.
     "Bookings Offer Jobs": "bookings-offers",
     "Bookings Reply Scan": "bookings-replies",
+    "Bookings Draft Appends": "bookings-drafts",
 }
 
 OPS_TASK_NAMES = tuple(OPS_TASK_LANES)
@@ -269,6 +284,28 @@ async def post_job_result(job_id: str, **fields: Any) -> dict:
     nothing about why.
     """
     return await _post(f"/api/agent/ops/jobs/{job_id}/result", fields)
+
+
+async def claim_draft_appends(limit: int = 10) -> dict:
+    """Take approved replies waiting to be filed into Gmail Drafts.
+
+    Post: {"ok": True, "body": {"appends": [...]}} — and the rows it names are
+    now claimed on the site.
+    Inv: unlike `claim_offer_jobs`, every row this returns carries a customer's
+    name and address. That is safe only because its consumer,
+    `services.bookings.draft_append`, calls no model. Do not read these rows in
+    any run that reasons.
+    """
+    return await _get("/api/agent/ops/draft-appends", {"limit": limit})
+
+
+async def post_draft_append_result(append_id: str, **fields: Any) -> dict:
+    """Report where a draft was filed. Closes the row either way.
+
+    Pre: `fields` carries `folder` or `error`. An append reporting neither
+    leaves the panel claiming a draft exists in a mailbox nobody can name.
+    """
+    return await _post(f"/api/agent/ops/draft-appends/{append_id}/result", fields)
 
 
 async def post_booking_templates(templates: list[dict]) -> dict:
