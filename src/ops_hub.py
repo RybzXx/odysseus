@@ -54,6 +54,11 @@ _TIMEOUT_SECONDS = 20.0
 OPS_TASK_LANES = {
     "Ops Structural Triage": "ambient-structural",
     "Ops Daily Digest": "ambient-digest",
+    # The bookings desk. Neither calls a model, and both are named here so a
+    # run of either appears in the Hub beside the ones that do — an operator
+    # watching a draft that never arrived should find out where it stopped.
+    "Bookings Offer Jobs": "bookings-offers",
+    "Bookings Reply Scan": "bookings-replies",
 }
 
 OPS_TASK_NAMES = tuple(OPS_TASK_LANES)
