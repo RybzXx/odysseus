@@ -1579,3 +1579,162 @@ Eight new files hold 175 tests: `test_layer_access.py`, `test_run_record.py`,
 `test_phase_five_attacks_two.py`.
 
 The itinerary and offers suites pass at 441.
+
+## 2026-09-09: phase seven, and what reached the phone
+
+Phase seven separated the two request kinds, split the regions, and shipped to
+the phone. `phase-seven-spec.md` carries the decisions D58 to D66 and the work
+packages WP32 to WP38. This section records what happened.
+
+### What the owner's four comments turned out to mean
+
+Half of them described code that no longer ran. The desk stores the rules
+sequence once, when the draft opens, and never recomputes it. Six of the nine
+worklist drafts stored an empty sequence, and none of the nine is empty today.
+So the comments of 2026-09-07 read against sequences the code stopped
+producing.
+
+The half that survived was routing order, and the checker could not see any of
+it. A day trip and a departure day carry no overnight city, so they take no
+position in the night chain. Both faults the owner named sat on such a day.
+
+### The four regions
+
+The catalogue held three region names and the intake form offers four.
+"Iraqi Kurdistan" and "Western Iraq & Nineveh Plains" were one value, so a
+request for Mosul matched an Erbil route and reported coverage 1.00.
+
+`services/itinerary/regions.py` now holds the four names, the label map, the
+city map, and the seven templates whose work and hotel sit in different
+regions. The normalizer and the matcher re-export from it. Three modules used
+to answer the same question three ways.
+
+A template's region is the region of its overnight city. Seven exceptions are a
+written list: `SAFA`, `BGFA` and `MO1EB` in the west, and `NA2BG`, `NAURUKNJ`,
+`URNJ` and `UrukNJ` in the south. Each works in one region and sleeps in
+another.
+
+The binder reads the owner's judgement first and the city second, and it binds
+a day when the customer asked for either. Reading only the day's region
+rejected the Ahwar marshes for a Central request and said "Overnight in
+'Baghdad' (Southern Iraq)". Reading only the city put `SAFA` back in Central,
+where no exception could reach it.
+
+### Two templates the corpus already sold
+
+`BGFA` is `SAFA` without Samarra: Fallujah by way of Abu Ghraib, the kebab for
+lunch, and Dur-Kurigalzu on the way back. Four sold offers carry that exact day
+(`offer_routes.json` lines 1939, 2246, 2375, 2685).
+
+`MO1EB` is `MO1` with the drive to Erbil, and it is the only way out of the
+plains. Two sold offers carry it.
+
+The catalogue holds 62 active templates: 25 Kurdistan, 15 Central, 15 south,
+7 west.
+
+### The Samarra rule retired
+
+`judged--safa-with-samo` had two faults. "nineveh plain" sat in both of its
+word lists, so the label "Western Iraq & Nineveh Plains" satisfied both halves
+of an `and` by itself. Its eight-day threshold sits below the one sold
+precedent, which runs eleven days.
+
+The corpus answers better: 258 of 335 sold offers visit Samarra and one visits
+it twice. `SAFA`/`BGFA`, `MO1`/`MO1EB` and `NA2BA`/`NA2BG` are alternative
+pairs instead. The binder marks a bound code's alternative as used, so a
+proposal cannot hold both halves.
+
+The rule file stays on disk with its statement rewritten to say it retired and
+why. `.gitignore` excludes `data/`, so that text never travels.
+
+### Three faults arrived
+
+`day_start` catches a day that starts where the night before did not end.
+`role_order` catches a departure day with days after it. `alternative_pair`
+catches both halves of one day sold two ways.
+
+`day_start` found the two faults the owner named and the checker called
+clean. `FAULTS_NOT_YET_FOUND` now holds two entries, not three.
+
+### The Curated record
+
+The reader asked for `dietaryNeeds`, `heatWalkingComfort` and
+`hotelChangePreference`. The form sends `dietaryRestrictions`,
+`walkingDifficulty` and `hotelChangeTolerance`. It never read `journeyTypes` at
+all, which is the richest field the form carries.
+
+So the kind that needs no follow-up reached the matcher with one note, and the
+kind that does reached it with ten.
+
+`accommodation` arrives as a list, and `str(["5_star"])` matched no tier, so
+all five live Curated records priced at three star. That was the only defect in
+the phase that cost money on every request.
+
+### The tie-break
+
+The rules proposer answered from `find_best_route`, which returns the first of
+the several routes that tie at the top. Phase four measured that tie at five to
+eleven routes. Three tied at 0.83 for one live request and bound 1, 3 and 3
+days.
+
+`_best_binding_route` binds every tied route and keeps the fullest. Without it,
+five of the nine live requests bound fewer days than before the region split.
+
+### Where it went
+
+Commit `466c3f1`, 72 files, +1534 −565.
+
+Branch `ws-03/phase-seven-request-kinds-and-regions` on `origin`. `main` here
+has no upstream, so the work went to a branch rather than to `main`.
+
+`origin/daily-driver` fast-forwarded `f13282f..466c3f1`. The `odysseus-fork`
+worktree fast-forwarded five commits to the same point.
+
+The phone pulled to `466c3f1` over Tailscale. It loads 62 templates with the
+four regions under its own venv.
+
+### The phone has no offer corpus
+
+`counted_moves()` returns zero pairs there. This machine returns 79, with
+Baghdad to Mosul at 171 and Mosul to Erbil at 53.
+
+`ODYSSEUS_DATA_DIR` is `/data/data/com.termux/files/home/odysseus-data`, and
+`offer_corpus` inside it holds nothing. The 335 offers under
+`/root/odysseus/data/offer_corpus` are a stale copy the app never reads. The
+test ran with the service's own `.env` loaded, so the empty result is not a
+shell artifact.
+
+Every `move_not_joined` check therefore fires on the phone, on legs the work
+drives constantly. The trip `BGFA, SAMO, MO1EB` reports no fault here and two
+there, and both of those are false.
+
+This predates phase seven. Commit `466c3f1` touches no `move_map`,
+`offer_store` or `rule_counter`. `.gitignore` excludes `data/`, so no pull
+ever carries the corpus.
+
+### Still open
+
+The phone runs `uvicorn app:app` on port 7000 from `/root/run-odysseus.sh`. It
+holds the pre-pull modules in memory, so the live app does not use the new code
+until that process restarts.
+
+The owner settled the 32 catalogue-derived start cities. He has not read the
+region of every template. Only the seven exceptions carry a judgement.
+
+`propose_by_model` still resolves `resolve_endpoint("default")`, which is the
+chain `layer_access` exists to forbid. Phase seven left it alone.
+
+### Tests
+
+The itinerary suites pass at 312. Nine test files changed, because their
+fixtures named regions the catalogue no longer holds and counts the catalogue
+no longer has.
+
+Two fixtures were measuring the corpus rather than the code. `test_offer_run`
+injected one Baghdad template and loaded all 164 real routes, so it passed only
+while a Baghdad route happened to tie first. `test_sequence_check` gave its
+templates an overnight city and no chain, which reads as a city day that starts
+where it sleeps.
+
+`test_email_digest_urgency_file_parsing` fails. It fails with every change of
+this phase stashed, so it predates them.
