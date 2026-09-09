@@ -31,9 +31,15 @@ from services.itinerary.matcher import (
     find_best_route,
     region_coverage,
 )
+from services.itinerary.regions import (  # noqa: E402
+    REGION_CENTRAL,
+    REGION_KURDISTAN,
+    REGION_SOUTH,
+    REGION_WEST_NINEVEH,
+)
 from services.itinerary.binder import (
     bind_route_to_templates,
-    _city_region,
+    _regions_of,
 )
 from services.itinerary.reply_builder import (
     compose_email_reply,
@@ -75,8 +81,8 @@ class TestItineraryModule(unittest.TestCase):
         self.assertEqual(req.vehicle_type, "VAN")
         self.assertEqual(req.day_count, 8)
         self.assertEqual(req.hotel_tier, "4star")
-        self.assertIn("Central Iraq", req.requested_regions)
-        self.assertIn("Northern Iraq", req.requested_regions)
+        self.assertIn(REGION_CENTRAL, req.requested_regions)
+        self.assertIn(REGION_KURDISTAN, req.requested_regions)
         self.assertEqual(req.start_date, date(2026, 10, 15))
         self.assertTrue(any("ancient history" in n for n in req.special_notes))
 
@@ -95,8 +101,8 @@ class TestItineraryModule(unittest.TestCase):
         self.assertEqual(req.key, "queue:42")
         self.assertEqual(req.customer_name, "John Smith")
         self.assertEqual(req.day_count, 10)
-        self.assertIn("Southern Iraq", req.requested_regions)
-        self.assertIn("Central Iraq", req.requested_regions)
+        self.assertIn(REGION_SOUTH, req.requested_regions)
+        self.assertIn(REGION_CENTRAL, req.requested_regions)
         self.assertEqual(req.travel_month, "November 2026")
 
     def test_matcher_loading_and_scoring(self):
@@ -112,25 +118,36 @@ class TestItineraryModule(unittest.TestCase):
             tour_type="individual",
             hotel_tier="3star",
             vehicle_type="SMALL_CAR",
-            requested_regions=["Central Iraq", "Southern Iraq"],
+            requested_regions=[REGION_CENTRAL, REGION_SOUTH],
         )
         best_route, score = find_best_route(req, routes)
         self.assertIsNotNone(best_route)
         self.assertGreater(score, 0.4)
         self.assertGreaterEqual(region_coverage(req, best_route), 0.5)
 
-    def test_binder_b18_city_region_resolution(self):
-        reg = _city_region("Baghdad", template_region="Northern Iraq")
-        self.assertEqual(reg, "Central Iraq")
+    def test_binder_b18_day_answers_for_its_region_and_its_hotel(self):
+        """
+        A day serves the region its work is in and the region it sleeps in.
 
-        reg_erbil = _city_region("Erbil", template_region="Central Iraq")
-        self.assertEqual(reg_erbil, "Northern Iraq")
+        B18 read the city alone, so a template's own region could never
+        correct it. ws-03 phase seven made the template's region the
+        judgement and the city the second answer, because the seven
+        exception templates work in one region and take a hotel in another.
+        """
+        safa = MockDayTemplate("SAFA", "Samarra / Baghdad area", "Baghdad",
+                               REGION_WEST_NINEVEH, "Samarra, Fallujah")
+        answers = _regions_of("SAFA", safa, "Baghdad")
+        self.assertIn(REGION_WEST_NINEVEH, answers, "its work is in the west")
+        self.assertIn(REGION_CENTRAL, answers, "it sleeps in Baghdad")
+
+        erbil = MockDayTemplate("EB", "Erbil", "Erbil", REGION_KURDISTAN, "Erbil")
+        self.assertEqual(_regions_of("EB", erbil, "Erbil"), {REGION_KURDISTAN})
 
     def test_binder_b19_transit_connector_retention(self):
         templates = {
-            "BGW01": MockDayTemplate("BGW01", "Baghdad", "Baghdad", "Central Iraq", "Baghdad historical tour"),
-            "EBL01": MockDayTemplate("EBL01", "Erbil", "Erbil", "Northern Iraq", "Erbil Citadel"),
-            "BSR01": MockDayTemplate("BSR01", "Basra", "Basra", "Southern Iraq", "Basra corniche"),
+            "BGW01": MockDayTemplate("BGW01", "Baghdad", "Baghdad", REGION_CENTRAL, "Baghdad historical tour"),
+            "EBL01": MockDayTemplate("EBL01", "Erbil", "Erbil", REGION_KURDISTAN, "Erbil Citadel"),
+            "BSR01": MockDayTemplate("BSR01", "Basra", "Basra", REGION_SOUTH, "Basra corniche"),
         }
         route = RouteRecord(
             id="test_route",
@@ -144,12 +161,13 @@ class TestItineraryModule(unittest.TestCase):
                 RouteDay(day=2, overnight_city="Baghdad", text="Transit stay in Baghdad"),
                 RouteDay(day=3, overnight_city="Basra", text="Tour in Basra"),
             ],
-            region_set={"Northern Iraq", "Central Iraq", "Southern Iraq"},
+            region_set={REGION_KURDISTAN, REGION_CENTRAL, REGION_SOUTH},
         )
         bound_codes, gap_notes = bind_route_to_templates(
-            route, templates, requested_regions=["Northern Iraq", "Southern Iraq"]
+            route, templates, requested_regions=[REGION_KURDISTAN, REGION_SOUTH]
         )
-        self.assertIn("BGW01", bound_codes, "Central Iraq transit connector BGW01 must be retained")
+        self.assertIn("BGW01", bound_codes,
+                      "the Central transit connector BGW01 must be retained")
         self.assertIn("EBL01", bound_codes)
         self.assertIn("BSR01", bound_codes)
         self.assertTrue(any("transit connector" in g.lower() for g in gap_notes))
@@ -162,7 +180,7 @@ class TestItineraryModule(unittest.TestCase):
             pax=2,
             day_count=7,
             hotel_tier="4star",
-            requested_regions=["Central Iraq", "Southern Iraq"],
+            requested_regions=[REGION_CENTRAL, REGION_SOUTH],
             start_date=date(2026, 11, 10),
         )
         preview = ItineraryPreviewResult(
@@ -214,7 +232,7 @@ class TestItineraryModule(unittest.TestCase):
             tour_type="individual",
             hotel_tier="4star",
             vehicle_type="SMALL_CAR",
-            requested_regions=["Central Iraq", "Southern Iraq"],
+            requested_regions=[REGION_CENTRAL, REGION_SOUTH],
             start_date=date(2026, 11, 1),
         )
         preview = preview_itinerary(req)

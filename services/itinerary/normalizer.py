@@ -12,35 +12,22 @@ from typing import Any, Optional
 
 from services.itinerary.models import NormalizedRequest
 
-# The customer-facing region names, mapped to the three the catalogue models.
+# The region names and the words customers write for them live in one module.
 #
-# A label with no entry here reaches the binder unchanged, and the binder then
-# drops every day whose overnight city sits "outside requested region(s)". A
-# request for "Central Iraq & Middle Euphrates" therefore bound no day at all,
-# and its preview reported a matched route with nothing in it.
+# They used to live here, folded onto the three names the catalogue modelled.
+# "Western Iraq & Nineveh Plains" and "Iraqi Kurdistan" both became "Northern
+# Iraq", so a request for Mosul matched an Erbil route and reported full
+# coverage. `services.itinerary.regions` now holds the four the intake form
+# offers (ws-03 phase seven, D60).
 #
-# Measured over the 43 live Curated and Queue requests on 2026-09-07: eight
-# distinct labels, of which six had no entry. The two commonest were two of the
-# six, at 26 and 25 requests.
-REGION_NAME_MAP = {
-    "central iraq": "Central Iraq",
-    "central": "Central Iraq",
-    "central iraq & middle euphrates": "Central Iraq",
-    "center & middle euphrates": "Central Iraq",
-    "middle euphrates": "Central Iraq",
-    "southern iraq": "Southern Iraq",
-    "southern": "Southern Iraq",
-    "south": "Southern Iraq",
-    "south of iraq": "Southern Iraq",
-    "kurdistan": "Northern Iraq",
-    "iraqi kurdistan": "Northern Iraq",
-    "northern iraq": "Northern Iraq",
-    "northern iraq / kurdistan": "Northern Iraq",
-    "western iraq & nineveh plains": "Northern Iraq",
-    "west & nineveh plains": "Northern Iraq",
-    "western iraq": "Northern Iraq",
-    "nineveh plains": "Northern Iraq",
-}
+# Re-exported because `request_brief` and the tests import them from here.
+from services.itinerary.regions import (  # noqa: E402,F401
+    CITY_REGION_MAP,
+    REGION_NAME_MAP,
+    REGION_WHEN_UNSTATED,
+    REGIONS,
+    normalize_region_label,
+)
 
 # What the data-entry team types into a region column the submitter left blank.
 # It is an empty cell, not a region, and reading it as one filtered every day
@@ -194,15 +181,28 @@ def _resolve_vehicle(pax: int) -> str:
 
 
 def _resolve_hotel_tier(val: Any) -> str:
+    """
+    Post: "3star", "4star" or "5star". A value the map has no word for answers
+          the lowest tier, because a guess upward would price a trip the
+          customer did not ask for.
+
+    Pre:  `val` is whatever the record holds: a string, or a list of one.
+
+    The Curated form sends `["5_star"]`. `str(["5_star"])` is `"['5_star']"`,
+    which matched nothing, so every Curated request priced at three star,
+    including the four-star and the five-star ones (ws-03 phase seven, WP38.1).
+    """
+    if isinstance(val, (list, tuple, set)):
+        val = next((item for item in val if str(item).strip()), "")
     if not val:
         return "3star"
-    s = str(val).strip().lower()
-    return HOTEL_TIER_MAP.get(s, "3star")
+    s = str(val).strip().lower().replace("_", " ")
+    return HOTEL_TIER_MAP.get(s, HOTEL_TIER_MAP.get(s.replace(" ", ""), "3star"))
 
 
 def unmapped_regions(regions: list[str]) -> list[str]:
     """
-    Post: the region names REGION_NAME_MAP has no word for.
+    Post: the region names the catalogue has no word for.
 
     Pre: `regions` is the output of `_normalize_regions`, so a mapped name is
          already one of the catalogue's own.
@@ -211,13 +211,12 @@ def unmapped_regions(regions: list[str]) -> list[str]:
     matches no route. Silence about it would read as a weak match instead of a
     request the catalogue cannot answer. The caller records it as a warning.
     """
-    known = set(REGION_NAME_MAP.values())
-    return [r for r in regions if r not in known]
+    return [r for r in regions if r not in REGIONS]
 
 
 def _normalize_regions(raw_regions: Any) -> list[str]:
     if not raw_regions:
-        return ["Central Iraq"]
+        return [REGION_WHEN_UNSTATED]
     if isinstance(raw_regions, str):
         parts = [p.strip() for p in raw_regions.replace(";", ",").split(",") if p.strip()]
     elif isinstance(raw_regions, (list, set, tuple)):
@@ -229,10 +228,10 @@ def _normalize_regions(raw_regions: Any) -> list[str]:
     for p in parts:
         if p.strip().casefold() in _REGION_PLACEHOLDERS:
             continue
-        mapped = REGION_NAME_MAP.get(p.lower(), p)
+        mapped = normalize_region_label(p)
         if mapped not in res:
             res.append(mapped)
-    return res or ["Central Iraq"]
+    return res or [REGION_WHEN_UNSTATED]
 
 
 def _parse_exact_date(val: Any) -> Optional[date]:
@@ -249,6 +248,49 @@ def _parse_exact_date(val: Any) -> Optional[date]:
         except ValueError:
             continue
     return None
+
+
+# The Curated columns that describe the trip rather than book it, and the label
+# each becomes. The Queue branch has had its equivalent since phase four.
+#
+# Three of these were read under names the form does not send: `dietaryNeeds`,
+# `heatWalkingComfort` and `hotelChangePreference` resolved to nothing on all
+# five live records. `journeyTypes` was never read at all, and it is the richest
+# field the form carries — four of the five records hold it, two of them with
+# five values each.
+#
+# So the kind that needs no follow-up reached the matcher with one note, and the
+# kind that does reached it with ten (ws-03 phase seven, WP38.2, WP38.3).
+_CURATED_NOTE_COLUMNS = (
+    ("comments", "Comments"),
+    ("journeyTypes", "Interests"),
+    ("journeyParameters", "Journey parameters"),
+    ("transport", "Transport"),
+    ("dietaryRestrictions", "Diet"),
+    ("otherDietaryNeeds", "Diet"),
+    ("walkingDifficulty", "Mobility/Pacing"),
+    ("climateSensitivity", "Climate"),
+    ("hotelChangeTolerance", "Hotel change preference"),
+)
+
+
+def _curated_value(data: dict, column: str) -> str:
+    """
+    Post: the column's text, or "" when it holds nothing a reviewer can use.
+
+    Pre:  `data` is the submitted Curated record.
+
+    A list becomes a comma-separated line, because the form sends `journeyTypes`
+    and `transport` as lists and `str(["Food"])` is not a note anybody wants to
+    read in an itinerary.
+    """
+    raw = data.get(column)
+    if isinstance(raw, (list, tuple, set)):
+        parts = [str(item).strip() for item in raw if str(item).strip()]
+    else:
+        parts = [str(raw).strip()] if raw is not None else []
+    kept = [p for p in parts if p.casefold() not in _REGION_PLACEHOLDERS]
+    return ", ".join(kept)
 
 
 def normalize_curated_record(key: str, data: dict) -> NormalizedRequest:
@@ -281,14 +323,10 @@ def normalize_curated_record(key: str, data: dict) -> NormalizedRequest:
     travel_year = str(data.get("travelYear") or "")
 
     special_notes: list[str] = []
-    if data.get("comments"):
-        special_notes.append(f"Comments: {data['comments']}")
-    if data.get("dietaryNeeds"):
-        special_notes.append(f"Diet: {data['dietaryNeeds']}")
-    if data.get("heatWalkingComfort"):
-        special_notes.append(f"Mobility/Pacing: {data['heatWalkingComfort']}")
-    if data.get("hotelChangePreference"):
-        special_notes.append(f"Hotel change preference: {data['hotelChangePreference']}")
+    for column, label in _CURATED_NOTE_COLUMNS:
+        value = _curated_value(data, column)
+        if value:
+            special_notes.append(f"{label}: {value}")
 
     for region in unmapped_regions(regions):
         special_notes.append(f"Region not in the catalogue: {region}")
@@ -406,7 +444,50 @@ def normalize_queue_record(key: str, record: dict) -> NormalizedRequest:
     )
 
 
-def normalize_from_dict(key: str, data: dict, source: str = "curated") -> NormalizedRequest:
-    if source == "queue" or "row_id" in data or "full_name" in data:
+# The two request kinds, and what a caller answers when it cannot tell.
+#
+# A Curated request comes from a preset form and carries every field the office
+# needs. A Queue request comes from a chat, and a data-entry team types what it
+# can read out of a photograph. They need different work, and the desk could not
+# tell them apart because the kind stopped existing after this module.
+SOURCE_CURATED = "curated"
+SOURCE_QUEUE = "queue"
+SOURCE_UNKNOWN = "unknown"
+REQUEST_SOURCES = (SOURCE_CURATED, SOURCE_QUEUE)
+
+
+def request_kind(request_id: str) -> str:
+    """
+    Post: "curated", "queue", or "unknown" for a request id that names neither.
+
+    Pre:  `request_id` is a draft's `request_id`, which the worklist writes as
+          "curated:<id>" or "queue:<row_id>". A typed or pasted draft has none.
+
+    Five call sites used to pass a draft's `origin` where this belongs, and
+    `origin` holds "sheet" or "typed". They landed on the shape detection below
+    and worked by accident: a Curated record that ever gained a `full_name` key
+    would have been read as a Queue row, in silence (ws-03 phase seven, D59).
+    """
+    prefix = str(request_id or "").split(":", 1)[0].strip().lower()
+    return prefix if prefix in REQUEST_SOURCES else SOURCE_UNKNOWN
+
+
+def normalize_from_dict(key: str, data: dict, source: str = SOURCE_CURATED) -> NormalizedRequest:
+    """
+    Post: the record read as its kind says, or as its shape says when the kind
+          is unknown.
+
+    Pre:  `source` is one of REQUEST_SOURCES, or SOURCE_UNKNOWN. A caller that
+          holds a draft passes `request_kind(draft.request_id)`.
+
+    Blame: a caller that passes an origin gets shape detection, which is right
+    for a typed request and a guess for anything else.
+    """
+    if source == SOURCE_QUEUE:
+        return normalize_queue_record(key, data)
+    if source == SOURCE_CURATED:
+        return normalize_curated_record(key, data)
+    # Nothing said which kind this is, so the record's own shape answers.
+    if "row_id" in data or "full_name" in data:
         return normalize_queue_record(key, data)
     return normalize_curated_record(key, data)

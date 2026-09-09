@@ -27,6 +27,10 @@ if ODYSSEUS_ROOT not in sys.path:
     sys.path.insert(0, ODYSSEUS_ROOT)
 
 from services.itinerary.models import NormalizedRequest  # noqa: E402
+from services.itinerary.regions import (  # noqa: E402
+    REGION_CENTRAL,
+    REGION_KURDISTAN,
+)
 from services.itinerary.request_brief import (  # noqa: E402
     BriefError,
     RequestBrief,
@@ -221,17 +225,17 @@ def test_an_unreadable_date_changes_nothing():
 
 def test_a_region_is_added_and_never_removed():
     """A region the team typed is not wrong because a screenshot omits it."""
-    request = a_request(requested_regions=["Central Iraq"])
+    request = a_request(requested_regions=[REGION_CENTRAL])
     apply_brief(a_brief(regions=["Kurdistan"]), request, {})
 
-    assert "Central Iraq" in request.requested_regions
-    assert "Northern Iraq" in request.requested_regions
+    assert REGION_CENTRAL in request.requested_regions
+    assert REGION_KURDISTAN in request.requested_regions
 
 
 def test_a_region_already_held_is_not_added_twice():
-    request = a_request(requested_regions=["Central Iraq"])
-    apply_brief(a_brief(regions=["Central Iraq"]), request, {})
-    assert request.requested_regions == ["Central Iraq"]
+    request = a_request(requested_regions=[REGION_CENTRAL])
+    apply_brief(a_brief(regions=[REGION_CENTRAL]), request, {})
+    assert request.requested_regions == [REGION_CENTRAL]
 
 
 def test_sites_and_interests_become_notes_and_reach_no_price():

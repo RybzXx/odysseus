@@ -38,12 +38,22 @@ SOURCE_OWNER = "owner"          # the owner read the template and said so
 SOURCE_CATALOGUE = "catalogue"  # derived from overnight_city and the city chain
 SOURCE_TITLE = "title"          # the title says what the chain does not
 
-# The 21 the owner settled on 2026-09-07, as (start, end, role).
+# The shapes the owner settled by hand, as (start, end, role).
 #
-# A start of None means the day carries no fixed start. `BB` is the only one:
-# Babylon sits 44 km from Karbala and 99 km from Baghdad, and a trip reaches it
-# from either. Pinning it to one would make it unreachable from the other, and
-# nothing would report that.
+# 21 came on 2026-09-07. On 2026-09-08 he read the 32 the catalogue derives and
+# corrected six of them, and the two new templates arrived with their shapes
+# stated. The other 26 derivations he confirmed, so they stay derived: a rule
+# that answers 26 templates correctly should keep answering for the 27th
+# (ws-03 phase seven, WP34.1).
+#
+# A start of None means the day carries no fixed start, and `day_start` stays
+# quiet on it either way. Four carry one:
+#   BB           Babylon is 44 km from Karbala and 99 km from Baghdad, and a
+#                trip reaches it from either.
+#   BGNJURUKNA   it sets off from Baghdad or from Karbala.
+#   DaMOZKDU     sold both as a Duhok day trip and as a transit out of Mosul.
+#   EBSORA       is a day trip out of Erbil, and the catalogue read its chain
+#                backwards as a transit that starts in Soran.
 OWNER_SETTLED_SHAPES = {
     "SAFA":      ("Baghdad", "Baghdad", ROLE_DAY_TRIP),
     "BAMaMNV":   ("Mosul", "Mosul", ROLE_DAY_TRIP),
@@ -66,6 +76,20 @@ OWNER_SETTLED_SHAPES = {
     "ChHkEB":    ("Soran", "Erbil", ROLE_TRANSIT),
     "SHAKSOEB":  ("Duhok", "Erbil", ROLE_TRANSIT),
     "SHAMBASO":  ("Duhok", "Korek Mountain", ROLE_TRANSIT),
+    # Read on 2026-09-08, from the 32 the catalogue had derived.
+    "NJ":         ("Najaf", "Najaf", ROLE_DAY_TRIP),
+    "KA":         ("Karbala", "Karbala", ROLE_DAY_TRIP),
+    "EBSORA":     ("Erbil", "Erbil", ROLE_DAY_TRIP),
+    "BGNJURUKNA": (None, "Nasiriyah", ROLE_TRANSIT),
+    "NA2BA":      ("Nasiriyah", "Basra", ROLE_TRANSIT),
+    "DaMOZKDU":   (None, "Duhok", ROLE_TRANSIT),
+    # The day sets off from Shush village, which `move_map` holds without a
+    # coordinate. Akre is the nearest place it can measure, 71 km from Erbil,
+    # and a leg the map cannot measure reports nothing at all (WP34.4).
+    "SHSOKO":     ("Akre", "Korek Mountain", ROLE_TRANSIT),
+    # The two templates phase seven adds.
+    "BGFA":       ("Baghdad", "Baghdad", ROLE_DAY_TRIP),
+    "MO1EB":      ("Mosul", "Erbil", ROLE_TRANSIT),
 }
 
 # Two templates the catalogue would read as a city day, whose own titles say

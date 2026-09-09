@@ -12,28 +12,11 @@ from typing import Optional
 
 from services.itinerary.models import NormalizedRequest, RouteDay, RouteRecord
 
-CITY_REGION_MAP = {
-    "baghdad": "Central Iraq",
-    "samarra": "Central Iraq",
-    "babylon": "Central Iraq",
-    "karbala": "Central Iraq",
-    "najaf": "Central Iraq",
-    "kufa": "Central Iraq",
-    "nasiriyah": "Southern Iraq",
-    "ur": "Southern Iraq",
-    "chibayish": "Southern Iraq",
-    "marshes": "Southern Iraq",
-    "basra": "Southern Iraq",
-    "erbil": "Northern Iraq",
-    "sulaymaniyah": "Northern Iraq",
-    "duhok": "Northern Iraq",
-    "mosul": "Northern Iraq",
-    "nineveh": "Northern Iraq",
-    "lalish": "Northern Iraq",
-    "akre": "Northern Iraq",
-    "amadiya": "Northern Iraq",
-    "al qosh": "Northern Iraq",
-}
+# The one city-to-region map lives in `regions`. It is re-exported here because
+# `binder` and `request_brief` import it from this module, and a second copy is
+# how "Western Iraq & Nineveh Plains" and "Iraqi Kurdistan" became one region
+# (ws-03 phase seven, D60).
+from services.itinerary.regions import CITY_REGION_MAP  # noqa: E402,F401
 
 SCORER_WEIGHTS = {
     "region": 0.50,

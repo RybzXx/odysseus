@@ -23,7 +23,12 @@ from typing import Optional
 
 from services.itinerary.binder import bind_route_to_templates
 from services.itinerary.drafts import SOURCE_MODEL, SOURCE_RULES, ProposedSequence
-from services.itinerary.matcher import find_best_route, load_routes, region_coverage
+from services.itinerary.matcher import (
+    find_best_route,
+    load_routes,
+    region_coverage,
+    score_route,
+)
 from services.itinerary.models import NormalizedRequest
 
 logger = logging.getLogger(__name__)
@@ -105,7 +110,56 @@ def active_day_templates() -> dict:
             if field_of(row, "active", True)}
 
 
+# How close to the top score a route must sit to count as tied.
+#
+# The same width `candidates.TIE_WIDTH` uses, because the two must agree about
+# which routes are equal. Float scores rarely repeat exactly, and a route 0.001
+# below the best is the same answer with a rounding difference.
+TIE_WIDTH = 0.02
+
+
 # ── the rules proposer ────────────────────────────────────────────────────────
+
+def _best_binding_route(request: NormalizedRequest, templates: dict) -> tuple:
+    """
+    The tied route that binds the most days, and what it bound.
+
+    Pre:  `templates` maps a code to a live template row.
+    Post: (route, score, day_codes, gap_notes). The route is None only when the
+          corpus is empty.
+    Inv:  every returned route sits within TIE_WIDTH of the top score, so this
+          never trades a better match for a fuller itinerary.
+
+    `find_best_route` answers the first route of the several that tie at the
+    top, and phase four measured that tie at five to eleven routes. The first is
+    an arbitrary choice among equals, and the choice decides how many days bind:
+    three routes tied at 0.83 for one live request, and they bound 1, 3 and 3
+    days (measured 2026-09-08).
+
+    Binding every tied route costs one pass over a handful of routes and is what
+    `candidates.build_candidates` already does for the ranker. The rules
+    proposer answered from the first alone.
+    """
+    routes = list(load_routes())
+    if not routes:
+        return None, 0.0, [], []
+
+    scored = sorted(((score_route(request, route), route) for route in routes),
+                    key=lambda pair: -pair[0])
+    top = scored[0][0]
+    tied = [(score, route) for score, route in scored if score >= top - TIE_WIDTH]
+
+    best = None
+    for score, route in tied:
+        day_codes, gap_notes = bind_route_to_templates(
+            route, templates, requested_regions=list(request.requested_regions))
+        # More days first, then the higher score. A route that binds nothing is
+        # not a better answer for being a closer match.
+        rank = (len(day_codes), score)
+        if best is None or rank > best[0]:
+            best = (rank, route, score, list(day_codes), list(gap_notes))
+    return best[1], best[2], best[3], best[4]
+
 
 def propose_by_rules(request: NormalizedRequest, templates: dict) -> ProposedSequence:
     """
@@ -118,18 +172,29 @@ def propose_by_rules(request: NormalizedRequest, templates: dict) -> ProposedSeq
     Deterministic by design. It is the fixed second opinion a thread is read
     against, so it must answer the same way however many comments follow.
     """
-    route, score = find_best_route(request)
+    route, score, day_codes, gap_notes = _best_binding_route(request, templates)
     if route is None:
         return ProposedSequence(source=SOURCE_RULES, day_codes=[],
                                 note="the route corpus is empty")
 
-    day_codes, gap_notes = bind_route_to_templates(
-        route, templates, requested_regions=list(request.requested_regions))
     coverage = region_coverage(request, route)
 
     parts = [f"matched {route.source_file} at {score:.2f}"]
     if score < MATCH_MIN_SCORE:
         parts.append(f"below the {MATCH_MIN_SCORE:.2f} floor, so the match is weak")
+
+    # A coverage of 1.00 against a region the normalizer invented is a
+    # confidence nobody earned. Three of the four live Queue records state no
+    # region, `_normalize_regions` answers Central Iraq & Middle Euphrates for
+    # them, and the note then read "region coverage 1.00" (ws-03 phase seven,
+    # D65). Only the normalizer knows, and `defaulted_fields` is where it says.
+    if request.was_defaulted("requested_regions"):
+        parts.append(f"no region was stated, so "
+                     f"{', '.join(request.requested_regions)} was assumed and "
+                     f"the coverage below measures that assumption")
+    if request.was_defaulted("day_count"):
+        parts.append(f"no trip length was stated, so {request.day_count} days "
+                     f"was assumed")
     parts.append(f"region coverage {coverage:.2f}" if coverage >= 0
                  else "no region evidence either way")
     if gap_notes:

@@ -31,6 +31,7 @@ from services.itinerary.normalizer import (  # noqa: E402
     normalize_from_dict,
     normalize_queue_record,
 )
+from services.itinerary.regions import REGION_WHEN_UNSTATED  # noqa: E402
 from services.itinerary.request_brief import field_was_defaulted  # noqa: E402
 
 A_QUEUE_ROW = {"row_id": "qr-1", "full_name": "A Customer"}
@@ -42,7 +43,8 @@ def test_a_queue_row_that_names_no_region_says_the_region_is_a_default():
     queue = normalize_queue_record("queue:qr-1", dict(A_QUEUE_ROW))
     curated = normalize_curated_record("curated:cr-1", {})
 
-    assert queue.requested_regions == curated.requested_regions == ["Central Iraq"]
+    assert (queue.requested_regions == curated.requested_regions
+            == [REGION_WHEN_UNSTATED])
     assert field_was_defaulted(curated, "requested_regions") is True
     assert field_was_defaulted(queue, "requested_regions") is True
 

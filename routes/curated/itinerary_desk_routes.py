@@ -12,6 +12,7 @@ only when it is asked for, because generation renders a Google Doc.
 
 import logging
 from dataclasses import asdict
+from itertools import zip_longest
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -41,7 +42,12 @@ from services.itinerary.drafts import (
     set_comment_rule_state,
 )
 from services.itinerary.conversation_reader import conversation_link_of
-from services.itinerary.normalizer import normalize_from_dict
+from services.itinerary.normalizer import (
+    REQUEST_SOURCES,
+    SOURCE_UNKNOWN,
+    normalize_from_dict,
+    request_kind,
+)
 from services.itinerary.propose_sequence import (
     ModelProposalsDisabled,
     ProposalError,
@@ -55,9 +61,10 @@ from services.itinerary.propose_sequence import (
 logger = logging.getLogger(__name__)
 
 
-# The worklist sources that carry a tour request. Bookings and contacts are the
-# other two, and neither describes a trip to build (ws-03 D14).
-REQUEST_SOURCES = ("curated", "queue")
+# The worklist sources that carry a tour request are `normalizer.REQUEST_SOURCES`,
+# imported above. Bookings and contacts are the other two, and neither describes
+# a trip to build (ws-03 D14). One tuple, because the desk and the normalizer
+# disagreeing about what a kind is called is how the kind got lost (D59).
 
 
 class RequestRow(BaseModel):
@@ -136,7 +143,7 @@ def _normalized_view(draft) -> dict:
     try:
         normalized = normalize_from_dict(
             draft.request_id or draft.draft_id, draft.request_row,
-            source=draft.origin)
+            source=request_kind(draft.request_id))
     except Exception as exc:
         return {"error": f"the request could not be read: {exc}"}
     return {
@@ -152,6 +159,57 @@ def _normalized_view(draft) -> dict:
         "travel_year": normalized.travel_year,
         "start_date": normalized.start_date.isoformat() if normalized.start_date else None,
         "special_notes": normalized.special_notes,
+        "parse_warnings": normalized.parse_warnings,
+        # Which of these the record did not state. A reviewer reading a value
+        # cannot otherwise tell an answer from a default (ws-03 phase seven, D65).
+        "defaulted_fields": normalized.defaulted_fields,
+        "request_kind": normalized.source,
+    }
+
+
+def _staleness_of(draft, templates: dict) -> Optional[dict]:
+    """
+    Post: how far the stored rules sequence has drifted from what the rules
+          answer today, or None when it has not drifted and None when nothing
+          can be compared.
+
+    Pre:  `templates` holds the active codes.
+    Inv:  nothing is written. The stored sequence is the fixed second opinion a
+          comment thread reads against, so recomputation compares and never
+          replaces it (ws-03 phase seven, D58, WP32.2).
+
+    The desk stores the rules answer once, when the draft opens, and shows it
+    beside a check computed live. Six of the nine worklist drafts stored an
+    empty sequence and none is empty on recomputation, so half the owner's
+    comments describe sequences the code no longer produces.
+    """
+    stored = next((s for s in draft.sequences if s.source == SOURCE_RULES), None)
+    if stored is None:
+        return None
+    try:
+        normalized = normalize_from_dict(
+            draft.request_id or draft.draft_id, draft.request_row,
+            source=request_kind(draft.request_id))
+        fresh = propose_by_rules(normalized, templates)
+    except Exception:
+        logger.exception("the rules proposal could not be recomputed for %s",
+                         draft.draft_id)
+        return None
+
+    if list(fresh.day_codes) == list(stored.day_codes):
+        return None
+    differ = sum(1 for a, b in zip_longest(stored.day_codes, fresh.day_codes)
+                 if a != b)
+    return {
+        "differs": differ,
+        "stored_day_count": len(stored.day_codes),
+        "fresh_day_count": len(fresh.day_codes),
+        "fresh_day_codes": list(fresh.day_codes),
+        "fresh_note": fresh.note,
+        "statement": (f"proposed under an older rule set. The rules answer "
+                      f"{len(fresh.day_codes)} day(s) today against the "
+                      f"{len(stored.day_codes)} stored, and {differ} position(s) "
+                      f"differ"),
     }
 
 
@@ -190,6 +248,7 @@ def _draft_to_dict(draft, templates: Optional[dict] = None) -> dict:
     rows = active_day_templates() if templates is None else templates
     normalized = _normalized_view(draft)
     start_date = _start_date_of(normalized)
+    stale = _staleness_of(draft, rows)
 
     sequences = []
     for sequence in draft.sequences:
@@ -202,6 +261,8 @@ def _draft_to_dict(draft, templates: Optional[dict] = None) -> dict:
         except Exception:
             logger.exception("the sequence check failed on %s", draft.draft_id)
             entry["check"] = None
+        if sequence.source == SOURCE_RULES:
+            entry["stale"] = stale
         sequences.append(entry)
 
     return {
@@ -212,7 +273,12 @@ def _draft_to_dict(draft, templates: Optional[dict] = None) -> dict:
         "normalized": normalized,
         "day_count": normalized.get("day_count"),
         "model_proposals_enabled": model_proposals_enabled(),
-        "parse_warnings": draft.parse_warnings,
+        # Live, not the copy the draft stored when it was opened. Seven of the
+        # nine worklist drafts carried a warning about a region name the map
+        # now resolves, and a reviewer read it as a request the catalogue could
+        # not answer (ws-03 phase seven, WP32.5).
+        "parse_warnings": normalized.get("parse_warnings", draft.parse_warnings),
+        "stale": stale,
         "sequences": sequences,
         "comments": draft.comments,
         # What the machine noticed, kept apart from what a human said
@@ -516,7 +582,8 @@ def setup_itinerary_desk_routes() -> APIRouter:
         """
         require_admin(request)
         try:
-            normalized = normalize_from_dict(draft_id_for(body.row), body.row, source=body.origin)
+            normalized = normalize_from_dict(draft_id_for(body.row), body.row,
+                                             source=SOURCE_UNKNOWN)
         except Exception as exc:
             raise HTTPException(422, f"the request could not be read: {exc}") from exc
 
@@ -529,6 +596,38 @@ def setup_itinerary_desk_routes() -> APIRouter:
             except Exception as exc:
                 logger.exception("the rules proposer failed")
                 raise HTTPException(502, f"the rules proposer failed: {exc}") from exc
+        return _draft_to_dict(draft)
+
+    @router.post("/drafts/{draft_id}/propose-again")
+    async def propose_again(request: Request, draft_id: str):
+        """
+        Run the rules proposer again and put its answer on the thread.
+
+        Pre:  the draft exists.
+        Post: a new rules sequence sits on the thread with its own
+              `proposed_at`. Every earlier sequence stays, with the comments
+              made against it.
+
+        Blame: the rules proposer is deterministic for one rule set, and the
+        rule set changes. A draft opened before a change carries an answer the
+        code no longer gives, and half the owner's comments of 2026-09-07
+        describe such an answer. Overwriting would leave a comment reading
+        against a sequence nobody can see, so this appends (ws-03 phase seven,
+        D58, WP32.3).
+        """
+        require_admin(request)
+        draft = load(draft_id)
+        if draft is None:
+            raise HTTPException(404, "no such draft")
+        try:
+            normalized = normalize_from_dict(
+                draft.request_id or draft.draft_id, draft.request_row,
+                source=request_kind(draft.request_id))
+            fresh = propose_by_rules(normalized, active_day_templates())
+        except Exception as exc:
+            logger.exception("the rules proposer failed")
+            raise HTTPException(502, f"the rules proposer failed: {exc}") from exc
+        draft = add_sequence(draft.draft_id, fresh)
         return _draft_to_dict(draft)
 
     @router.post("/drafts/{draft_id}/comment")
@@ -572,7 +671,8 @@ def setup_itinerary_desk_routes() -> APIRouter:
                 raise HTTPException(409, str(exc)) from exc
 
         previous = getattr(draft.latest.get(SOURCE_MODEL), "day_codes", [])
-        normalized = normalize_from_dict(draft.draft_id, draft.request_row, source=draft.origin)
+        normalized = normalize_from_dict(draft.draft_id, draft.request_row,
+                                         source=request_kind(draft.request_id))
         try:
             sequence = await propose_by_model(
                 normalized, active_day_templates(),
@@ -717,7 +817,7 @@ def setup_itinerary_desk_routes() -> APIRouter:
             raise HTTPException(409, f"the {body.source} proposer has no sequence yet")
 
         normalized = normalize_from_dict(draft.draft_id, draft.request_row,
-                                         source=draft.origin)
+                                         source=request_kind(draft.request_id))
         try:
             built = execute_generation(normalized, day_codes=list(chosen.day_codes))
         except Exception as exc:

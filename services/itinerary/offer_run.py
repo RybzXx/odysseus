@@ -371,7 +371,7 @@ def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
         add_note,
         add_sequence,
     )
-    from services.itinerary.normalizer import normalize_from_dict
+    from services.itinerary.normalizer import normalize_from_dict, request_kind
     from services.itinerary.request_brief import (
         BriefError,
         apply_brief,
@@ -381,7 +381,7 @@ def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
 
     run = outcome.run
     request = normalize_from_dict(draft.draft_id, draft.request_row,
-                                  source=draft.origin)
+                                  source=request_kind(draft.request_id))
 
     # 1. the link ────────────────────────────────────────────────────────────
     link = conversation_link_of(draft.request_row)

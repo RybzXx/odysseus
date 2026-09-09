@@ -49,20 +49,36 @@ INDEX = {
     "MO_HTR": Site("MO_HTR", "Hatra", "Hatra", "Northern Iraq", ()),
 }
 
+# Each template names the cities its day passes through, in order, because
+# `day_shape` reads that field to say where the day sets off. A template with an
+# overnight city and no chain reads as a city day that starts where it sleeps,
+# and the day-start check then refuses a transit for arriving from anywhere
+# (ws-03 phase seven, WP33.2).
 TEMPLATES = {
-    "BAGHDAD_DAY": {"overnight_city": "Baghdad", "included_sites": []},
-    "TO_MOSUL": {"overnight_city": "Mosul", "included_sites": ["SA_G_MAL", "MO_HTR"]},
-    "BACK_TO_BAGHDAD": {"overnight_city": "Baghdad", "included_sites": ["SA_G_MAL"]},
-    "MOSUL_DAY": {"overnight_city": "Mosul", "included_sites": []},
-    "TO_DUHOK": {"overnight_city": "Duhok", "included_sites": []},
-    "TO_SULAY": {"overnight_city": "Sulaymaniyah", "included_sites": []},
-    "TO_ERBIL": {"overnight_city": "Erbil", "included_sites": ["ERB_CITD"]},
-    "ERBIL_DAY_TWO": {"overnight_city": "Erbil", "included_sites": ["ERB_CITD"]},
-    "SAME_SITES_AS_MOSUL": {"overnight_city": "Mosul",
+    "BAGHDAD_DAY": {"city": "Baghdad", "overnight_city": "Baghdad",
+                    "included_sites": []},
+    "TO_MOSUL": {"city": "Baghdad / Samarra / Mosul", "overnight_city": "Mosul",
+                 "included_sites": ["SA_G_MAL", "MO_HTR"]},
+    "BACK_TO_BAGHDAD": {"city": "Mosul / Samarra / Baghdad",
+                        "overnight_city": "Baghdad",
+                        "included_sites": ["SA_G_MAL"]},
+    "MOSUL_DAY": {"city": "Mosul", "overnight_city": "Mosul",
+                  "included_sites": []},
+    "TO_DUHOK": {"city": "Mosul / Duhok", "overnight_city": "Duhok",
+                 "included_sites": []},
+    "TO_SULAY": {"city": "Mosul / Sulaymaniyah",
+                 "overnight_city": "Sulaymaniyah", "included_sites": []},
+    "TO_ERBIL": {"city": "Mosul / Erbil", "overnight_city": "Erbil",
+                 "included_sites": ["ERB_CITD"]},
+    "ERBIL_DAY_TWO": {"city": "Erbil", "overnight_city": "Erbil",
+                      "included_sites": ["ERB_CITD"]},
+    "SAME_SITES_AS_MOSUL": {"city": "Samarra / Mosul", "overnight_city": "Mosul",
                             "included_sites": ["SA_G_MAL", "MO_HTR"]},
-    "ERBIL_DAY": {"overnight_city": "Erbil", "included_sites": ["ERB_CITD"]},
-    "TO_BASRA": {"overnight_city": "Basra", "included_sites": []},
-    "DEPARTURE": {"overnight_city": "", "included_sites": []},
+    "ERBIL_DAY": {"city": "Erbil", "overnight_city": "Erbil",
+                  "included_sites": ["ERB_CITD"]},
+    "TO_BASRA": {"city": "Duhok / Basra", "overnight_city": "Basra",
+                 "included_sites": []},
+    "DEPARTURE": {"city": "Baghdad", "overnight_city": "", "included_sites": []},
 }
 
 
@@ -311,5 +327,6 @@ def test_the_report_names_every_fault_it_found():
 def test_the_report_of_a_clean_sequence_still_names_what_is_not_yet_checked():
     text = format_check(check_sequence(["BAGHDAD_DAY"], TEMPLATES,
                                        start_date=date(2026, 1, 1)))
-    assert "day_start" in text
     assert "sites_skipped" in text
+    assert "day_trip_on_a_moving_day" in text
+    assert "day_start" not in text, "day_start is built now, so it is not pending"

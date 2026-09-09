@@ -58,13 +58,44 @@ def _normalize_city_name(name: str) -> str:
     return place_key(s).lower()
 
 
-def _city_region(city_name: str, template_region: Optional[str] = None) -> str:
-    c_norm = _normalize_city_name(city_name)
-    if c_norm in CITY_REGION_MAP:
-        return CITY_REGION_MAP[c_norm]
-    if template_region and template_region.strip():
-        return template_region.strip()
-    return "Central Iraq"
+def _regions_of(code: str, template: Any, city_name: str = "") -> set:
+    """
+    Post: every region one bound day answers for. Never empty.
+
+    Pre:  `code` is the template's code and `template` its row. `city_name` is
+          the overnight city of the route day.
+
+    Inv:  the set holds the day's own region and the region of the city it
+          sleeps in. For 55 of the 62 templates those are the same value.
+
+    Two questions, and one answer used to serve both. A day's own region says
+    which customer it is *for*, and its overnight city says where the trip *is*
+    that night. The seven exception templates are exactly the ones where the two
+    differ (ws-03 phase seven, D61).
+
+    Reading only the day's own region rejected `NA2BG` for a Central request and
+    reported "Overnight in 'Baghdad' (Southern Iraq) outside requested
+    region(s)", which is a sentence no reviewer can act on. Reading only the
+    city put `SAFA` back in Central and made the exception list unreachable. A
+    day binds when the customer asked for either, so a Southern request takes
+    the marshes for their sites and a Central request takes them for the
+    Baghdad night they sleep in.
+    """
+    from services.itinerary.regions import REGION_WHEN_UNSTATED, region_of_template
+
+    answers = set()
+    stated = region_of_template(code, template)
+    if stated:
+        answers.add(stated)
+    by_city = CITY_REGION_MAP.get(_normalize_city_name(city_name))
+    if by_city:
+        answers.add(by_city)
+    return answers or {REGION_WHEN_UNSTATED}
+
+
+def _region_label(regions: set) -> str:
+    """Post: the day's regions as one phrase, for a gap note a human reads."""
+    return " / ".join(sorted(regions))
 
 
 def _index_templates(templates: dict[str, Any]) -> dict[str, list[str]]:
@@ -216,13 +247,29 @@ def bind_route_to_templates(
     templates: dict[str, Any],
     requested_regions: Optional[list[str]] = None,
 ) -> tuple[list[str], list[str]]:
-    req_regions = {r.strip() for r in (requested_regions or []) if r.strip()}
-    is_multi_region_non_contiguous = (
-        "Northern Iraq" in req_regions
-        and "Southern Iraq" in req_regions
-        and "Central Iraq" not in req_regions
+    from services.itinerary.regions import (
+        REGION_CENTRAL,
+        REGION_KURDISTAN,
+        REGION_SOUTH,
+        REGION_WEST_NINEVEH,
     )
-    force_erbil_departure = "Northern Iraq" in req_regions
+
+    req_regions = {r.strip() for r in (requested_regions or []) if r.strip()}
+    # A trip from the far north to the far south passes through Baghdad whether
+    # the customer named it or not, so a Central night is kept as a connector.
+    #
+    # Both tests used to read the literal "Northern Iraq", which stopped
+    # existing when the catalogue took the intake form's four names. A test for
+    # a region nobody can request is a test that never fires (D60).
+    is_multi_region_non_contiguous = (
+        bool(req_regions & {REGION_KURDISTAN, REGION_WEST_NINEVEH})
+        and REGION_SOUTH in req_regions
+        and REGION_CENTRAL not in req_regions
+    )
+    # Departures run through Erbil. Mosul takes no departing flight, so a trip
+    # through the plains leaves from Erbil as a Kurdistan trip does.
+    force_erbil_departure = bool(
+        req_regions & {REGION_KURDISTAN, REGION_WEST_NINEVEH})
 
     overnight_idx = _index_templates(templates)
     bound_codes: list[str] = []
@@ -233,10 +280,23 @@ def bind_route_to_templates(
     used_codes: set = set()
 
     def take(code: str) -> None:
-        """Post: the code is bound, and its sites count as used."""
+        """
+        Post: the code is bound, its sites count as used, and so does the
+              template it is an alternative to.
+
+        Marking the alternative here rather than at every read is what stops a
+        proposal holding both halves of one day. `SAFA` and `BGFA` are the same
+        west day with and without Samarra, and a binder that offered both would
+        sell Samarra twice and then report it as a fault of its own making
+        (ws-03 phase seven, D63).
+        """
+        from services.itinerary.named_pair_rules import alternative_of
         from services.itinerary.site_index import sites_of_template
         bound_codes.append(code)
         used_codes.add(code)
+        other = alternative_of(code)
+        if other:
+            used_codes.add(other)
         used_sites.update(sites_of_template(templates[code]))
 
     last_day_idx = len(route.days) - 1
@@ -252,18 +312,20 @@ def bind_route_to_templates(
                     sites_already_used=used_sites, codes_already_used=used_codes)
                 if best_code:
                     tmpl = templates[best_code]
-                    city_reg = _city_region(oc, getattr(tmpl, "region", ""))
+                    day_regions = _regions_of(best_code, tmpl, oc)
 
-                    if not req_regions or city_reg in req_regions:
+                    if not req_regions or (day_regions & req_regions):
                         take(best_code)
-                    elif is_multi_region_non_contiguous and city_reg == "Central Iraq":
+                    elif is_multi_region_non_contiguous and REGION_CENTRAL in day_regions:
                         take(best_code)
                         gap_notes.append(
                             f"Day {rd.day} ({rd.overnight_city}): Retained as required Central Iraq transit connector."
                         )
                     else:
                         gap_notes.append(
-                            f"Day {rd.day}: Overnight in '{rd.overnight_city}' ({city_reg}) outside requested region(s); omitted."
+                            f"Day {rd.day}: Overnight in '{rd.overnight_city}' "
+                            f"({_region_label(day_regions)}) outside requested "
+                            f"region(s); omitted."
                         )
             else:
                 gap_notes.append(f"Day {rd.day}: No active template found for overnight city '{rd.overnight_city}'.")
@@ -295,11 +357,13 @@ def bind_route_to_templates(
         best_code, sim = _best_template_by_text(rd.text, no_overnight_candidates, templates)
         if best_code and sim >= 0.05:
             tmpl = templates[best_code]
-            city_reg = _city_region(getattr(tmpl, "city", ""), getattr(tmpl, "region", ""))
-            if not req_regions or city_reg in req_regions:
+            day_regions = _regions_of(best_code, tmpl, getattr(tmpl, "city", ""))
+            if not req_regions or (day_regions & req_regions):
                 take(best_code)
             else:
-                gap_notes.append(f"Day {rd.day}: Day trip in '{city_reg}' outside requested region(s); omitted.")
+                gap_notes.append(
+                    f"Day {rd.day}: Day trip in '{_region_label(day_regions)}' "
+                    f"outside requested region(s); omitted.")
         else:
             gap_notes.append(f"Day {rd.day}: Day trip / departure has no confident template match.")
 

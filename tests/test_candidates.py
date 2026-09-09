@@ -32,6 +32,10 @@ from services.itinerary.candidates import (  # noqa: E402
     check_candidates,
     tied_routes,
 )
+from services.itinerary.regions import (  # noqa: E402
+    REGION_CENTRAL,
+    REGION_KURDISTAN,
+)
 from services.itinerary.models import NormalizedRequest, RouteDay, RouteRecord  # noqa: E402
 
 
@@ -45,20 +49,20 @@ def a_template(code: str, city: str = "Baghdad", title: str = "", sites: str = "
     """
     return SimpleNamespace(code=code, overnight_city=city, city=city,
                            title=title or f"{city} day", active=True,
-                           included_sites_json=sites, region="Central Iraq")
+                           included_sites_json=sites, region=REGION_CENTRAL)
 
 
 BAGHDAD_TEMPLATES = {"BG1CT": a_template("BG1CT")}
 
 
-def a_request(day_count: int = 4, regions=("Central Iraq",)) -> NormalizedRequest:
+def a_request(day_count: int = 4, regions=(REGION_CENTRAL,)) -> NormalizedRequest:
     return NormalizedRequest(
         key="queue:qr-test", source="queue", customer_name="A Customer",
         pax=2, day_count=day_count, tour_type="individual", hotel_tier="3star",
         vehicle_type="SMALL_CAR", requested_regions=list(regions))
 
 
-def a_route(name: str, days: int, cities, regions=("Central Iraq",)) -> RouteRecord:
+def a_route(name: str, days: int, cities, regions=(REGION_CENTRAL,)) -> RouteRecord:
     return RouteRecord(
         id=name, source_file=name, day_count=days, tour_type="individual",
         city_sequence=list(cities), themes=[],
@@ -90,9 +94,9 @@ def test_the_tie_orders_by_length_before_score():
 
 
 def test_a_route_of_a_different_region_does_not_tie():
-    central = a_route("central.docx", 4, ["Baghdad"], regions=("Central Iraq",))
-    north = a_route("north.docx", 4, ["Erbil"], regions=("Northern Iraq",))
-    routes, _ = tied_routes(a_request(regions=("Central Iraq",)),
+    central = a_route("central.docx", 4, ["Baghdad"], regions=(REGION_CENTRAL,))
+    north = a_route("north.docx", 4, ["Erbil"], regions=(REGION_KURDISTAN,))
+    routes, _ = tied_routes(a_request(regions=(REGION_CENTRAL,)),
                             routes=[central, north])
 
     assert [r.source_file for r in routes] == ["central.docx"]

@@ -8,13 +8,23 @@ answer key and only exists for the 289 offers in the corpus. This asks a
 different question, and asks it of any sequence: does this itinerary hold
 together on its own terms.
 
-Six faults are found here, and three more are named and not found. The three
-waited on a start city per template, and `day_shape` now holds one: the owner
-read 21 templates the catalogue could not answer for, and gave a start, an end
-and a role for each. The three checks are buildable and are not built.
+Nine faults are found here, and two more are named and not found.
 
-A judged rule may lower a fault about a named pair of codes to a flag. It never
-refuses anything this module did not already refuse (ws-03 D36).
+Three of the nine arrived on 2026-09-08. `day_start` catches a day that begins
+where the night before did not end, `role_order` catches a departure day with
+days after it, and `alternative_pair` catches two templates that sell one day
+two ways. They waited on a start city per template, and `day_shape` now holds
+one for all 62: the owner settled 21 on 2026-09-07 and read the 32 the
+catalogue derives on 2026-09-08 (ws-03 phase seven, WP33).
+
+`day_start` is what saw the two routing faults the owner's own comments named
+and this module reported as clean: a day 10 starting in Mosul after a Baghdad
+night, and a Mosul to Sulaymaniyah move that the night chain cannot see because
+the day making it carries no overnight city.
+
+A named rule may add its words to a fault about a pair of codes. It never
+refuses anything this module did not already refuse (ws-03 D36), and since
+phase seven it never excuses one either (D63, D64).
 
 Nothing here repairs. It reports, and a repair is a separate decision that has
 to know which of three route candidates it is repairing.
@@ -35,8 +45,12 @@ FAULT_FLAG_CAP = "flag_cap"                # too many one-site overlaps in a tri
 FAULT_MOVE_NOT_JOINED = "move_not_joined"  # a pair the work has never carried
 FAULT_LEG_TOO_LONG = "leg_too_long"        # further in one day than the work drives
 FAULT_SITE_CLOSED = "site_closed"          # the site is shut on the day it lands
+FAULT_DAY_START = "day_start"              # it begins where the last night did not end
+FAULT_ROLE_ORDER = "role_order"            # an arrival or a departure out of place
+FAULT_ALTERNATIVE_PAIR = "alternative_pair"  # both halves of one day sold two ways
 FAULT_KINDS = (FAULT_SITE_REPEAT, FAULT_DAY_REPEAT, FAULT_FLAG_CAP,
-               FAULT_MOVE_NOT_JOINED, FAULT_LEG_TOO_LONG, FAULT_SITE_CLOSED)
+               FAULT_MOVE_NOT_JOINED, FAULT_LEG_TOO_LONG, FAULT_SITE_CLOSED,
+               FAULT_DAY_START, FAULT_ROLE_ORDER, FAULT_ALTERNATIVE_PAIR)
 
 # One site shared by two days is a flag, not a fault. The owner reads it and
 # decides, and the candidate that carries it scores lower than one that does not
@@ -55,13 +69,19 @@ FLAG_CAP = 2
 
 # Faults this module does not find yet, and what each one waits on. Named here
 # so a reader of a clean report knows what "clean" covers.
+#
+# `day_start` left this list on 2026-09-08, once the owner had read the 32 start
+# cities the catalogue derived and corrected six of them. It found the two
+# routing faults the owner's own comments named and the checker could not see:
+# a day 10 that starts in Mosul after a Baghdad night, and a Mosul to
+# Sulaymaniyah move hidden because a departure day carries no overnight city
+# (ws-03 phase seven, WP33.2).
 FAULTS_NOT_YET_FOUND = {
-    "day_start": "a day that begins in a city the last night did not end in",
     "sites_skipped": "a leg whose richer template was passed over",
     "day_trip_on_a_moving_day": "a day trip used on the day the trip moves on",
 }
-BLOCKED_ON = ("nothing. `day_shape` holds a start, an end and a role for all 60 "
-              "templates, so these three are buildable")
+BLOCKED_ON = ("nothing. `day_shape` holds a start, an end and a role for all 62 "
+              "templates, so both are buildable")
 
 
 @dataclass
@@ -158,16 +178,19 @@ def _weekday_of(start: date, day_number: int) -> str:
 def _apply_named_pair_rules(check: SequenceCheck, request_row: Optional[dict],
                             day_count: int) -> None:
     """
-    Post: a fault a judged rule names becomes a flag, and the rule's own words
-          go on the flag. Every other fault stands.
+    Post: every fault stands. A named rule may add its own words to one, and no
+          rule lowers a fault to a flag any more.
 
-    A judged rule may soften a fault about a named pair of codes, and it never
-    refuses anything the checker did not already refuse (ws-03 D36). A counted
-    zero on a move is a separate family and no judged rule touches it (D6).
+    Pre:  `request_row` is the raw submitted record, and `day_count` is what the
+          customer asked for. Both reach `named_pair_rules` unread today.
 
-    Blame: the caller owes the raw request record. `named_pair_rules` reads the
-    regions a customer wrote, because normalisation folds the west into the
-    north on purpose and the condition would never be true otherwise.
+    Inv:  a rule never refuses what the checker did not already refuse (D36),
+          and since phase seven it never excuses one either. The three rules
+          left name alternative pairs, which are faults by construction (D63).
+
+    This kept the loop because the shape is the extension point: a later rule
+    that softens will re-use it, and `PairVerdict.softens` is where that
+    decision lives rather than here.
     """
     from services.itinerary.named_pair_rules import verdict_for_fault
 
@@ -229,10 +252,119 @@ def check_sequence(day_codes, templates: dict,
 
     _check_site_repeats(check, templates)
     _check_night_chain(check, nights, templates)
+    _check_day_starts(check, templates)
+    _check_role_order(check, templates)
+    _check_alternative_pairs(check)
     _check_closures(check, templates, start_date)
     # Last, because a judged rule speaks about a fault the checker raised.
     _apply_named_pair_rules(check, request_row, day_count)
     return check
+
+
+def _shapes_for(check: SequenceCheck, templates: dict) -> dict:
+    """
+    Post: {code: DayShape} for the codes this sequence holds, or {} when the
+          shapes cannot be read.
+
+    Blame: an unreadable shape table is recorded on `untested` by the caller, so
+    a reader of a clean report is not told a check ran that did not.
+    """
+    from services.itinerary.day_shape import all_shapes
+
+    try:
+        return all_shapes(templates)
+    except Exception:                                   # noqa: BLE001
+        check.untested.append(
+            "the day shapes could not be read, so the day's start and the role "
+            "order were not checked")
+        return {}
+
+
+def _check_day_starts(check: SequenceCheck, templates: dict) -> None:
+    """
+    Post: one fault per day that begins in a city the night before did not end
+          in.
+
+    Pre:  `check.day_codes` is the proposal in order.
+
+    A day with no fixed start passes. Four templates carry none, because the
+    work sells them from either side, and refusing one would refuse a day that
+    may be right (ws-03 phase seven, WP34.1).
+
+    This sees what the night chain cannot. A day trip and a departure day carry
+    no overnight city, so they take no position in that chain, and the two
+    routing faults the owner named both sat on such a day.
+    """
+    shapes = _shapes_for(check, templates)
+    if not shapes:
+        return
+
+    where_the_night_ended = None
+    for position, code in enumerate(check.day_codes, start=1):
+        shape = shapes.get(code)
+        if shape is None:
+            continue
+        if (where_the_night_ended and shape.start_city
+                and shape.start_city != where_the_night_ended):
+            check.faults.append(SequenceFault(
+                kind=FAULT_DAY_START, day=position,
+                statement=(f"day {position} ({code}) begins in "
+                           f"{shape.start_city}, and the night before ended in "
+                           f"{where_the_night_ended}"),
+                day_code=code, from_city=where_the_night_ended,
+                to_city=shape.start_city))
+        where_the_night_ended = shape.end_city or where_the_night_ended
+
+
+def _check_role_order(check: SequenceCheck, templates: dict) -> None:
+    """
+    Post: one fault per arrival day after the first, and one per departure day
+          before the last.
+
+    A departure day ends the trip. `SUEBDEP` sat on day 9 of a 12-day proposal
+    and no check spoke, because it carries no overnight city and reaches neither
+    the night chain nor the site counts in a way that says so (WP33.1).
+    """
+    from services.itinerary.day_shape import ROLE_ARRIVAL, ROLE_DEPARTURE
+
+    shapes = _shapes_for(check, templates)
+    if not shapes:
+        return
+
+    last = len(check.day_codes)
+    for position, code in enumerate(check.day_codes, start=1):
+        shape = shapes.get(code)
+        if shape is None:
+            continue
+        if shape.role == ROLE_ARRIVAL and position > 1:
+            check.faults.append(SequenceFault(
+                kind=FAULT_ROLE_ORDER, day=position,
+                statement=(f"day {position} ({code}) is an arrival day, and the "
+                           f"trip started on day 1"),
+                day_code=code))
+        elif shape.role == ROLE_DEPARTURE and position < last:
+            check.faults.append(SequenceFault(
+                kind=FAULT_ROLE_ORDER, day=position,
+                statement=(f"day {position} ({code}) is a departure day, and "
+                           f"{last - position} day(s) follow it"),
+                day_code=code))
+
+
+def _check_alternative_pairs(check: SequenceCheck) -> None:
+    """
+    Post: one fault per alternative pair the sequence holds both halves of.
+
+    Two templates that sell one day two ways are alternatives, not a pair to
+    combine. The fault is structural, so no request lifts it (D63).
+    """
+    from services.itinerary.named_pair_rules import pairs_in
+
+    for first, second, statement in pairs_in(check.day_codes):
+        day = list(check.day_codes).index(second) + 1
+        check.faults.append(SequenceFault(
+            kind=FAULT_ALTERNATIVE_PAIR, day=day,
+            statement=f"the sequence holds {first} and {second}. {statement}",
+            day_code=second))
 
 
 def _check_site_repeats(check: SequenceCheck, templates: dict) -> None:

@@ -94,8 +94,13 @@ def test_every_settled_shape_names_a_known_role():
         assert role in ROLES, code
 
 
-def test_the_owner_settled_twenty_one():
-    assert len(OWNER_SETTLED_SHAPES) == 21
+def test_the_owner_settled_thirty():
+    """
+    21 on 2026-09-07. Nine more on 2026-09-08: the owner read the 32 shapes the
+    catalogue derives, corrected six, and the two new templates arrived with
+    their shapes stated (ws-03 phase seven, WP34.1).
+    """
+    assert len(OWNER_SETTLED_SHAPES) == 30
 
 
 # ── a title states what a chain of one city cannot ───────────────────────────
@@ -185,11 +190,18 @@ def test_every_template_gets_a_shape():
         assert shape.source in (SOURCE_OWNER, SOURCE_TITLE, SOURCE_CATALOGUE), code
 
 
-def test_only_three_templates_carry_no_start():
+def test_only_five_templates_carry_no_start():
+    """
+    A start of None means the work sells the day from either side.
+
+    `BGNJURUKNA` sets off from Baghdad or from Karbala, and `DaMOZKDU` is sold
+    both as a Duhok day trip and as a transit out of Mosul. The owner said so
+    on 2026-09-08 (ws-03 phase seven, WP34.1).
+    """
     from services.itinerary.generator import load_templates
 
     without = dict(shapes_without_a_start(load_templates()))
-    assert set(without) == {"BB", "ArrSU", "NA1"}
+    assert set(without) == {"BB", "ArrSU", "NA1", "BGNJURUKNA", "DaMOZKDU"}
 
 
 def test_the_summary_counts_every_template_one_time():

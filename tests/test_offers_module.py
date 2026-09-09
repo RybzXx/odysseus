@@ -174,7 +174,9 @@ def test_every_vendored_template_recovers_itself():
     the sheet and services/offers/refresh_snapshot.py brought them to disk.
     """
     texts = load_template_texts()
-    assert len(texts) == 60
+    # 62 since 2026-09-08, when ws-03 phase seven added BGFA and MO1EB: two
+    # days the sold corpus already carried and the catalogue did not hold.
+    assert len(texts) == 62
     for code, full_text in texts.items():
         if not full_text.strip():
             continue

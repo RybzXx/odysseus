@@ -36,6 +36,13 @@ from services.itinerary.drafts import (  # noqa: E402
     set_comment_rule_state,
 )
 from services.itinerary.models import NormalizedRequest  # noqa: E402
+from services.itinerary.regions import (  # noqa: E402
+    REGION_CENTRAL,
+    REGION_KURDISTAN,
+    REGION_SOUTH,
+    REGION_WEST_NINEVEH,
+    REGION_WHEN_UNSTATED,
+)
 from services.itinerary.propose_sequence import (  # noqa: E402
     MODEL_PROPOSALS_SETTING,
     ModelProposalsDisabled,
@@ -296,14 +303,19 @@ def test_a_curated_request_is_unchanged_by_the_queue_repair():
 # eight labels had no entry in REGION_NAME_MAP, so the binder dropped every day
 # of those requests as outside the requested region. The first run built 1 of 10
 # documents before this, and 8 of 10 after.
+#
+# ws-03 phase seven took the four names the intake form itself offers, so a
+# label and a region are now the same string. Kurdistan and the Nineveh plains
+# stopped being one region on 2026-09-08: folding them made a request for Mosul
+# match an Erbil route and report full coverage (D60).
 LIVE_REGION_LABELS = {
-    "Central Iraq & Middle Euphrates": "Central Iraq",
-    "Center & Middle Euphrates": "Central Iraq",
-    "Iraqi Kurdistan": "Northern Iraq",
-    "Western Iraq & Nineveh Plains": "Northern Iraq",
-    "West & Nineveh Plains": "Northern Iraq",
-    "South of Iraq": "Southern Iraq",
-    "Southern Iraq": "Southern Iraq",
+    "Central Iraq & Middle Euphrates": REGION_CENTRAL,
+    "Center & Middle Euphrates": REGION_CENTRAL,
+    "Iraqi Kurdistan": REGION_KURDISTAN,
+    "Western Iraq & Nineveh Plains": REGION_WEST_NINEVEH,
+    "West & Nineveh Plains": REGION_WEST_NINEVEH,
+    "South of Iraq": REGION_SOUTH,
+    "Southern Iraq": REGION_SOUTH,
 }
 
 
@@ -327,15 +339,15 @@ def test_a_placeholder_region_is_not_a_region():
     """"Not Known" filtered every day out of a ten-day trip."""
     from services.itinerary.normalizer import _normalize_regions
 
-    assert _normalize_regions("Not Known") == ["Central Iraq"]
-    assert _normalize_regions("Iraqi Kurdistan, Not Known") == ["Northern Iraq"]
+    assert _normalize_regions("Not Known") == [REGION_WHEN_UNSTATED]
+    assert _normalize_regions("Iraqi Kurdistan, Not Known") == [REGION_KURDISTAN]
 
 
 def test_two_labels_that_mean_one_region_are_named_once():
     from services.itinerary.normalizer import _normalize_regions
 
     assert _normalize_regions(
-        "Central Iraq & Middle Euphrates, Center & Middle Euphrates") == ["Central Iraq"]
+        "Central Iraq & Middle Euphrates, Center & Middle Euphrates") == [REGION_CENTRAL]
 
 
 def test_a_queue_request_with_no_stated_region_still_names_one():
@@ -343,7 +355,7 @@ def test_a_queue_request_with_no_stated_region_still_names_one():
 
     normalized = normalize_from_dict(
         "queue:1", dict(QUEUE_RECORD, regions="Not Known"), source="queue")
-    assert normalized.requested_regions == ["Central Iraq"]
+    assert normalized.requested_regions == [REGION_WHEN_UNSTATED]
     assert normalized.parse_warnings == []
 
 

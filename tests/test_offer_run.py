@@ -35,6 +35,7 @@ from services.itinerary.offer_run import (  # noqa: E402
     parse_ranking,
     parse_review,
 )
+from services.itinerary.regions import REGION_CENTRAL  # noqa: E402
 from services.itinerary.run_record import STEPS  # noqa: E402
 
 
@@ -56,7 +57,29 @@ def directories_of_their_own(tmp_path, monkeypatch):
 def a_template(code: str, city: str = "Baghdad"):
     return SimpleNamespace(code=code, overnight_city=city, city=city,
                            title=f"{city} day", active=True,
-                           included_sites_json="[]", region="Central Iraq")
+                           included_sites_json="[]", region=REGION_CENTRAL)
+
+
+# One template per overnight city a sold route may name, so a candidate can be
+# built whichever route ties at the top.
+#
+# A single Baghdad template used to pass, because the route that tied first
+# happened to sleep in Baghdad. ws-03 phase seven changed the region a route
+# scores against, a southern route tied instead, and the run produced no
+# candidate at all. The test was measuring the corpus, not the run.
+def templates_for_every_city() -> dict:
+    """
+    Post: {code: template} with one day for each overnight city the corpus uses.
+
+    Pre:  nothing. The cities are the ones `move_map` holds coordinates for.
+
+    Blame: a caller that injects one template makes the run depend on which of
+    164 sold routes ties first, and the tie moves whenever scoring changes.
+    """
+    cities = ("Baghdad", "Karbala", "Najaf", "Nasiriyah", "Basra", "Mosul",
+              "Erbil", "Duhok", "Sulaymaniyah", "Samarra")
+    return {f"T_{city.upper()}": a_template(f"T_{city.upper()}", city)
+            for city in cities}
 
 
 def a_candidate(index: int, codes, faults=(), asked=4) -> Candidate:
@@ -146,9 +169,9 @@ def test_a_run_with_every_layer_off_still_produces_a_proposal():
     The desk's state today: the master switch is off and no layer is
     configured. A run that refused would refuse every request (ws-03 D43).
     """
-    templates = {"BG1CT": a_template("BG1CT")}
+    templates = templates_for_every_city()
     draft = drafts_module.open_draft({"row_id": "qr-1", "full_name": "A Customer",
-                                      "trip_days": "4 days", "regions": "Central Iraq"},
+                                      "trip_days": "4 days", "regions": REGION_CENTRAL},
                                      origin=drafts_module.ORIGIN_SHEET,
                                      request_id="queue:qr-1")
     outcome = create_offer(draft, templates)
@@ -162,7 +185,7 @@ def test_a_run_with_every_layer_off_still_produces_a_proposal():
 def test_the_record_says_which_steps_did_not_run():
     templates = {"BG1CT": a_template("BG1CT")}
     draft = drafts_module.open_draft({"row_id": "qr-2", "full_name": "A Customer",
-                                      "trip_days": "4 days", "regions": "Central Iraq"},
+                                      "trip_days": "4 days", "regions": REGION_CENTRAL},
                                      origin=drafts_module.ORIGIN_SHEET,
                                      request_id="queue:qr-2")
     run = create_offer(draft, templates).run
@@ -179,16 +202,16 @@ def test_a_run_with_no_model_reaches_no_endpoint():
     """Invariant 3.2. Nothing leaves the machine while the layers are off."""
     templates = {"BG1CT": a_template("BG1CT")}
     draft = drafts_module.open_draft({"row_id": "qr-3", "full_name": "A Customer",
-                                      "trip_days": "4 days", "regions": "Central Iraq"},
+                                      "trip_days": "4 days", "regions": REGION_CENTRAL},
                                      origin=drafts_module.ORIGIN_SHEET,
                                      request_id="queue:qr-3")
     assert create_offer(draft, templates).run.endpoints_reached == []
 
 
 def test_the_run_leaves_a_sequence_and_a_run_id_on_the_draft():
-    templates = {"BG1CT": a_template("BG1CT")}
+    templates = templates_for_every_city()
     draft = drafts_module.open_draft({"row_id": "qr-4", "full_name": "A Customer",
-                                      "trip_days": "4 days", "regions": "Central Iraq"},
+                                      "trip_days": "4 days", "regions": REGION_CENTRAL},
                                      origin=drafts_module.ORIGIN_SHEET,
                                      request_id="queue:qr-4")
     outcome = create_offer(draft, templates)
@@ -202,7 +225,7 @@ def test_the_run_builds_no_document():
     """Button 1 makes a proposal. Button 2 makes the document (item 23.1)."""
     templates = {"BG1CT": a_template("BG1CT")}
     draft = drafts_module.open_draft({"row_id": "qr-5", "full_name": "A Customer",
-                                      "trip_days": "4 days", "regions": "Central Iraq"},
+                                      "trip_days": "4 days", "regions": REGION_CENTRAL},
                                      origin=drafts_module.ORIGIN_SHEET,
                                      request_id="queue:qr-5")
     outcome = create_offer(draft, templates)

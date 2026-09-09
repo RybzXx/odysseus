@@ -33,6 +33,10 @@ from services.itinerary.drafts import (  # noqa: E402
     open_draft,
     sequences_agree,
 )
+from services.itinerary.regions import (  # noqa: E402
+    REGION_CENTRAL,
+    REGION_KURDISTAN,
+)
 from services.itinerary.normalizer import normalize_from_dict  # noqa: E402
 from services.itinerary.propose_sequence import ProposalError, parse_answer  # noqa: E402
 
@@ -63,7 +67,7 @@ def test_a_request_row_normalises_to_the_generation_inputs():
     assert req.pax == 2
     assert req.hotel_tier == "4star"
     assert req.vehicle_type == "SMALL_CAR"
-    assert set(req.requested_regions) == {"Northern Iraq", "Central Iraq"}
+    assert set(req.requested_regions) == {REGION_KURDISTAN, REGION_CENTRAL}
 
 
 def test_an_unmapped_region_is_warned_about_and_passed_through():
