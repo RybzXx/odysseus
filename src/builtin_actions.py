@@ -3640,6 +3640,61 @@ async def action_cookbook_serve(
     return f"Launched {repo_id} (session {sid})", True
 
 
+# ---------------------------------------------------------- bookings desk ---
+#
+# Three actions rather than three LLM tasks, and that is the point: none of
+# them calls a model. The bookings desk is built so an unattended run never
+# reasons about a customer — pricing reads a tour and a party size, matching
+# reads HMACs, and filing a draft is an IMAP APPEND. Registering them as
+# actions is what keeps that true, because an `llm` task would put a prompt in
+# front of every one.
+#
+# Each returns the run report's own summary, which is what the AI Hub shows.
+
+
+async def action_bookings_offer_jobs(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Price the registrations an operator asked Odysseus to quote.
+
+    Post: every job this poll claimed is closed, as done or as error.
+    Inv: no model is called. The job names a tour and a party size and carries
+    no customer text, which is what lets one run both price it and answer.
+    """
+    from services.bookings.desk_task import run_offer_jobs
+
+    report = await run_offer_jobs()
+    if not (report.priced or report.failed):
+        raise TaskNoop("no pricing work waiting")
+    return report.summary(), report.failed == 0
+
+
+async def action_bookings_reply_scan(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Say which registrations book@bilweekend.com already answered.
+
+    Post: one posted entry per answered registration.
+    Inv: reads the Sent folder read-only, writes no follow-up field, and calls
+    no model. Matching runs on HMACs, so no customer list reaches this device.
+    """
+    from services.bookings.desk_task import run_reply_scan
+
+    report = await run_reply_scan()
+    return report.summary(), True
+
+
+async def action_bookings_draft_appends(owner: str, **kwargs) -> Tuple[str, bool]:
+    """File approved replies into the Gmail drafts folder.
+
+    Post: every append this poll claimed is closed.
+    Inv: opens IMAP, APPENDs, stops. Nothing is sent, and no model sees the
+    message — which is the only reason this path may carry a customer's name.
+    """
+    from services.bookings.desk_task import run_draft_appends
+
+    report = await run_draft_appends()
+    if not (report.filed or report.failed):
+        raise TaskNoop("no drafts waiting to be filed")
+    return report.summary(), report.failed == 0
+
+
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
@@ -3662,6 +3717,9 @@ BUILTIN_ACTIONS = {
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
     "cookbook_serve": action_cookbook_serve,
+    "bookings_offer_jobs": action_bookings_offer_jobs,
+    "bookings_reply_scan": action_bookings_reply_scan,
+    "bookings_draft_appends": action_bookings_draft_appends,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
 
@@ -3683,4 +3741,7 @@ BUILTIN_ACTION_INFO = {
     "test_skills": "Run the per-skill Test on every skill: agent run + LLM judge → records verdict on the skill (pass/needs_work/fail/inconclusive). Advisory only — never rewrites or demotes anything.",
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
+    "bookings_offer_jobs": "Price the registrations an operator asked Odysseus to quote on Bil Weekend, and send back the wording and the itinerary link. Calls no model.",
+    "bookings_reply_scan": "Read the book@bilweekend.com sent folder and report which website registrations already got an answer. Read-only, and calls no model.",
+    "bookings_draft_appends": "File replies an operator approved into the Gmail drafts folder. Sends nothing, and calls no model.",
 }
