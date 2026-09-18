@@ -438,6 +438,15 @@ def _check_night_chain(check: SequenceCheck, nights: list, templates: dict) -> N
     Direction does not decide the first fault. A road the corpus drives one way
     is a road, and `Leg.is_joined` reads both counts.
     """
+    from services.itinerary.move_map import counted_moves
+
+    try:
+        corpus_available = bool(counted_moves())
+    except (OSError, ValueError):
+        corpus_available = False
+    if len(nights) > 1 and not corpus_available:
+        check.untested.append("City connections were not checked: the offer corpus has no usable connection evidence.")
+
     for (first_day, first_code), (next_day, next_code) in zip(nights, nights[1:]):
         here = _overnight_city(templates[first_code])
         there = _overnight_city(templates[next_code])
@@ -445,7 +454,7 @@ def _check_night_chain(check: SequenceCheck, nights: list, templates: dict) -> N
             continue
 
         move = leg(here, there)
-        if not move.is_joined:
+        if corpus_available and not move.is_joined:
             check.faults.append(SequenceFault(
                 kind=FAULT_MOVE_NOT_JOINED, day=next_day,
                 statement=(f"day {next_day} sleeps in {there} after a night in "

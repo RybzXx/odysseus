@@ -32,10 +32,12 @@ LAYER_READ = "itinerary_read"      # a screenshot becomes text
 LAYER_BRIEF = "itinerary_brief"    # layer 1: the request becomes a brief
 LAYER_RANK = "itinerary_rank"      # layer 2: one candidate becomes the choice
 LAYER_REVIEW = "itinerary_review"  # layer 3: the choice becomes a note
-LAYERS = (LAYER_READ, LAYER_BRIEF, LAYER_RANK, LAYER_REVIEW)
+LAYER_PROPOSE = "itinerary_propose"
+LAYERS = (LAYER_READ, LAYER_BRIEF, LAYER_RANK, LAYER_REVIEW, LAYER_PROPOSE)
 
 # What each layer is for, in the words a settings page would use.
 LAYER_PURPOSE = {
+    LAYER_PROPOSE: "proposes an itinerary from the request",
     LAYER_READ: "reads the conversation screenshots",
     LAYER_BRIEF: "reasons about what the customer asked for",
     LAYER_RANK: "chooses one itinerary from the candidates",
@@ -95,6 +97,15 @@ def master_enabled(settings: Optional[dict] = None) -> bool:
                 .get(MASTER_SWITCH, False))
 
 
+def customer_text_refusal() -> str:
+    """Preserve the owner's prohibition even when stored model switches are on.
+
+    No endpoint label or loopback URL proves that a server does not relay data.
+    The owner reaffirmed this restriction on 2026-09-18 (ws-04).
+    """
+    return "Customer enquiry text must not reach network models. This model step is disabled by policy."
+
+
 def resolve_layer(layer: str, owner: Optional[str] = None) -> LayerAccess:
     """
     Where one layer may send, or why it may not send at all.
@@ -124,6 +135,10 @@ def resolve_layer(layer: str, owner: Optional[str] = None) -> LayerAccess:
     if not bool(settings.get(switch, False)):
         return LayerAccess(layer=layer,
                            refusal=f"{switch} is off, so this layer did not run")
+
+    refusal = customer_text_refusal()
+    if refusal:
+        return LayerAccess(layer=layer, refusal=refusal)
 
     from src.endpoint_resolver import resolve_endpoint_by_id
     from src.settings import get_user_setting

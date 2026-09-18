@@ -310,12 +310,13 @@ async def propose_by_model(request: NormalizedRequest, templates: dict,
             f"the model proposer is off. Set {MODEL_PROPOSALS_SETTING} to true "
             f"to let a request reach the configured endpoint")
 
-    from src.endpoint_resolver import resolve_endpoint
+    from services.itinerary.layer_access import LAYER_PROPOSE, resolve_layer
     from src.llm_core import llm_call_async
 
-    url, model, headers = resolve_endpoint("default", owner=owner)
-    if not url or not model:
-        raise ProposalError("no model endpoint is configured")
+    access = resolve_layer(LAYER_PROPOSE, owner=owner)
+    if not access.may_run:
+        raise ModelProposalsDisabled(access.refusal)
+    url, model, headers = access.url, access.model, access.headers
 
     messages = build_prompt(request, templates)
     if comment:

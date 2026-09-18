@@ -131,6 +131,9 @@ DEFAULT_SETTINGS = {
     # Each model layer is opt-in and names its endpoint explicitly. These keys
     # must be registered here because /api/auth/settings accepts only keys in
     # DEFAULT_SETTINGS.
+    "itinerary_propose_enabled": False,
+    "itinerary_propose_endpoint_id": "",
+    "itinerary_propose_model": "",
     "itinerary_read_enabled": False,
     "itinerary_read_endpoint_id": "",
     "itinerary_read_model": "",

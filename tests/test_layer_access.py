@@ -43,6 +43,8 @@ CLOUD = "gemma4:31b-cloud"
 @pytest.fixture
 def settings(monkeypatch):
     """Drive the resolver from a dictionary the test owns."""
+    # Isolate endpoint selection from the separately tested customer-data policy.
+    monkeypatch.setattr(layer_access, "customer_text_refusal", lambda: "")
     held = {}
 
     def fake_load():
@@ -183,3 +185,17 @@ def test_the_reader_does_not_borrow_the_vision_role(settings, monkeypatch):
 
     assert access.may_run is False
     assert "gpt-4o" not in access.refusal
+
+
+@pytest.mark.parametrize("layer", LAYERS)
+def test_customer_text_policy_blocks_even_fully_configured_layers(monkeypatch, layer):
+    stored = {MASTER_SWITCH: True, layer_switch(layer): True,
+              f"{layer}_endpoint_id": "cloud", f"{layer}_model": "model"}
+    monkeypatch.setattr(layer_access, "_settings", lambda: stored)
+    import src.endpoint_resolver as resolver
+    def forbidden(*args, **kwargs):
+        pytest.fail("The policy must stop before any endpoint resolution")
+    monkeypatch.setattr(resolver, "resolve_endpoint_by_id", forbidden)
+    access = resolve_layer(layer)
+    assert not access.may_run
+    assert "disabled by policy" in access.refusal

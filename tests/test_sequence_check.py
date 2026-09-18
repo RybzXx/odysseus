@@ -330,3 +330,12 @@ def test_the_report_of_a_clean_sequence_still_names_what_is_not_yet_checked():
     assert "sites_skipped" in text
     assert "day_trip_on_a_moving_day" in text
     assert "day_start" not in text, "day_start is built now, so it is not pending"
+
+
+def test_missing_corpus_is_untested_not_an_unsupported_journey(monkeypatch):
+    from collections import Counter
+    monkeypatch.setattr(move_map, "_COUNTED_MOVES", Counter())
+    check = check_sequence(["BAGHDAD_DAY", "TO_MOSUL"], TEMPLATES, start_date=date(2026, 1, 1))
+    assert "move_not_joined" not in kinds(check)
+    assert any("corpus" in note for note in check.untested)
+    assert not check.is_clean
