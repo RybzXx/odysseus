@@ -39,6 +39,8 @@ test("a new rules result takes precedence over model history", () => {
   assert.match(output, /3 day\(s\)/);
   assert.match(output, /data-source="rules"/);
   assert.doesNotMatch(output, /disabled/);
+  assert.match(output, /Rules recalculated/);
+  assert.match(output, /No model used for this result/);
 });
 
 test("rule books read the API wrapper and identify retired guidance", async () => {
@@ -51,5 +53,5 @@ test("rule books read the API wrapper and identify retired guidance", async () =
   const output = elements.get("rule-books").innerHTML;
   assert.match(output, /Counted road/);
   assert.match(output, /retired/);
-  assert.match(output, /Enforced by sequence_check.region_coverage/);
+  assert.match(output, /Enforced by itinerary checks/);
 });

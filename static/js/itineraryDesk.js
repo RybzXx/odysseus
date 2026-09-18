@@ -701,10 +701,10 @@ function stripHtml(draft) {
       </div>
       <div>
         <h3>What ran</h3>
-        <div class="big">${run ? esc(run.statement) : "no run yet"}</div>
-        <div class="sub">${run && (run.endpoints_reached || []).length
-          ? esc(run.endpoints_reached.join(", ")) : "no model ran"}</div>
-        <div class="sub">${runs.length} run(s) on this draft</div>
+        <div class="big">${chosen?.source === "rules" ? "Rules recalculated" : run ? esc(run.statement) : "no run yet"}</div>
+        <div class="sub">${chosen?.source === "rules" ? "No model used for this result"
+          : run && (run.endpoints_reached || []).length ? esc(run.endpoints_reached.join(", ")) : "no model ran"}</div>
+        <div class="sub">${esc(chosen?.proposed_at || "")} · ${runs.length} historical run(s)</div>
         <div class="bar">
           <button class="run-offer" data-draft="${esc(draft.draft_id)}"
                   title="Recalculate with current rules and keep prior sequences.">
@@ -759,7 +759,7 @@ function renderDetail(draft) {
     ${draft.stale ? `<div class="warn">Stored rules result is stale. ${esc(draft.stale.statement)} Recalculate to append a current result.</div>` : ""}
     ${section("sec-layers", "What ran",
       runs.length ? `${runs.length} run(s)` : "no run yet",
-      runsBody(draft), runFailed || runUntested,
+      runsBody(draft), chosen?.source !== "rules" && (runFailed || runUntested),
       runFailed ? "bad" : runUntested ? "warn" : "", "")}
     ${section("sec-brief", "What the customer asked for",
       brief ? (window.BriefCard ? BriefCard.headline(brief) : "") : "layer 1 did not run",
@@ -767,8 +767,8 @@ function renderDetail(draft) {
       briefDisagrees ? "warn" : "", "model")}
     ${section("sec-sequences", "The itinerary",
       chosen ? `${(chosen.day_codes || []).length} day(s)` : "nothing proposed",
-      sequenceBlock(newest.model, draft.agreement, "model", draft.day_count)
-      + sequenceBlock(newest.rules, draft.agreement, "rules", draft.day_count),
+      [chosen, ...Object.values(newest).filter((sequence) => sequence !== chosen)]
+        .filter(Boolean).map((sequence) => sequenceBlock(sequence, draft.agreement, sequence.source, draft.day_count)).join(""),
       true, (check && check.fault_count) ? "bad" : "", "")}
     ${section("sec-request", "The request as read", "",
       normalizedBlock(draft), false, "", "rules")}
@@ -783,7 +783,7 @@ function renderDetail(draft) {
       false, "", "human")}
     ${section("sec-notes", "What the machine noticed",
       `${(draft.notes || []).length} note(s)`, notesBody(draft),
-      Boolean((draft.notes || []).length), "", "model")}
+      chosen?.source !== "rules" && Boolean((draft.notes || []).length), "", "model")}
     ${section("sec-move", "Move this request",
       currentRow ? esc(currentRow.status || "New") : "no worklist row",
       `<div id="wl-move">${window.DeskWorklist
@@ -836,7 +836,7 @@ async function loadRuleBooks() {
     const judged = judgedRules.map((r) =>
       `<div class="turn"><strong>${esc(r.rule_id)}</strong>
          <div>${esc(r.statement)}</div>
-         <div class="note">${esc(r.status || "active")} · ${esc(r.enforced_by ? `Enforced by ${r.enforced_by}` : "Recorded guidance")} · ${esc(r.corpus_verdict || "")}</div></div>`).join("");
+         <div class="note">${esc(r.status || "active")} · ${esc(r.status === "retired" ? "Historical rule. No exception is applied." : r.enforced_by ? "Enforced by itinerary checks" : "Recorded guidance")} · ${esc(r.corpus_verdict || "")}</div></div>`).join("");
     holder.innerHTML =
       `<div class="note">Counted — ${countedRules.length} rule(s)</div>${counted}
        <div class="note" style="margin-top:10px">Judged — ${judgedRules.length}</div>${judged}`;
