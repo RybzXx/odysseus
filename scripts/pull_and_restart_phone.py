@@ -37,7 +37,9 @@ def main():
         check = "import json,pathlib; p=pathlib.Path(" + repr(args.backup) + "); d=json.loads((p/'verified.json').read_text()); assert d.get('database_integrity')=='ok'; assert (p/'app.db').is_file()"
         guest("python3 -c " + shlex.quote(check))
         if args.apply:
-            guest("git -C /root/odysseus fetch -- " + shlex.quote(args.source) + " " + args.commit)
+            # A bundle advertises HEAD. Its ancestors remain selectable by exact ID.
+            fetch_ref = "HEAD" if args.source.endswith(".bundle") else args.commit
+            guest("git -C /root/odysseus fetch -- " + shlex.quote(args.source) + " " + fetch_ref)
         command = "python3 /tmp/odysseus-deploy-revision.py --repo /root/odysseus --commit " + args.commit
         print(guest(command + (" --apply" if args.apply else "")))
         if args.apply:
