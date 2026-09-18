@@ -270,6 +270,12 @@ function _injectStyles() {
     .proj-pill.halted, .proj-pill.archived, .proj-pill.completed { background: rgba(235, 87, 87, 0.18); color: #eb5757; border: 1px solid #eb5757; }
 
     /* Landing Page Filter Bar & Model Selector */
+    .proj-landing { padding: 24px; max-width: 860px; margin: 0 auto; }
+    .proj-landing-card { overflow-wrap: anywhere; }
+    .proj-landing-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    .proj-landing-card-title { flex: 1 1 220px; min-width: 0; }
+    .proj-landing-card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .proj-landing-search { display: flex; gap: 10px; align-items: center; }
     .proj-landing-toolbar {
       display: flex;
       flex-direction: column;
@@ -329,7 +335,7 @@ function _injectStyles() {
 
     .proj-search-input {
       flex: 1;
-      min-width: 200px;
+      min-width: 0;
       background: var(--input-bg, #181818);
       border: 1px solid var(--border, #444);
       border-radius: 6px;
@@ -344,12 +350,16 @@ function _injectStyles() {
 
     .proj-model-picker-wrap {
       display: flex;
+      min-width: 0;
+      max-width: 100%;
       align-items: center;
       gap: 8px;
       font-size: 12px;
       color: var(--fg-muted, #888);
     }
     .proj-model-select {
+      min-width: 0;
+      flex: 1;
       background: var(--input-bg, #181818);
       border: 1px solid var(--border, #444);
       border-radius: 6px;
@@ -465,8 +475,16 @@ function _injectStyles() {
 
     #projects-modal .proj-body {
       flex: 1;
+      min-width: 0;
       overflow-y: auto;
       padding: 18px;
+    }
+
+    @media (max-width: 600px) {
+      #projects-modal .proj-body { padding: 12px; }
+      .proj-landing { padding: 0; }
+      .proj-model-picker-wrap { width: 100%; }
+      .proj-model-select { max-width: 100%; }
     }
 
     /* Tab: Overview */
@@ -837,7 +855,7 @@ function _injectStyles() {
     /* Notes Cards Grid */
     .proj-notes-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr));
       gap: 14px;
     }
     .proj-section-title {
@@ -1536,7 +1554,7 @@ async function _renderLandingPage() {
         ${modelSelectHtml}
       </div>
 
-      <div style="display:flex; gap:10px; align-items:center;">
+      <div class="proj-landing-search">
         <input id="proj-search-input" type="text" class="proj-search-input" placeholder="🔍 Search projects by title, slug, or summary..." value="${_esc(_searchQuery)}" />
         ${_searchQuery ? `<button id="proj-clear-search-btn" class="proj-btn" style="font-size:11px;">Clear</button>` : ''}
       </div>
@@ -1594,14 +1612,14 @@ async function _renderLandingPage() {
 
       return `
         <div class="proj-landing-card" style="background: var(--bg-elev, #222); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-            <div>
+          <div class="proj-landing-card-header">
+            <div class="proj-landing-card-title">
               <h2 style="margin: 0 0 4px 0; font-size: 18px;">${_esc(p.name)}</h2>
               <div style="font-size: 11px; color: var(--fg-muted); margin-bottom: 8px;">
                 Slug: <code>${_esc(p.slug)}</code> &bull; Tasks: <strong>${p.task_completed || 0}/${p.task_total || 0}</strong>
               </div>
             </div>
-            <div style="display:flex; align-items:center; gap:8px;">
+            <div class="proj-landing-card-actions">
               <span class="proj-pill ${statusClass}">${statusLabel}</span>
               <button class="proj-btn primary proj-open-btn" data-id="${_esc(p.id)}">Open Workspace</button>
             </div>
@@ -1631,7 +1649,7 @@ async function _renderLandingPage() {
   }
 
   container.innerHTML = `
-    <div style="padding: 24px; max-width: 860px; margin: 0 auto;">
+    <div class="proj-landing">
       <h1 style="margin-top:0; font-size: 24px; margin-bottom: 16px;">Project Workspaces</h1>
       ${toolbarHtml}
       ${cardsHtml}
