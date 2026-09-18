@@ -38,15 +38,13 @@ def activity_text(text: str) -> str:
 
 def activity_regions(days) -> set[str]:
     """Read actual visits. A city substring in another word is not a visit."""
-    from services.itinerary.move_map import place_key
+    from services.itinerary.places import normalize_place, places_in
     regions = set()
     for day in days:
-        city = place_key(day.overnight_city).lower()
-        if city in CITY_REGION_MAP:
-            regions.add(CITY_REGION_MAP[city])
-        text = activity_text(day.text).lower()
-        for city, region in CITY_REGION_MAP.items():
-            if re.search(r"(?<!\w)" + re.escape(city) + r"(?!\w)", text):
+        names = places_in(activity_text(day.text)) | {normalize_place(day.overnight_city)}
+        for name in names:
+            region = CITY_REGION_MAP.get(name.casefold())
+            if region:
                 regions.add(region)
     return regions
 
@@ -56,7 +54,7 @@ def get_routes_path() -> str:
     return str(here / "data" / "routes.json")
 
 
-def load_routes(force_reload: bool = False) -> list[RouteRecord]:
+def load_legacy_routes(force_reload: bool = False) -> list[RouteRecord]:
     global _ROUTES_CACHE
     if _ROUTES_CACHE is not None and not force_reload:
         return _ROUTES_CACHE
@@ -143,3 +141,16 @@ def find_best_route(request: NormalizedRequest, routes: Optional[list[RouteRecor
             best_s = s
 
     return best_r, max(best_s, 0.0)
+
+
+def load_routes(force_reload: bool = False) -> list[RouteRecord]:
+    """Use the versioned sent corpus. Legacy routes are a marked fallback."""
+    from services.itinerary.route_corpus import load_reference_pool
+    pool = load_reference_pool(force_reload=force_reload)
+    if pool["record_count"]:
+        return pool["routes"]
+    from dataclasses import replace
+    return [replace(route, status="needs_review",
+                    review_reasons=["The sent-offer corpus is unavailable. This legacy reference needs verification."],
+                    references=[{"kind": "legacy", "record": route.id}])
+            for route in load_legacy_routes(force_reload=force_reload)]

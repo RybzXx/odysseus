@@ -466,6 +466,7 @@ def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
         diagnostic = candidate_set.candidates[0]
         outcome.draft = add_sequence(draft.draft_id, ProposedSequence(
             source=SOURCE_RULES, day_codes=list(diagnostic.day_codes),
+            plan=diagnostic.plan.to_dict() if diagnostic.plan else {},
             note="INCOMPLETE: " + reason + "; " + diagnostic.statement))
         return outcome
     # Valid candidates already form the leading group in build_candidates.
@@ -526,6 +527,7 @@ def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
     draft = add_sequence(draft.draft_id, ProposedSequence(
         source=SOURCE_RULES if ranking.chose_by_default else SOURCE_MODEL,
         day_codes=list(chosen.day_codes),
+        plan=chosen.plan.to_dict() if chosen.plan else {},
         note=f"candidate {ranking.index} of {len(candidate_set.candidates)}. "
              f"{chosen.statement}. {reason}",
         model=ranking.where, endpoint=""))

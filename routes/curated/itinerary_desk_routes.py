@@ -159,6 +159,11 @@ def _normalized_view(draft) -> dict:
         "travel_year": normalized.travel_year,
         "start_date": normalized.start_date.isoformat() if normalized.start_date else None,
         "special_notes": normalized.special_notes,
+        "required_cities": normalized.required_cities,
+        "required_sites": normalized.required_sites,
+        "arrival_city": normalized.arrival_city,
+        "departure_city": normalized.departure_city,
+        "requirement_sources": normalized.requirement_sources,
         "parse_warnings": normalized.parse_warnings,
         # Which of these the record did not state. A reviewer reading a value
         # cannot otherwise tell an answer from a default (ws-03 phase seven, D65).
@@ -198,7 +203,9 @@ def _staleness_of(draft, templates: dict) -> Optional[dict]:
                          draft.draft_id)
         return None
 
-    if list(fresh.day_codes) == list(stored.day_codes) and fresh.note == stored.note:
+    from services.itinerary.resolved_plan import stale_plan_errors
+    plan_errors = stale_plan_errors(stored.plan, normalized, templates, stored.day_codes)
+    if not plan_errors and list(fresh.day_codes) == list(stored.day_codes) and fresh.note == stored.note:
         return None
     differ = sum(1 for a, b in zip_longest(stored.day_codes, fresh.day_codes)
                  if a != b)
@@ -208,6 +215,7 @@ def _staleness_of(draft, templates: dict) -> Optional[dict]:
         "fresh_day_count": len(fresh.day_codes),
         "fresh_day_codes": list(fresh.day_codes),
         "fresh_note": fresh.note,
+        "plan_errors": plan_errors,
         "statement": (f"proposed under an older rule set. The rules answer "
                       f"{len(fresh.day_codes)} day(s) today against the "
                       f"{len(stored.day_codes)} stored, and {differ} position(s) "
@@ -251,27 +259,35 @@ def _draft_to_dict(draft, templates: Optional[dict] = None) -> dict:
     normalized = _normalized_view(draft)
     start_date = _start_date_of(normalized)
     stale = _staleness_of(draft, rows)
+    from services.itinerary.resolved_plan import stale_plan_errors
+    request = normalize_from_dict(draft.draft_id, draft.request_row, source=request_kind(draft.request_id))
 
+    from services.itinerary.route_corpus import reference_pool_view
+    pool = reference_pool_view()
+    pool["records"] = [r for r in pool["records"] if r["status"] != "usable"]
     sequences = []
     for sequence in draft.sequences:
         entry = vars(sequence).copy()
+        plan_errors = stale_plan_errors(sequence.plan, request, rows, sequence.day_codes)
         try:
-            entry["check"] = check_to_dict(check_sequence(
+            checked = check_sequence(
                 sequence.day_codes, rows, start_date=start_date,
                 request_row=draft.request_row,
                 day_count=normalized.get("day_count") or 0,
-                normalized_request=normalize_from_dict(
-                    draft.draft_id, draft.request_row, source=request_kind(draft.request_id))))
+                normalized_request=request)
+            checked.untested = list(dict.fromkeys(
+                checked.untested + sequence.plan.get("issues", []) + plan_errors))
+            entry["check"] = check_to_dict(checked)
         except Exception:
             logger.exception("the sequence check failed on %s", draft.draft_id)
             entry["check"] = None
-        entry["generation"] = {"ready": False, "errors": []}
-        if entry.get("check") and entry["check"]["is_clean"]:
+        entry["generation"] = {"ready": False, "errors": plan_errors}
+        if entry.get("check") and entry["check"]["is_clean"] and not plan_errors:
             from services.itinerary.generator import preview_itinerary
             try:
                 preview = preview_itinerary(normalize_from_dict(
                     draft.draft_id, draft.request_row, source=request_kind(draft.request_id)),
-                    day_codes=sequence.day_codes)
+                    day_codes=sequence.day_codes, expected_plan=sequence.plan)
                 entry["generation"] = {"ready": preview.can_generate_document,
                                        "errors": preview.validation_errors}
             except Exception:
@@ -287,6 +303,7 @@ def _draft_to_dict(draft, templates: Optional[dict] = None) -> dict:
         "origin": draft.origin,
         "request_row": draft.request_row,
         "normalized": normalized,
+        "reference_pool": pool,
         "day_count": normalized.get("day_count"),
         "model_proposals_enabled": model_proposals_enabled(),
         # Live, not the copy the draft stored when it was opened. Seven of the
@@ -478,6 +495,13 @@ def _request_pill(row: dict, drafts_by_key: dict) -> dict:
 
 def setup_itinerary_desk_routes() -> APIRouter:
     router = APIRouter(prefix="/api/itinerary")
+
+    @router.get("/reference-pool")
+    async def reference_pool(request: Request):
+        require_admin(request)
+        from services.itinerary.route_corpus import reference_pool_view
+        return reference_pool_view()
+
 
     @router.get("/requests")
     async def list_requests(request: Request, source: Optional[str] = None):
@@ -837,7 +861,7 @@ def setup_itinerary_desk_routes() -> APIRouter:
         normalized = normalize_from_dict(draft.draft_id, draft.request_row,
                                          source=request_kind(draft.request_id))
         try:
-            built = execute_generation(normalized, day_codes=list(chosen.day_codes))
+            built = execute_generation(normalized, day_codes=list(chosen.day_codes), expected_plan=chosen.plan)
         except Exception as exc:
             logger.exception("generation failed")
             raise HTTPException(502, f"the document was not generated: {exc}") from exc

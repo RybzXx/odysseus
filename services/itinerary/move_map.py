@@ -308,7 +308,8 @@ def place_key(name: str) -> str:
     template the catalogue files it under. Four spellings of one place were
     four places before, across four separate lists.
     """
-    return resolve_place(name) or (name or "").strip()
+    from services.itinerary.places import normalize_place
+    return normalize_place(name)
 
 
 def counted_moves(force_reload: bool = False) -> Counter:

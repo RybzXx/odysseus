@@ -166,7 +166,10 @@ async def generate_itinerary_endpoint(request: Request, body: GenerateRequest):
     draft = _open_draft_for(body.key, record, source, norm_req)
     chosen = _sequence_of(draft)
 
-    gen_res = execute_generation(norm_req, day_codes=chosen)
+    selected = next((draft.latest.get(source) for source in ("model", "rules")
+                     if draft.latest.get(source) and draft.latest[source].day_codes == chosen), None)
+    gen_res = execute_generation(norm_req, day_codes=chosen,
+                                 expected_plan=getattr(selected, "plan", {}))
     if gen_res.status != "success":
         raise HTTPException(500, f"Generation failed: {gen_res.error_message}")
 

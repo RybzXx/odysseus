@@ -56,11 +56,9 @@ def _normalize_city_name(name: str) -> str:
     """
     from services.itinerary.move_map import place_key
 
-    s = (name or "").strip().lower()
-    s = re.sub(r"^(city of|overnight in|night in)\s+", "", s)
-    if s in _LOCAL_ALIASES:
-        return _LOCAL_ALIASES[s]
-    return place_key(s).lower()
+    from services.itinerary.places import normalize_place
+    return normalize_place(name).casefold()
+
 
 
 def _regions_of(code: str, template: Any, city_name: str = "") -> set:
@@ -146,13 +144,13 @@ def _role_of_route_day(route, index: int) -> str:
     from services.itinerary.day_shape import (
         ROLE_ARRIVAL, ROLE_CITY_DAY, ROLE_DEPARTURE, ROLE_TRANSIT)
 
-    here = _normalize_city_name(route.days[index].overnight_city)
-    if not here:
-        return ROLE_DEPARTURE
-    if index == 0:
+    from services.itinerary.day_facts import source_day_facts
+    previous = route.days[index - 1].overnight_city if index else ""
+    facts = source_day_facts(route.days[index], previous)
+    if index == 0 and facts["overnight_status"] == "present":
         return ROLE_ARRIVAL
-    before = _normalize_city_name(route.days[index - 1].overnight_city)
-    return ROLE_CITY_DAY if before == here else ROLE_TRANSIT
+    return facts["role"]
+
 
 
 # A day trip and a city day both sleep where they woke. A route day cannot tell
@@ -169,6 +167,7 @@ def _acceptable_roles(route_role: str) -> set:
         _ROLES_A_ROUTE_DAY_ACCEPTS.update({
             ROLE_ARRIVAL: {ROLE_ARRIVAL, ROLE_CITY_DAY, ROLE_DAY_TRIP, ROLE_TRANSIT},
             ROLE_CITY_DAY: {ROLE_CITY_DAY, ROLE_DAY_TRIP},
+            ROLE_DAY_TRIP: {ROLE_DAY_TRIP, ROLE_CITY_DAY},
             ROLE_TRANSIT: {ROLE_TRANSIT},
             ROLE_DEPARTURE: {ROLE_DEPARTURE, ROLE_TRANSIT},
         })
@@ -263,6 +262,7 @@ def bind_route_to_templates(
     from services.itinerary.matcher import activity_text
     from services.itinerary.regions import REGION_KURDISTAN
 
+    from services.itinerary.day_facts import source_day_facts
     requested = set(requested_regions or [])
     north_requested = REGION_KURDISTAN in requested or any(
         _normalize_city_name(day.overnight_city) == "mosul" for day in route.days)
@@ -274,6 +274,10 @@ def bind_route_to_templates(
     for index, day in enumerate(route.days):
         overnight = _normalize_city_name(day.overnight_city)
         role = _role_of_route_day(route, index)
+        facts = source_day_facts(day, route.days[index - 1].overnight_city if index else "")
+        if role == "unknown":
+            gap_notes.append(f"Day {day.day}: source role or overnight status is unknown. Review the source day.")
+            break
         candidates = []
         for code in sorted(templates):
             template, shape = templates[code], shapes[code]
@@ -290,8 +294,19 @@ def bind_route_to_templates(
                     continue
                 if shape.role == ROLE_DEPARTURE:
                     continue
-            elif shape.role != ROLE_DEPARTURE:
-                continue
+                if _normalize_city_name(_field(template, "overnight_city", "")) != overnight:
+                    continue
+            else:
+                if _field(template, "overnight_city", ""):
+                    continue
+                if shape.role != role:
+                    continue
+                if facts["end_city"] and _normalize_city_name(shape.end_city) != _normalize_city_name(facts["end_city"]):
+                    continue
+                if facts["start_city"] and shape.start_city and _normalize_city_name(shape.start_city) != _normalize_city_name(facts["start_city"]):
+                    continue
+                if not current_city and not facts["start_city"]:
+                    continue
             if any(len(set(sites[code]) & set(sites[prior])) >= 2 for prior in bound_codes):
                 continue
             candidates.append(code)

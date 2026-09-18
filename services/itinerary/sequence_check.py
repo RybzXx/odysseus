@@ -212,7 +212,7 @@ def _apply_named_pair_rules(check: SequenceCheck, request_row: Optional[dict],
 def check_sequence(day_codes, templates: dict,
                    start_date: Optional[date] = None,
                    request_row: Optional[dict] = None,
-                   day_count: int = 0, normalized_request=None) -> SequenceCheck:
+                   day_count: int = 0, normalized_request=None, plan=None) -> SequenceCheck:
     """
     Every fault this module can find in one proposed sequence.
 
@@ -229,6 +229,10 @@ def check_sequence(day_codes, templates: dict,
     it as a fault would blame the proposer for it.
     """
     check = SequenceCheck(day_codes=list(day_codes or []))
+    from services.itinerary.resolved_plan import resolve_plan
+    plan = plan or resolve_plan(check.day_codes, templates, normalized_request)
+    templates = plan.templates
+    check.untested.extend(plan.issues)
     if normalized_request is None and request_row:
         from services.itinerary.normalizer import normalize_from_dict, SOURCE_UNKNOWN
         normalized_request = normalize_from_dict("check", request_row, source=SOURCE_UNKNOWN)
@@ -279,6 +283,38 @@ def _check_request_requirements(check, templates, request):
         region_of_template)
     from services.itinerary.day_shape import shape_of, ROLE_DEPARTURE, OWNER_SETTLED_SHAPES
     from services.itinerary.move_map import place_key
+    from services.itinerary.places import normalize_place
+    from services.itinerary.site_index import load_sites, canonical_site_code
+    cities = set()
+    site_codes = set()
+    index = load_sites()
+    for code in check.day_codes:
+        if code not in templates:
+            continue
+        shape = shape_of(code, templates[code])
+        cities.update(filter(None, (normalize_place(shape.start_city), normalize_place(shape.end_city))))
+        for site in sites_of_template(templates[code]):
+            site_codes.add(site)
+            if site in index:
+                cities.add(normalize_place(index[site].city))
+    for city in request.required_cities:
+        if not normalize_place(city) or normalize_place(city) not in cities:
+            check.faults.append(SequenceFault(kind="required_city", day=0,
+                statement=f"Missing required city: {city}."))
+    for site in request.required_sites:
+        code = canonical_site_code(site)
+        if code not in site_codes:
+            check.faults.append(SequenceFault(kind="required_site", day=0,
+                statement=f"Missing required site: {site}."))
+    endpoints = [shape_of(code, templates[code]) for code in check.day_codes if code in templates]
+    for label, value, actual in (
+        ("arrival", request.arrival_city, endpoints[0].start_city if endpoints else ""),
+        ("departure", request.departure_city, endpoints[-1].end_city if endpoints else ""),
+    ):
+        if value and (not normalize_place(value) or normalize_place(value) != normalize_place(actual)):
+            check.faults.append(SequenceFault(kind="required_endpoint", day=0,
+                statement=f"The {label} city must be {value}."))
+    check.untested.extend(request.parse_warnings)
     missing = set(request.requested_regions) - sequence_regions(check.day_codes, templates)
     if missing:
         check.faults.append(SequenceFault(

@@ -213,13 +213,15 @@ def test_valid_exact_sequence_can_reach_document_service(monkeypatch):
     monkeypatch.setattr(generator, "load_templates", lambda: {"BG": row()})
     monkeypatch.setattr(generator, "build_tour_request", lambda req, codes: codes)
     monkeypatch.setattr(generator, "_PIPELINE", {
-        "check_request": lambda req: {"ok": True}, "load_pricing": lambda: {},
+        "check_request": lambda req, **kwargs: {"ok": True}, "load_pricing": lambda: {},
         "build_itinerary": lambda req, templates: req,
         "calculate_quote": lambda req, days, pricing: {"total_usd": 1},
         "generate_document": create})
     result = generator.execute_generation(request(), day_codes=["BG"])
     assert result.status == "success"
-    create.assert_called_once_with(["BG"])
+    create.assert_called_once()
+    assert create.call_args.args == (["BG"],)
+    assert create.call_args.kwargs["prepared"]["built_days"] == ["BG"]
 
 
 def test_desk_reports_pricing_failure_on_an_otherwise_valid_route(tmp_path, monkeypatch):
@@ -230,6 +232,9 @@ def test_desk_reports_pricing_failure_on_an_otherwise_valid_route(tmp_path, monk
     draft = drafts.open_draft({"tripDays": "1", "regions": [REGION_CENTRAL],
         "travelDateMode": "exact", "exactDate": "2026-10-06"}, request_id="curated:price")
     draft = drafts.add_sequence(draft.draft_id, drafts.ProposedSequence(source="rules", day_codes=["BG"]))
+    from services.itinerary.resolved_plan import resolve_plan
+    normalized = normalize_from_dict(draft.draft_id, draft.request_row, source="curated")
+    draft.sequences[-1].plan = resolve_plan(["BG"], {"BG": row()}, normalized).to_dict()
     monkeypatch.setattr(generator, "preview_itinerary", lambda *a, **k: ItineraryPreviewResult(
         key="test", matched_route_id="", matched_route_name="", confidence_score=1,
         confidence_level="high", requested_day_count=1, delivered_day_count=1,

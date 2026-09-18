@@ -72,20 +72,22 @@ def load_runtime_data():
     return templates, pricing, general_info
 
 
-def check_request(request: TourRequest) -> dict:
+def check_request(request: TourRequest, *, templates=None, pricing=None, built_days=None) -> dict:
     """
     Validates the request and returns warnings/errors without generating a document.
     Used by the GUI to prompt the author before committing to rendering.
     Returns: {"ok": bool, "errors": [...], "warnings": [...], "built_days": [...]}
     """
-    templates, pricing, _ = load_runtime_data()
+    if templates is None or pricing is None:
+        templates, pricing, _ = load_runtime_data()
 
     pre_messages = validate(request, templates, pricing)
     pre_errors, _ = review_messages(pre_messages)
     if pre_errors:
         return {"ok": False, "errors": pre_errors, "warnings": [], "built_days": []}
 
-    built_days = build_itinerary(request, templates)
+    if built_days is None:
+        built_days = build_itinerary(request, templates)
     messages = validate(request, templates, pricing, built_days=built_days)
     errors, warnings = review_messages(messages)
     # Append calendar/religious/holiday warnings (never block generation)
@@ -106,8 +108,13 @@ def generate_document(
     include_breakdown_in_doc: bool = False,
     hotel_overrides: dict | None = None,
     triple_rooms: int = 0,
+    prepared: dict | None = None,
 ) -> dict:
-    templates, pricing, general_info = load_runtime_data()
+    if prepared is None:
+        templates, pricing, general_info = load_runtime_data()
+    else:
+        templates, pricing = prepared["templates"], prepared["pricing"]
+        general_info = load_general_info()
 
     # Build the itinerary first so validate() can use dated built_days
     # for weekday-conflict checks. A preliminary structural validation
@@ -125,7 +132,7 @@ def generate_document(
             "built_days": [],
         }
 
-    built_days = build_itinerary(request, templates)
+    built_days = prepared["built_days"] if prepared is not None else build_itinerary(request, templates)
 
     # Full validation with availability checks now that we have dated days
     messages = validate(request, templates, pricing, built_days=built_days)
@@ -145,7 +152,7 @@ def generate_document(
             "calendar_warnings": cal_warnings,
         }
 
-    quote = calculate_quote(request, built_days, pricing) if add_pricing else None
+    quote = (prepared["quote"] if prepared is not None else calculate_quote(request, built_days, pricing)) if add_pricing else None
 
     creds = load_credentials()
     sections = assemble(

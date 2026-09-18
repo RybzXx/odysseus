@@ -354,6 +354,7 @@ def normalize_curated_record(key: str, data: dict) -> NormalizedRequest:
             data, day_value=raw_days, pax_value=raw_pax, raw_regions=raw_regions,
             date_value=data.get("exactDate") if date_mode == "exact" else None),
         raw_record=data,
+        **_explicit_requirements(data),
     )
 
 
@@ -442,6 +443,7 @@ def normalize_queue_record(key: str, record: dict) -> NormalizedRequest:
             record, day_value=raw_days, pax_value=raw_pax,
             raw_regions=record.get("regions"), date_value=travel_date_str),
         raw_record=record,
+        **_explicit_requirements(record),
     )
 
 
@@ -492,3 +494,23 @@ def normalize_from_dict(key: str, data: dict, source: str = SOURCE_CURATED) -> N
     if "row_id" in data or "full_name" in data:
         return normalize_queue_record(key, data)
     return normalize_curated_record(key, data)
+
+
+def _explicit_requirements(record):
+    """Read structured requirements only. Free text and model notes are not authority."""
+    from services.itinerary.places import normalize_place
+    from services.itinerary.site_index import canonical_site_code
+    result = {"required_cities": [], "required_sites": [], "arrival_city": "", "departure_city": "",
+              "requirement_sources": {}}
+    for name in ("required_cities", "required_sites", "arrival_city", "departure_city"):
+        raw = record.get(name)
+        if raw in (None, "", []):
+            continue
+        values = raw if isinstance(raw, list) else [raw]
+        normalize = canonical_site_code if name == "required_sites" else normalize_place
+        # Retain malformed and ambiguous input so validation cannot lose a requirement.
+        converted = [normalize(value) or value if isinstance(value, str) and value.strip()
+                     else f"Invalid {name} value: {value!r}" for value in values]
+        result[name] = list(dict.fromkeys(converted)) if name.startswith("required_") else (converted[0] if len(converted) == 1 else str(raw))
+        result["requirement_sources"][name] = "explicit request field"
+    return result

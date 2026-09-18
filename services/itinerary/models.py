@@ -37,6 +37,11 @@ class NormalizedRequest:
     # a value the record actually holds.
     defaulted_fields: list[str] = field(default_factory=list)
     raw_record: dict[str, Any] = field(default_factory=dict)
+    required_cities: list[str] = field(default_factory=list)
+    required_sites: list[str] = field(default_factory=list)
+    arrival_city: str = ""
+    departure_city: str = ""
+    requirement_sources: dict = field(default_factory=dict)
 
     def was_defaulted(self, field_name: str) -> bool:
         """Post: whether this field came from a default rather than the record."""
@@ -60,6 +65,10 @@ class RouteRecord:
     themes: list[str]
     days: list[RouteDay]
     region_set: set[str] = field(default_factory=set)
+    references: list[dict] = field(default_factory=list)
+    corpus_version: str = ""
+    status: str = "usable"
+    review_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -77,6 +86,8 @@ class ItineraryPreviewResult:
     estimated_quote: Optional[dict] = None
     can_generate_document: bool = False
     validation_errors: list[str] = field(default_factory=list)
+    plan: dict = field(default_factory=dict)
+    prepared: Any = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         return {
@@ -93,6 +104,7 @@ class ItineraryPreviewResult:
             "estimated_quote": self.estimated_quote,
             "can_generate_document": self.can_generate_document,
             "validation_errors": self.validation_errors,
+            "plan": self.plan,
         }
 
 

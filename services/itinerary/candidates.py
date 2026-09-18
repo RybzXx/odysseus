@@ -37,6 +37,7 @@ class Candidate:
     day_codes: list = field(default_factory=list)
     gap_notes: list = field(default_factory=list)
     check: Optional[object] = None  # SequenceCheck, set by check_candidates
+    plan: Optional[object] = None
 
     @property
     def fault_count(self) -> int:
@@ -177,6 +178,7 @@ def build_candidates(request: NormalizedRequest, templates: dict,
     from services.itinerary.binder import bind_route_to_templates
     from services.itinerary.sequence_check import check_sequence
     from services.itinerary.regions import sequence_regions
+    from services.itinerary.resolved_plan import resolve_plan
 
     found = CandidateSet()
     corpus = list(load_routes() if routes is None else routes)
@@ -193,13 +195,14 @@ def build_candidates(request: NormalizedRequest, templates: dict,
             continue
         coverage = sequence_regions(codes, templates)
         requested = set(request.requested_regions)
+        plan = resolve_plan(codes, templates, request, route)
         check = check_sequence(codes, templates, start_date=request.start_date,
-                               normalized_request=request)
+                               normalized_request=request, plan=plan)
         found.candidates.append(Candidate(
             index=0, route_id=route.id, route_name=route.source_file,
             route_days=route.day_count, match_score=score_route(request, route),
             region_coverage=len(requested & coverage) / len(requested) if requested else 1.0,
-            asked_days=request.day_count, day_codes=codes, gap_notes=gaps, check=check))
+            asked_days=request.day_count, day_codes=codes, gap_notes=gaps, check=check, plan=plan))
     # Validation outranks historical similarity. The ceiling limits display only.
     found.candidates.sort(key=lambda c: (
         not c.check.is_clean, not c.check.found_no_fault,
@@ -240,7 +243,7 @@ def check_candidates(found: CandidateSet, templates: dict,
         candidate.check = check_sequence(
             candidate.day_codes, templates, start_date=start_date,
             request_row=request_row, day_count=day_count or candidate.asked_days,
-            normalized_request=normalized_request)
+            normalized_request=normalized_request, plan=candidate.plan)
     return found
 
 
@@ -261,6 +264,7 @@ def candidate_to_dict(candidate: Candidate) -> dict:
         "gap_notes": list(candidate.gap_notes),
         "statement": candidate.statement,
         "check": check_to_dict(candidate.check) if candidate.check else None,
+        "plan": candidate.plan.to_dict() if candidate.plan else None,
     }
 
 

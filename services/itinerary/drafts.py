@@ -76,6 +76,7 @@ class ProposedSequence:
     model: str = ""
     endpoint: str = ""
     proposed_at: str = ""
+    plan: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -182,8 +183,12 @@ def save(draft: ItineraryDraft) -> str:
     os.makedirs(ITINERARY_DRAFT_DIR, exist_ok=True)
     target = _path(draft.draft_id)
     temporary = f"{target}.{os.getpid()}.{threading.get_ident()}.tmp"
+    payload = asdict(draft)
+    for sequence in payload["sequences"]:
+        if not sequence.get("plan"):
+            sequence.pop("plan", None)
     with open(temporary, "w", encoding="utf-8") as fh:
-        json.dump(asdict(draft), fh, ensure_ascii=False, indent=2)
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
     _replace_with_retry(temporary, target)
     return target
 

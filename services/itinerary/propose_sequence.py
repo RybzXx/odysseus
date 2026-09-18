@@ -171,8 +171,10 @@ def propose_by_rules(request: NormalizedRequest, templates: dict) -> ProposedSeq
                  else "no region evidence either way")
     if gap_notes:
         parts.append("Not ready: " + "; ".join(gap_notes))
+    from services.itinerary.resolved_plan import resolve_plan
     return ProposedSequence(source=SOURCE_RULES, day_codes=list(day_codes),
-                            note=". ".join(parts) + ".")
+                            note=". ".join(parts) + ".",
+                            plan=resolve_plan(day_codes, templates, request, route).to_dict())
 
 
 # ── the model proposer ────────────────────────────────────────────────────────

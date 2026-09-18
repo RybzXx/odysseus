@@ -61,24 +61,8 @@ def _load_json(filename: str) -> any:
 
 
 def _normalize_city_name(value: str) -> str:
-    raw = " ".join(str(value or "").strip().split())
-    if not raw:
-        return ""
-    city_map = {
-        "BAGHDAD": "Baghdad",
-        "NASIRIYA": "Nasiriyah",
-        "KARBALA": "Karbala",
-        "NAJAF": "Najaf",
-        "BASRA": "Basra",
-        "SULAYMA": "Sulaymaniyah",
-        "SULAYMANIYAH": "Sulaymaniyah",
-        "MOSUL": "Mosul",
-        "ERBIL": "Erbil",
-        "DUHOK": "Duhok",
-        "SORAN": "Soran",
-        "KIRKUK": "Kirkuk",
-    }
-    return city_map.get(raw.upper(), raw.title())
+    from services.itinerary.places import normalize_place
+    return normalize_place(value)
 
 
 def _normalize_hotel_name(value: str) -> str:

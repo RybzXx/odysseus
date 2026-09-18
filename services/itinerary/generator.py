@@ -162,30 +162,45 @@ def _format_quote(q: Any, hotel_tier: str = "3star") -> dict:
     }
 
 
-def preview_itinerary(req: NormalizedRequest, day_codes: Optional[list[str]] = None) -> ItineraryPreviewResult:
+def preview_itinerary(req: NormalizedRequest, day_codes: Optional[list[str]] = None, *, expected_plan=None) -> ItineraryPreviewResult:
     """Check and price the exact sequence. Never render or transmit a document."""
     from services.itinerary.candidates import build_candidates
     from services.itinerary.sequence_check import check_sequence
+    from services.itinerary.resolved_plan import resolve_plan, stale_plan_errors
     templates = load_templates()
     candidates = build_candidates(req, templates, ceiling=1) if day_codes is None else None
     candidate = candidates.candidates[0] if candidates and candidates.candidates else None
     codes = list(day_codes if day_codes is not None else candidate.day_codes if candidate else [])
-    checked = check_sequence(codes, templates, start_date=req.start_date, normalized_request=req)
+    plan = candidate.plan if candidate and candidate.plan else resolve_plan(codes, templates, req)
+    if expected_plan is not None:
+        plan.issues.extend(stale_plan_errors(expected_plan, req, templates, codes))
+        plan.issues.extend(expected_plan.get("issues", []))
+        plan.references = expected_plan.get("references", [])
+        plan.corpus_version = expected_plan.get("corpus_version", "")
+        if not plan.issues:
+            # Preserve source evidence only after versions and saved integrity pass.
+            for day, saved in zip(plan.days, expected_plan.get("days", [])):
+                day["evidence"] = saved["evidence"]
+    checked = check_sequence(codes, plan.templates, start_date=req.start_date, normalized_request=req, plan=plan)
     errors = [f.statement for f in checked.faults]
     errors.extend(f"Unknown code: {code}" for code in checked.unknown_codes)
     errors.extend(checked.untested)
-    warnings, quote = [], None
+    warnings, quote, prepared = [], None, None
     pipeline_ok = False
     if codes and checked.is_clean and _PIPELINE:
         try:
             tour_req = build_tour_request(req, codes)
-            result = _PIPELINE["check_request"](tour_req)
+            pricing = _PIPELINE["load_pricing"]()
+            days = _PIPELINE["build_itinerary"](tour_req, plan.templates)
+            result = _PIPELINE["check_request"](tour_req, templates=plan.templates, pricing=pricing, built_days=days)
             errors.extend(result.get("errors", []))
             warnings.extend(result.get("warnings", []))
             pipeline_ok = bool(result.get("ok"))
-            pricing = _PIPELINE["load_pricing"]()
-            days = _PIPELINE["build_itinerary"](tour_req, templates)
-            quote = _format_quote(_PIPELINE["calculate_quote"](tour_req, days, pricing), req.hotel_tier)
+            raw_quote = _PIPELINE["calculate_quote"](tour_req, days, pricing) if pipeline_ok else None
+            quote = _format_quote(raw_quote, req.hotel_tier) if raw_quote else None
+            prepared = {"request": tour_req, "templates": plan.templates, "pricing": pricing,
+                        "built_days": days, "quote": raw_quote}
+
         except Exception as exc:
             errors.append(f"Pricing validation failed: {exc}")
             pipeline_ok = False
@@ -198,11 +213,11 @@ def preview_itinerary(req: NormalizedRequest, day_codes: Optional[list[str]] = N
         bound_day_codes=codes, coverage_gaps=candidate.gap_notes if candidate else [],
         calendar_warnings=warnings, estimated_quote=quote,
         can_generate_document=checked.is_clean and pipeline_ok and not errors,
-        validation_errors=errors)
+        validation_errors=list(dict.fromkeys(errors)), plan=plan.to_dict(), prepared=prepared)
 
 
 def execute_generation(req: NormalizedRequest,
-                       day_codes: Optional[list[str]] = None) -> ItineraryGenerationResult:
+                       day_codes: Optional[list[str]] = None, *, expected_plan=None) -> ItineraryGenerationResult:
     """
     Build the document for one request.
 
@@ -218,7 +233,7 @@ def execute_generation(req: NormalizedRequest,
     global _PIPELINE
     if not _PIPELINE:
         _PIPELINE = _ensure_pipeline_imported()
-    preview = preview_itinerary(req, day_codes=day_codes)
+    preview = preview_itinerary(req, day_codes=day_codes, expected_plan=expected_plan)
     if not preview.can_generate_document:
         return ItineraryGenerationResult(key=req.key, status="error", preview=preview,
             error_message="; ".join(preview.validation_errors) or "The itinerary is not ready for document generation.")
@@ -240,8 +255,16 @@ def execute_generation(req: NormalizedRequest,
         )
 
     try:
-        tour_req = build_tour_request(req, list(day_codes or preview.bound_day_codes))
-        gen_res = _PIPELINE["generate_document"](tour_req)
+        from services.itinerary.resolved_plan import stale_plan_errors, content_hash
+        changes = stale_plan_errors(preview.plan, req, load_templates(), preview.bound_day_codes)
+        if preview.prepared is None:
+            changes.append("The validated execution plan is missing. Recalculate it.")
+        elif content_hash(_PIPELINE["load_pricing"]()) != content_hash(preview.prepared["pricing"]):
+            changes.append("Pricing changed after preview. Recalculate the itinerary.")
+        if changes:
+            return ItineraryGenerationResult(key=req.key, status="error", preview=preview,
+                                             error_message="; ".join(changes))
+        gen_res = _PIPELINE["generate_document"](preview.prepared["request"], prepared=preview.prepared)
 
         if not gen_res.get("ok"):
             errs = gen_res.get("errors", ["Document rendering failed."])

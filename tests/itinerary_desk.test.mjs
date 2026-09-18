@@ -65,3 +65,19 @@ test("a pricing failure blocks a route that passes the itinerary checks", () => 
   assert.match(output, /disabled/);
   assert.match(output, /Vehicle VAN is not in the catalogue/);
 });
+
+test("day facts show evidence and escape reference text", () => {
+  const { context } = desk();
+  context.plan = { version: 1, days: [{ number: 1, code: "BG", role: "city_day",
+    start_city: "Baghdad", end_city: "Baghdad", overnight_status: "present",
+    overnight_city: "Baghdad", accommodation: "excluded",
+    evidence: { place_source: "owner", source_day: 3, source_facts: { evidence: "source overnight field" } } }],
+    references: [{ attachment_name: "<script>bad</script>" }] };
+  const output = vm.runInContext("resolvedPlanBlock(plan)", context);
+  assert.match(output, /excluded/);
+  assert.match(output, /source day 3/);
+  assert.match(output, /source overnight field/);
+  assert.match(output, /&lt;script&gt;/);
+  assert.doesNotMatch(output, /<script>/);
+  assert.match(vm.runInContext("resolvedPlanBlock({})", context), /recalculation/);
+});

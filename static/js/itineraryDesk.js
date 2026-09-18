@@ -448,6 +448,9 @@ function normalizedBlock(draft) {
     .map(([k, v]) => `<div class="k">${esc(k)}</div><div>${
       esc(typeof v === "object" ? JSON.stringify(v) : v)}</div>`).join("");
   return `<div class="kv">${rows}</div>
+    <div class="note">Required cities: ${esc((normalized.required_cities || []).join(", ") || "none stated")}.
+    Required sites: ${esc((normalized.required_sites || []).join(", ") || "none stated")}.
+    Arrival: ${esc(normalized.arrival_city || "not specified")}. Departure: ${esc(normalized.departure_city || "not specified")}.</div>
     <div class="note" style="margin:10px 0 4px">As submitted</div>
     <div class="kv">${submittedRows || '<div class="k">nothing</div><div></div>'}</div>`;
 }
@@ -468,6 +471,33 @@ function checkBlock(check) {
     `<div class="note">not yet found — ${esc(name)}: ${esc(why)}</div>`).join("");
   return faults + flags + unknown + untested + notFound
     || `<div class="note">no fault found by the checks this desk runs</div>`;
+}
+
+function resolvedPlanBlock(plan) {
+  if (!plan?.version) return '<div class="warn">This saved result needs recalculation to establish its day plan.</div>';
+  const rows = (plan.days || []).map((day) => `<tr>
+    <td>${esc(day.number)}. ${esc(day.code)}</td><td>${esc(day.role)}</td>
+    <td>${esc(day.start_city || "unknown")} → ${esc(day.end_city || "unknown")}</td>
+    <td>${esc(day.overnight_status === "present" ? day.overnight_city : day.overnight_status)}</td>
+    <td>${esc(day.accommodation)}</td>
+    <td>${esc(day.evidence?.place_source || "catalogue")}${day.evidence?.source_day
+      ? ` · source day ${esc(day.evidence.source_day)}: ${esc(day.evidence.source_facts?.evidence || "")}` : ""}</td></tr>`).join("");
+  const references = (plan.references || []).map((ref) =>
+    `<li>${esc(ref.attachment_name || ref.record || "Catalogue selection")} ${esc(ref.sent_at || "")}</li>`).join("");
+  return `<details><summary>Day facts and source evidence</summary>
+    <div style="overflow-x:auto"><table><thead><tr><th>Day</th><th>Role</th><th>Travel</th><th>Overnight</th><th>Accommodation</th><th>Evidence</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${(plan.issues || []).map((issue) => `<div class="warn">${esc(issue)}</div>`).join("")}
+    <ul>${references || "<li>Current catalogue selection</li>"}</ul></details>`;
+}
+
+function referencePoolBlock(pool) {
+  if (!pool) return "";
+  const counts = pool.counts || {};
+  return `<details><summary>Historical references: ${esc(pool.route_count)} distinct routes,
+    ${esc(counts.needs_review || 0)} need review, ${esc(counts.rejected || 0)} rejected</summary>
+    <p>${esc(counts.usable || 0)} usable source records. Repeated routes retain their source evidence.</p>
+    <ul>${(pool.records || []).map((record) => `<li><strong>${esc(record.reference?.attachment_name || record.reference?.record)}</strong>
+      — ${esc(record.status)}: ${esc((record.reasons || []).join(" "))}</li>`).join("")}</ul></details>`;
 }
 
 function sequenceBlock(sequence, agreement, which, askedDays) {
@@ -495,6 +525,7 @@ function sequenceBlock(sequence, agreement, which, askedDays) {
         <span class="note">${esc(sequence.model || "")} ${esc(sequence.proposed_at || "")}</span></div>
       <div>${chips || '<span class="note">no codes</span>'}</div>
       ${sequence.note ? `<div class="note">${esc(sequence.note)}</div>` : ""}
+      ${resolvedPlanBlock(sequence.plan)}
       ${rejected}
       <div style="margin-top:8px">${checkBlock(check)}</div>
       ${(sequence.generation?.errors || []).map((error) => `<div class="warn">${esc(error)}</div>`).join("")}
@@ -757,6 +788,7 @@ function renderDetail(draft) {
         `<div class="warn">${esc(w)}</div>`).join("")}
     </div>
     ${legend()}
+    ${referencePoolBlock(draft.reference_pool)}
     ${stripHtml(draft)}
     ${draft.stale ? `<div class="warn">Stored rules result is stale. ${esc(draft.stale.statement)} Recalculate to append a current result.</div>` : ""}
     ${section("sec-layers", "What ran",
