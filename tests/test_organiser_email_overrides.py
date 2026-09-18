@@ -222,6 +222,31 @@ def test_a_message_without_a_cached_body_still_matches_on_its_subject(tmp_path, 
 
 # ── 7.3: recipients count, but only on mail the user sent ────────────────
 
+@pytest.mark.parametrize("summary_owner,summary_message,expected", [
+    ("admin", "mid-9", "Own summary"),
+    ("other", "mid-9", ""),
+    ("admin", "different-message", ""),
+])
+def test_summary_fallback_requires_owner_and_message_identity(tmp_path, monkeypatch,
+                                                            summary_owner, summary_message, expected):
+    import sqlite3
+    import time
+    from routes.organisers import organisers_routes as org
+    path = tmp_path / "email.db"
+    with sqlite3.connect(path) as conn:
+        columns = ("owner account_key folder uid message_id subject from_name from_address "
+                   "to_text cc_text date_iso date_display date_epoch size flags has_attachments").split()
+        conn.execute("CREATE TABLE email_message_index (" + ", ".join(columns) + ")")
+        conn.execute("CREATE TABLE email_summaries (owner, message_id, uid, summary)")
+        conn.execute("INSERT INTO email_message_index VALUES (" + ",".join(["?"] * 16) + ")",
+                     ["admin", "account", "INBOX", "9", "mid-9", "Subject", "", "", "", "", "", "", time.time(), 0, "", 0])
+        conn.execute("INSERT INTO email_summaries VALUES (?, ?, '9', 'Own summary')",
+                     (summary_owner, summary_message))
+    monkeypatch.setattr(org, "SCHEDULED_EMAILS_DB", str(path))
+    result = org._get_recent_emails()
+    assert len(result) == 1
+    assert result[0]["snippet"] == expected
+
 RECIPIENT_RULES = {"senders": ["Adrian"], "keywords": [], "domains": ["partner.example"]}
 
 

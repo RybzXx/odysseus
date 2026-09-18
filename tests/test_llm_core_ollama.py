@@ -17,6 +17,7 @@ def test_detects_bare_local_ollama_as_native_provider():
 
 def test_llm_call_posts_native_ollama_payload(monkeypatch):
     seen = {}
+    monkeypatch.setattr(llm_core, "get_context_length", lambda *_: llm_core.DEFAULT_CONTEXT)
 
     def fake_post(url, headers=None, json=None, timeout=None):
         seen["url"] = url

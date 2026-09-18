@@ -67,6 +67,7 @@ COLLECTION_NAME = "odysseus_tool_index"
 # Each tool gets a searchable description that helps retrieval.
 # These are richer than the system prompt one-liners — they're for embedding.
 BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
+    "manage_projects": "List and inspect accessible projects, read project context, create or update a project, manage its tasks, and link related resources. Use for project status, planning, and task progress.",
     "bash": "Run shell commands on the server. Install packages, git operations, builds, system info, process management. Prefer a dedicated tool whenever one fits the job (file read/write/edit, search, listing); use bash only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
     "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, or searching files; use python only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
     "web_search": "Quick single web lookup for a fact, current event, latest/current information, or doc mid-task. Use this instead of bash/curl/python/requests for web searches. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",

@@ -40,6 +40,7 @@ def test_main_loads_admin_password_from_env_file(tmp_path, monkeypatch):
     # the Notepad-on-Windows case that utf-8-sig must tolerate) — not exported.
     monkeypatch.delenv("ODYSSEUS_ADMIN_USER", raising=False)
     monkeypatch.delenv("ODYSSEUS_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("PYTHON_DOTENV_DISABLED", raising=False)
     (tmp_path / ".env").write_text(
         "ODYSSEUS_ADMIN_USER=presetuser\nODYSSEUS_ADMIN_PASSWORD=fromenvfile12345\n",
         encoding="utf-8-sig",

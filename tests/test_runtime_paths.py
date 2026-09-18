@@ -35,11 +35,19 @@ def test_get_app_root_frozen_without_meipass():
         assert app_root == os.path.abspath("mock_exe_dir")
 
 
-def test_get_default_data_dir_normal():
+def test_get_default_data_dir_normal(monkeypatch):
     """Verify that get_default_data_dir resolves to get_app_root() / 'data' when not frozen."""
+    monkeypatch.setattr(os.path, "exists", lambda _: False)
     with mock.patch.object(sys, "frozen", False, create=True):
         res = get_default_data_dir()
         assert res == os.path.join(get_app_root(), "data")
+
+
+def test_get_default_data_dir_termux(monkeypatch):
+    termux_data = "/data/data/com.termux/files/home/odysseus-data"
+    monkeypatch.setattr(os.path, "exists", lambda path: path == termux_data)
+    with mock.patch.object(sys, "frozen", False, create=True):
+        assert get_default_data_dir() == termux_data
 
 
 def test_get_default_data_dir_frozen():

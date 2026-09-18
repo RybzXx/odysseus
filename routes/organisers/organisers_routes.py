@@ -401,31 +401,36 @@ def _get_recent_emails(days: int = 14) -> List[Dict[str, Any]]:
         return []
 
     cutoff_ts = time.time() - (days * 86400)
+    conn = None
     try:
         conn = sqlite3.connect(str(db_file), timeout=5.0)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        rows = cur.execute("""
+        tables = {row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        joins, snippets = [], []
+        if "email_body_preview_cache" in tables:
+            joins.append("""LEFT JOIN email_body_preview_cache AS p
+                ON p.owner = i.owner AND p.account_key = i.account_key
+                AND p.folder = i.folder AND p.uid = i.uid""")
+            snippets.append("NULLIF(substr(json_extract(CASE WHEN json_valid(p.payload_json) THEN p.payload_json ELSE '{}' END, '$.body'), 1, ?), '')")
+        if "email_summaries" in tables:
+            joins.append("""LEFT JOIN email_summaries AS s
+                ON s.owner = i.owner AND s.message_id = i.message_id
+                AND i.message_id <> ''""")
+            snippets.append("NULLIF(s.summary, '')")
+        snippet_sql = "COALESCE(" + ", ".join(snippets + ["''"]) + ")" if snippets else "''"
+        parameters = ([_SNIPPET_CHARS] if "email_body_preview_cache" in tables else []) + [cutoff_ts]
+        rows = cur.execute(f"""
             SELECT i.account_key, i.folder, i.uid, i.message_id, i.subject,
                    i.from_name, i.from_address, i.to_text, i.cc_text,
                    i.date_iso, i.date_display, i.date_epoch, i.size, i.flags,
                    i.has_attachments,
-                   COALESCE(
-                       NULLIF(substr(json_extract(p.payload_json, '$.body'), 1, ?), ''),
-                       s.summary,
-                       ''
-                   ) AS snippet
+                    {snippet_sql} AS snippet
             FROM email_message_index AS i
-            LEFT JOIN email_body_preview_cache AS p
-                   ON p.owner = i.owner
-                  AND p.account_key = i.account_key
-                  AND p.folder = i.folder
-                  AND p.uid = i.uid
-            LEFT JOIN email_summaries AS s
-                   ON (s.uid = i.uid OR s.message_id = i.message_id)
+            {' '.join(joins)}
             WHERE i.date_epoch >= ?
             ORDER BY i.date_epoch DESC
-        """, (_SNIPPET_CHARS, cutoff_ts)).fetchall()
+        """, parameters).fetchall()
         emails = [dict(r) for r in rows]
         for email in emails:
             email["snippet"] = email.get("snippet") or ""
@@ -455,6 +460,9 @@ def _get_recent_emails(days: int = 14) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.debug("Failed querying scheduled_emails.db for organisers: %s", e)
         return []
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _get_memory_manager():
