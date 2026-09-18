@@ -4,7 +4,17 @@ import subprocess
 import pytest
 
 from scripts.deploy_revision import deploy_revision, git
-from scripts.reconcile_phone_data import reconcile, rollback
+from scripts.reconcile_phone_data import publish_copy, reconcile, rollback
+
+
+def test_publication_refuses_a_target_created_after_inventory(tmp_path):
+    temporary, target = tmp_path / "temporary", tmp_path / "target"
+    temporary.write_text("migration")
+    target.write_text("later user data")
+    with pytest.raises(FileExistsError):
+        publish_copy(temporary, target)
+    assert target.read_text() == "later user data"
+    assert temporary.read_text() == "migration"
 
 
 def test_copy_repeat_and_rollback_preserve_later_data(tmp_path):

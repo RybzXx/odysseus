@@ -1,11 +1,27 @@
 """Copy missing data without replacing conflicts. Record hashes for selective rollback."""
 import argparse
+import ctypes
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import tempfile
+
+
+def publish_copy(temporary, target):
+    """Publish without replacing an existing file or creating PRoot hard links."""
+    if os.name == "nt":
+        os.rename(temporary, target)
+        return
+    library = ctypes.CDLL(None, use_errno=True)
+    rename = library.renameat2
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    # AT_FDCWD and RENAME_NOREPLACE preserve atomic, exclusive publication.
+    if rename(-100, os.fsencode(temporary), -100, os.fsencode(target), 1):
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(target))
 
 
 def digest(path):
@@ -80,11 +96,11 @@ def reconcile(source, destination, manifest, *, apply=False):
                     raise ValueError("Copy hash mismatch")
                 with open(temporary, "r+b") as stream:
                     os.fsync(stream.fileno())
-                # Link publishes the complete file and refuses an existing target.
-                os.link(temporary, target)
+                publish_copy(temporary, target)
                 report["created"].append(entry)
             finally:
-                os.unlink(temporary)
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
     finally:
         save_manifest(manifest, report)
     return report
