@@ -22,6 +22,7 @@ what will be sent before any button is pressed.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
@@ -51,11 +52,25 @@ class DeskRunReport:
     answered: int = 0
     templates_pushed: int = 0
     notes: list = field(default_factory=list)
+    errors: list = field(default_factory=list)
+
+    @property
+    def status(self) -> str:
+        completed = self.priced + self.filed + self.answered + self.templates_pushed
+        if self.failed or self.errors:
+            return "partial" if completed else "failed"
+        return "completed" if completed or self.notes else "empty"
+
+    @property
+    def ok(self) -> bool:
+        return self.status not in ("failed", "partial")
 
     def summary(self) -> str:
         parts = []
-        if self.priced or self.failed:
-            parts.append(f"priced {self.priced}, failed {self.failed}")
+        if self.priced:
+            parts.append(f"priced {self.priced}")
+        if self.failed:
+            parts.append(f"failed {self.failed}")
         if self.filed:
             parts.append(f"filed {self.filed} drafts")
         if self.answered:
@@ -63,8 +78,8 @@ class DeskRunReport:
         if self.templates_pushed:
             parts.append(f"pushed {self.templates_pushed} templates")
         if not parts:
-            parts.append("nothing waiting")
-        return "; ".join(parts + self.notes)
+            parts.append("failed" if self.errors else "nothing waiting")
+        return "; ".join(parts + self.notes + self.errors)
 
 
 async def run_offer_jobs() -> DeskRunReport:
@@ -80,12 +95,16 @@ async def run_offer_jobs() -> DeskRunReport:
 
     claimed = await ops_hub.claim_offer_jobs(JOBS_PER_POLL)
     if not claimed.get("ok"):
-        report.notes.append(f"could not claim jobs: {claimed.get('error')}")
+        report.errors.append(f"could not claim jobs: {claimed.get('error')}")
         return report
 
     jobs = (claimed.get("body") or {}).get("jobs") or []
     for job in jobs:
-        outcome = price_and_build(job)
+        try:
+            outcome = await asyncio.to_thread(price_and_build, job)
+        except Exception as exc:
+            from services.bookings.offer_jobs import OfferJobOutcome
+            outcome = OfferJobOutcome(error=f"Pricing failed: {exc}")
         posted = await ops_hub.post_job_result(job["id"], **outcome.as_result_payload())
         if not posted.get("ok"):
             # The work is done and the answer is lost. Say so loudly: the job
@@ -118,11 +137,11 @@ async def run_draft_appends() -> DeskRunReport:
 
     claimed = await ops_hub.claim_draft_appends(JOBS_PER_POLL)
     if not claimed.get("ok"):
-        report.notes.append(f"could not claim appends: {claimed.get('error')}")
+        report.errors.append(f"could not claim appends: {claimed.get('error')}")
         return report
 
     for append in (claimed.get("body") or {}).get("appends") or []:
-        outcome = file_draft(append)
+        outcome = await asyncio.to_thread(_file_draft_once, append)
         posted = await ops_hub.post_draft_append_result(
             append["id"], **outcome.as_result_payload())
         if not posted.get("ok"):
@@ -138,6 +157,42 @@ async def run_draft_appends() -> DeskRunReport:
             report.notes.append(f"append {append['id']}: {outcome.error}")
 
     return report
+
+
+def _file_draft_once(append):
+    """Persist an attempt before IMAP. A lost reply must never cause another append."""
+    import hashlib
+    import json
+    from pathlib import Path
+    from core.atomic_io import atomic_write_json
+    from src.constants import DATA_DIR
+    from services.bookings.draft_append import DraftAppendOutcome
+
+    identifier = append.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        return DraftAppendOutcome(error="Draft append has no stable identifier")
+    receipt_dir = Path(DATA_DIR) / "bookings_draft_receipts"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    path = receipt_dir / (hashlib.sha256(identifier.encode()).hexdigest() + ".json")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        try:
+            previous = json.loads(path.read_text(encoding="utf-8"))
+            if previous.get("state") == "finished":
+                return DraftAppendOutcome(**previous["outcome"])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return DraftAppendOutcome(error="A previous draft attempt has an uncertain outcome. Reconcile Gmail before retrying.")
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump({"state": "started"}, stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+    outcome = file_draft(append)
+    atomic_write_json(str(path), {"state": "finished", "outcome": {
+        "folder": outcome.folder, "appended_uid": outcome.appended_uid, "error": outcome.error,
+    }})
+    return outcome
 
 
 async def run_reply_scan(window_days: int | None = None) -> DeskRunReport:
@@ -156,7 +211,7 @@ async def run_reply_scan(window_days: int | None = None) -> DeskRunReport:
 
     recipients = await _fetch_recipients()
     if recipients is None:
-        report.notes.append("could not fetch the recipient list")
+        report.errors.append("could not fetch the recipient list")
         return report
     if not recipients:
         report.notes.append("no registrations to check")
@@ -166,15 +221,15 @@ async def run_reply_scan(window_days: int | None = None) -> DeskRunReport:
     since = date.today() - timedelta(days=window_days) if window_days else None
 
     try:
-        answered = scan(recipients, since=since,
+        answered = await asyncio.to_thread(scan, recipients, since=since,
                         key=os.environ.get("OPS_AGENT_TOKEN", ""))
     except ReplyScanError as exc:
-        report.notes.append(str(exc))
+        report.errors.append(str(exc))
         return report
 
     posted = await ops_hub.post_booking_replies(answered)
     if not posted.get("ok"):
-        report.notes.append(f"replies did not post: {posted.get('error')}")
+        report.errors.append(f"replies did not post: {posted.get('error')}")
         return report
 
     report.answered = len(answered)
@@ -203,7 +258,7 @@ async def run_templates_push() -> DeskRunReport:
     ]
     posted = await ops_hub.post_booking_templates(payload)
     if not posted.get("ok"):
-        report.notes.append(f"templates did not post: {posted.get('error')}")
+        report.errors.append(f"templates did not post: {posted.get('error')}")
         return report
     report.templates_pushed = (posted.get("body") or {}).get("accepted", 0)
     return report

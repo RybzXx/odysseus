@@ -664,6 +664,8 @@ class TaskScheduler:
         while self._running:
             try:
                 await self._check_due_tasks()
+                from src.scheduler_heartbeat import record_scheduler_poll
+                await asyncio.to_thread(record_scheduler_poll)
             except Exception:
                 logger.exception("Error in task scheduler loop")
             # Sleep until the next scheduled run, capped at 60s. A `* * * * *`

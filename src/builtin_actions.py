@@ -3662,9 +3662,9 @@ async def action_bookings_offer_jobs(owner: str, **kwargs) -> Tuple[str, bool]:
     from services.bookings.desk_task import run_offer_jobs
 
     report = await run_offer_jobs()
-    if not (report.priced or report.failed):
+    if report.status == "empty":
         raise TaskNoop("no pricing work waiting")
-    return report.summary(), report.failed == 0
+    return report.summary(), report.ok
 
 
 async def action_bookings_reply_scan(owner: str, **kwargs) -> Tuple[str, bool]:
@@ -3677,7 +3677,7 @@ async def action_bookings_reply_scan(owner: str, **kwargs) -> Tuple[str, bool]:
     from services.bookings.desk_task import run_reply_scan
 
     report = await run_reply_scan()
-    return report.summary(), True
+    return report.summary(), report.ok
 
 
 async def action_bookings_draft_appends(owner: str, **kwargs) -> Tuple[str, bool]:
@@ -3690,9 +3690,9 @@ async def action_bookings_draft_appends(owner: str, **kwargs) -> Tuple[str, bool
     from services.bookings.desk_task import run_draft_appends
 
     report = await run_draft_appends()
-    if not (report.filed or report.failed):
+    if report.status == "empty":
         raise TaskNoop("no drafts waiting to be filed")
-    return report.summary(), report.failed == 0
+    return report.summary(), report.ok
 
 
 BUILTIN_ACTIONS = {

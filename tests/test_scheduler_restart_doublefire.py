@@ -13,8 +13,27 @@ polls.
 import sys, types, asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
+import pytest
+from tests.helpers.import_state import preserve_import_state
 from sqlalchemy import create_engine, Column, String, DateTime, Integer, Boolean, Text
 from sqlalchemy.orm import sessionmaker, declarative_base
+
+
+@pytest.fixture(autouse=True)
+def isolated_scheduler_state():
+    import core.database as cd
+    names = ("engine", "SessionLocal", "ScheduledTask", "TaskRun")
+    saved = {name: getattr(cd, name) for name in names}
+    modules = ("src.builtin_actions", "src.ai_interaction", "src.endpoint_resolver",
+               "src.agent_loop", "src.session_manager", "src.task_scheduler")
+    with preserve_import_state(*modules):
+        try:
+            yield
+        finally:
+            if cd.engine is not saved["engine"]:
+                cd.engine.dispose()
+            for name, value in saved.items():
+                setattr(cd, name, value)
 
 
 def _test_utcnow():
@@ -116,6 +135,8 @@ def _drive_scheduler(monkeypatch, pre_start_setup=None):
     # (stubbed to _never here); filter those out so the test only counts
     # real per-poll task dispatches.
     real_dispatches = [c for c in all_dispatched if c.__name__ != "_never"]
+    for coro in all_dispatched:
+        coro.close()
     return cd, ScheduledTask, TaskRun, real_dispatches
 
 

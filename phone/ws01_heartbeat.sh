@@ -14,9 +14,8 @@
 # Contract
 #     Pre:  DB exists and is readable (read-only connection only).
 #     Post: REMOTE/heartbeat.json reflects, best-effort: this run's own
-#           wall-clock time (device_online_at), the live db's most recent
-#           task_runs timestamp as a scheduler-liveness proxy (scheduler_tick_at,
-#           empty string if unreadable), and the last successful backup's
+#           wall-clock time (device_online_at), the scheduler's own
+#           completed-poll timestamp (scheduler_tick_at, empty if unreadable), and the last successful backup's
 #           timestamp from ws01_backup_db.sh's own status file
 #           (backup_success_at, empty string if none/failed).
 #     Inv:  never blocks on a missing status file or an unreadable db -- a
@@ -35,37 +34,9 @@ NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 mkdir -p "$WORKDIR"
 
-SCHEDULER_TICK="$(python3 -c "
-import sqlite3
-try:
-    con = sqlite3.connect('file:$DB?mode=ro', uri=True)
-    row = con.execute('SELECT MAX(created_at) FROM task_runs').fetchone()
-    print(row[0] if row and row[0] else '')
-except Exception:
-    print('')
-" 2>/dev/null)"
-
-BACKUP_SUCCESS_AT=""
-if [ -f "$STATUS_FILE" ]; then
-    BACKUP_SUCCESS_AT="$(python3 -c "
-import json
-try:
-    d = json.load(open('$STATUS_FILE'))
-    print(d['at'] if d.get('ok') else '')
-except Exception:
-    print('')
-" 2>/dev/null)"
-fi
-
-HEARTBEAT_TMP="$WORKDIR/heartbeat.json.tmp"
-python3 -c "
-import json
-json.dump({
-    'device_online_at': '$NOW',
-    'scheduler_tick_at': '$SCHEDULER_TICK',
-    'backup_success_at': '$BACKUP_SUCCESS_AT',
-}, open('$HEARTBEAT_TMP', 'w'))
-"
-mv "$HEARTBEAT_TMP" "$WORKDIR/heartbeat.json"
+# Build independent signals. Only the scheduler can refresh its own timestamp.
+python3 /data/data/com.termux/files/home/ws01_heartbeat.py \
+    --data-dir "$DATA_DIR" --status-file "$STATUS_FILE" \
+    --output "$WORKDIR/heartbeat.json" || exit 1
 
 rclone copyto "$WORKDIR/heartbeat.json" "$REMOTE/heartbeat.json" --drive-use-trash=false

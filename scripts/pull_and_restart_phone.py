@@ -1,48 +1,77 @@
-"""scripts/pull_and_restart_phone.py
-Pulls the latest Git commits on the Samsung Galaxy S24 Ultra and restarts all services.
-"""
-
+"""Deploy an exact phone revision. Validate by default; --apply requires a verified backup."""
+import argparse
+import json
+from pathlib import Path
+import shlex
 import sys
 import time
 import paramiko
 
-sys.path.insert(0, r"D:\ai_projects_2026\OdysseusWork")
-from phone_connection import HOST, PORT, USER, PASSWORD
 
-print(f"Connecting to phone ({HOST}:{PORT})...")
-c = paramiko.SSHClient()
-c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=10)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--backup", required=True)
+    parser.add_argument("--source", default="origin", help="Remote or phone-side bundle")
+    parser.add_argument("--apply", action="store_true")
+    args = parser.parse_args()
+    if len(args.commit) != 40 or any(c not in "0123456789abcdef" for c in args.commit):
+        parser.error("--commit requires an exact lowercase commit ID")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from phone_connection import HOST, PORT, USER, PASSWORD, ROOTFS
+    client = paramiko.SSHClient()
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=10)
 
-print("\n--- Checking Git Remote & Branch on Phone ---")
-commands = [
-    "git -C /root/odysseus fetch origin local-agent-1",
-    "git -C /root/odysseus reset --hard FETCH_HEAD",
-    "git -C /root/odysseus log -1 --oneline",
-]
+    def guest(command):
+        _, out, err = client.exec_command("proot-distro login ubuntu -- bash -c " + shlex.quote(command), timeout=90)
+        stdout, stderr = out.read().decode(), err.read().decode()
+        if out.channel.recv_exit_status():
+            raise RuntimeError(stderr or stdout)
+        return stdout
 
-for cmd in commands:
-    proot_cmd = f"proot-distro login ubuntu -- bash -c '{cmd}'"
-    print(f"\nExecuting: {cmd}")
-    _, stdout, stderr = c.exec_command(proot_cmd)
-    out = stdout.read().decode()
-    err = stderr.read().decode()
-    if out:
-        print(out.strip())
-    if err:
-        print("STDERR:", err.strip())
+    try:
+        with client.open_sftp() as sftp:
+            sftp.put(str(Path(__file__).with_name("deploy_revision.py")), ROOTFS + "/tmp/odysseus-deploy-revision.py")
+        check = "import json,pathlib; p=pathlib.Path(" + repr(args.backup) + "); d=json.loads((p/'verified.json').read_text()); assert d.get('database_integrity')=='ok'; assert (p/'app.db').is_file()"
+        guest("python3 -c " + shlex.quote(check))
+        if args.apply:
+            guest("git -C /root/odysseus fetch -- " + shlex.quote(args.source) + " " + args.commit)
+        command = "python3 /tmp/odysseus-deploy-revision.py --repo /root/odysseus --commit " + args.commit
+        print(guest(command + (" --apply" if args.apply else "")))
+        if args.apply:
+            # Match the Python module arguments, never a broad process-name pattern.
+            stop = """import pathlib,os,signal,json
+pids=[]
+for p in pathlib.Path('/proc').iterdir():
+    if not p.name.isdigit():
+        continue
+    try:
+        if b'-m\\x00uvicorn\\x00app:app\\x00' in p.joinpath('cmdline').read_bytes():
+            os.kill(int(p.name), signal.SIGTERM)
+            pids.append(int(p.name))
+    except (FileNotFoundError, ProcessLookupError, PermissionError):
+        continue
+print(json.dumps(pids))
+"""
+            old_pids = json.loads(guest("python3 -c " + shlex.quote(stop)))
+            # The existing supervisor owns startup.
+            for _ in range(24):
+                time.sleep(5)
+                try:
+                    probe = ("import pathlib,urllib.request; "
+                             + "assert not any(pathlib.Path('/proc',str(p)).exists() for p in " + repr(old_pids) + "); "
+                             + "r=urllib.request.urlopen('http://127.0.0.1:7000/api/health',timeout=3); assert r.status==200")
+                    guest("python3 -c " + shlex.quote(probe))
+                    print(json.dumps({"liveness": "passed", "commit": args.commit}))
+                    return
+                except RuntimeError:
+                    continue
+            raise RuntimeError("Odysseus did not become live within two minutes. Inspect the supervisor.")
+    finally:
+        client.close()
 
-print("\n--- Restarting Odysseus and Dependent Services on Phone ---")
-c.exec_command("pkill -9 -f uvicorn")
-time.sleep(2)
 
-_, stdout, _ = c.exec_command("bash /data/data/com.termux/files/home/.shortcuts/Start_All.sh")
-print(stdout.read().decode())
-time.sleep(4)
-
-print("\n--- Verifying Active Processes ---")
-_, stdout, _ = c.exec_command("ps aux | grep uvicorn")
-print(stdout.read().decode())
-
-c.close()
-print("\nPull & Restart complete!")
+if __name__ == "__main__":
+    main()
