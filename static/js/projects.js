@@ -441,6 +441,7 @@ function _injectStyles() {
 
     #projects-modal .proj-tabs {
       display: flex;
+      flex-wrap: wrap;
       gap: 4px;
       padding: 8px 16px 0;
       background: var(--bg-elev, #242424);
@@ -488,7 +489,10 @@ function _injectStyles() {
     }
 
     /* Tab: Overview */
-    .proj-overview-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .proj-overview-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .proj-overview-header > div { min-width: 0; max-width: 100%; }
+    .proj-overview-header > div:first-child { flex: 1 1 240px; overflow-wrap: anywhere; }
+    .proj-overview-header > div:last-child { flex-wrap: wrap; }
     .proj-progress-bar { background: var(--bg-elev, #242424); border-radius: 6px; height: 8px; width: 100%; overflow: hidden; margin-bottom: 16px; border: 1px solid var(--border, #333); }
     .proj-progress-fill { background: var(--accent, #e8a33d); height: 100%; transition: width 0.3s ease; }
     
