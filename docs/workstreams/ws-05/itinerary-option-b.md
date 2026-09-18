@@ -14,8 +14,8 @@ Explicit requested regions take precedence.
 | B3 | MUST account for every historical record. Duplicate routes must retain their references. Unresolved records must remain visible. | Done in `route_corpus.py`. The pool contains 235 usable records, 100 records needing review, and 209 distinct usable routes. |
 | B4 | MUST distinguish required cities, sites, and endpoints from preferences. Missing or malformed requirements must block generation. | Done for explicit structured request fields. Free text and model suggestions do not acquire authority. |
 | B5 | MUST check, price, and render the same resolved day data. Changes to request, catalogue, corpus, or prices must require recalculation. | Done. Generation passes the checked built days and quote to the renderer. Legacy results require recalculation. |
-| B6 | MUST preserve draft history, comments, runs, and settings during migration. Incomplete results must identify their blockers. | Local history regression passes. Phone preservation checks accompany deployment. |
-| B7 | MUST replay historical offers, run focused tests on the phone, check a backup, and check the deployed service. | Verification results below. |
+| B6 | MUST preserve draft history, comments, runs, and settings during migration. Incomplete results must identify their blockers. | Done. Local and live phone checks preserve prior sequences, comments, runs, and settings. |
+| B7 | MUST replay historical offers, run focused tests on the phone, check a backup, and check the deployed service. | Done. Verification results below. |
 
 The matcher remains responsible for route selection.
 The catalogue remains responsible for actual start cities, overnight stays, included hotels, and vehicle facts.
@@ -101,3 +101,36 @@ They are retrospective comparisons, not a pure historical training evaluation.
 
 The reproducible harness is `scripts/audit_sent_itineraries.py`.
 The private results remain outside Git at `../scratch/option-b-sent-audit-results.json`.
+
+
+## Phone deployment and live acceptance
+
+The phone fast-forwarded `daily-driver` from `74d6d45` to implementation commit `f8cd4e9`.
+The service restarted through its existing supervisor and returned HTTP 200 from `/api/health`.
+The tracked checkout remained clean. The existing `phone_db_register.py` file remained present.
+
+All six drafts received an appended rules result with plan version 1.
+The selected draft recalculated through the browser.
+The other five recalculated through the authenticated application API.
+All six current results passed their version checks and reported no stale plan.
+The ready draft enabled the Build the Google Doc control in the live page.
+The incomplete draft kept its build control disabled and displayed its specific blockers.
+No document was created during acceptance.
+
+The preservation check passed for prior sequences, request contents, comments, runs, and document links.
+Settings and scheduled-task states remained unchanged.
+The database retained all 21 projects, 64 tasks, 36 sessions, and 14 schedules.
+The live SQLite quick check returned `ok`.
+All 335 sent offers and 72 catalogue JSON files retained their original SHA-256 hashes.
+The existing three enforced corrections and retired exception remained present.
+All affected network-model steps remained blocked.
+
+The live evidence table displayed day roles, endpoints, overnights, accommodation inclusion, and source-day evidence.
+At a 390-pixel viewport, the document width was 375 pixels.
+The table uses its own horizontal scroll area.
+The final display adjustment removes duplicate blocker text from the result summary.
+The five browser logic tests still pass after that adjustment.
+
+The release receipt is outside Git at `../scratch/option-b-release-check.json`.
+The remaining five blocked drafts require the catalogue or request facts listed above.
+Option B is implemented and deployed. It does not resolve those unknown facts by inference.

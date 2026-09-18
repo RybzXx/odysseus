@@ -666,7 +666,7 @@ function runResultHtml(draft) {
     return `<section id="run-result" class="run-result error" role="alert">
       <h2>Incomplete itinerary</h2>
       <p>Resolve these requirements before building a document.</p>
-      <ul>${problems.map((problem) => `<li>${esc(problem)}</li>`).join("")}</ul>
+      <ul>${[...new Set(problems)].map((problem) => `<li>${esc(problem)}</li>`).join("")}</ul>
     </section>`;
   }
   const run = draft.run || (draft.runs || [])[0];
