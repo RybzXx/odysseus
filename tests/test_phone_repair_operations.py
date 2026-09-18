@@ -75,3 +75,10 @@ def test_deployment_requires_clean_expected_branch_and_preserves_untracked(tmp_p
     assert (repo / "untracked").read_text() == "keep"
     with pytest.raises(subprocess.CalledProcessError):
         deploy_revision(repo, first, apply=True)
+    git(repo, "switch", "-c", "rollback")
+    git(repo, "revert", "--no-edit", second)
+    reverted = git(repo, "rev-parse", "HEAD")
+    git(repo, "switch", "daily-driver")
+    deploy_revision(repo, reverted, apply=True)
+    assert (repo / "tracked").read_text() == "one"
+    assert (repo / "untracked").read_text() == "keep"
