@@ -188,6 +188,14 @@ def _file_draft_once(append):
         json.dump({"state": "started"}, stream)
         stream.flush()
         os.fsync(stream.fileno())
+    if os.name == "posix":
+        # Persist both directory entries before any remote write can occur.
+        for directory in (receipt_dir.parent, receipt_dir):
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
     outcome = file_draft(append)
     atomic_write_json(str(path), {"state": "finished", "outcome": {
         "folder": outcome.folder, "appended_uid": outcome.appended_uid, "error": outcome.error,

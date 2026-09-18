@@ -53,3 +53,18 @@ def test_partial_completion_stays_unsuccessful():
     report = desk_task.DeskRunReport(priced=1, failed=1)
     assert report.status == "partial"
     assert not report.ok
+
+
+def test_interrupted_append_attempt_requires_reconciliation(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
+    attempts = []
+    def interrupted(item):
+        attempts.append(item["id"])
+        raise RuntimeError("connection lost after remote write")
+    monkeypatch.setattr(desk_task, "file_draft", interrupted)
+    with pytest.raises(RuntimeError, match="connection lost"):
+        desk_task._file_draft_once({"id": "interrupted"})
+    outcome = desk_task._file_draft_once({"id": "interrupted"})
+    assert not outcome.ok
+    assert "uncertain" in outcome.error
+    assert attempts == ["interrupted"]
