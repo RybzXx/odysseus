@@ -339,3 +339,13 @@ def test_missing_corpus_is_untested_not_an_unsupported_journey(monkeypatch):
     assert "move_not_joined" not in kinds(check)
     assert any("corpus" in note for note in check.untested)
     assert not check.is_clean
+
+
+def test_unreadable_corpus_keeps_distance_checks(monkeypatch):
+    def unreadable():
+        raise OSError("corpus unavailable")
+    monkeypatch.setattr(move_map, "counted_moves", unreadable)
+    check = check_sequence(["TO_DUHOK", "TO_BASRA"], TEMPLATES, start_date=date(2026, 1, 1))
+    assert "move_not_joined" not in kinds(check)
+    assert "leg_too_long" in kinds(check)
+    assert any("corpus" in note for note in check.untested)

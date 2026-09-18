@@ -438,7 +438,7 @@ def _check_night_chain(check: SequenceCheck, nights: list, templates: dict) -> N
     Direction does not decide the first fault. A road the corpus drives one way
     is a road, and `Leg.is_joined` reads both counts.
     """
-    from services.itinerary.move_map import counted_moves
+    from services.itinerary.move_map import Leg, counted_moves, road_km
 
     try:
         corpus_available = bool(counted_moves())
@@ -453,7 +453,8 @@ def _check_night_chain(check: SequenceCheck, nights: list, templates: dict) -> N
         if here == there:
             continue
 
-        move = leg(here, there)
+        move = leg(here, there) if corpus_available else Leg(
+            from_city=here, to_city=there, km=road_km(here, there), count=0)
         if corpus_available and not move.is_joined:
             check.faults.append(SequenceFault(
                 kind=FAULT_MOVE_NOT_JOINED, day=next_day,
