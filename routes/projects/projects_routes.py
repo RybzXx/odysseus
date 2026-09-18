@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from core import database as cdb
 from core.database import Project, ProjectTask, ProjectLink, Session, ModelEndpoint
 from src.auth_helpers import get_current_user
+from src.project_access import find_project, project_scope
 from src.projects_manager import (
     create_project,
     save_project_content_to_disk,
@@ -101,9 +102,7 @@ def setup_projects_routes() -> APIRouter:
         owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            q = db.query(Project)
-            if owner:
-                q = q.filter((Project.owner == owner) | (Project.owner == None))
+            q = db.query(Project).filter(project_scope(owner))
             if status and status != "all":
                 q = q.filter(Project.status == status)
             from sqlalchemy import case
@@ -116,7 +115,7 @@ def setup_projects_routes() -> APIRouter:
                 else_=3
             )
             projects = q.order_by(status_order.asc(), Project.updated_at.desc()).all()
-            return {"projects": [project_to_dict(p, db=db, include_tasks=False, include_links=False, include_pinned_notes=True) for p in projects]}
+            return {"projects": [project_to_dict(p, db=db, owner=owner, include_tasks=False, include_links=False, include_pinned_notes=True) for p in projects]}
         finally:
             db.close()
 
@@ -152,32 +151,26 @@ def setup_projects_routes() -> APIRouter:
     @router.get("/{project_id}")
     def get_project(request: Request, project_id: str):
         """Get full project details with tasks, resolved links, and raw content."""
+        owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
+            project = find_project(db, project_id, owner)
             if not project:
                 raise HTTPException(404, f"Project {project_id} not found")
-            return {"project": project_to_dict(project, db=db, include_tasks=True, include_links=True, include_content=True)}
+            return {"project": project_to_dict(project, db=db, owner=owner, include_tasks=True, include_links=True, include_content=True)}
         finally:
             db.close()
 
     @router.get("/{project_id}/structure")
     def get_project_structure(request: Request, project_id: str):
         """Get file tree topology, tech stack analysis, and spec file content."""
+        owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
+            project = find_project(db, project_id, owner)
             if not project:
                 raise HTTPException(404, f"Project {project_id} not found")
-            return get_project_structure_and_spec(project.id, db=db)
+            return get_project_structure_and_spec(project.id, db=db, owner=owner)
         finally:
             db.close()
 
@@ -187,11 +180,7 @@ def setup_projects_routes() -> APIRouter:
         owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
+            project = find_project(db, project_id, owner)
             if not project:
                 raise HTTPException(404, f"Project {project_id} not found")
 
@@ -242,7 +231,7 @@ def setup_projects_routes() -> APIRouter:
                 owner=owner,
                 db_session=db,
             )
-            return {"project": project_to_dict(project, db=db, include_tasks=True, include_links=True, include_content=True)}
+            return {"project": project_to_dict(project, db=db, owner=owner, include_tasks=True, include_links=True, include_content=True)}
         finally:
             db.close()
 
@@ -252,11 +241,7 @@ def setup_projects_routes() -> APIRouter:
         owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
+            project = find_project(db, project_id, owner)
             if not project:
                 raise HTTPException(404, f"Project {project_id} not found")
 
@@ -309,7 +294,7 @@ def setup_projects_routes() -> APIRouter:
                     logger.warning(f"LLM summarize failed for {project.slug} with {req_model}: {err}")
 
             if not summary_text:
-                struct = get_project_structure_and_spec(project.id, db=db)
+                struct = get_project_structure_and_spec(project.id, db=db, owner=owner)
                 overview = struct.get("sections", {}).get("overview") or project.description or ""
                 clean = re.sub(r"#+\s+.*", "", overview).strip()
                 lines = [l.strip() for l in clean.splitlines() if l.strip()]
@@ -364,13 +349,10 @@ def setup_projects_routes() -> APIRouter:
     @router.delete("/{project_id}")
     def delete_project(request: Request, project_id: str, delete_files: bool = Query(default=False)):
         """Delete project from database and optionally remove workspace folder."""
+        owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
+            project = find_project(db, project_id, owner)
             if not project:
                 raise HTTPException(404, f"Project {project_id} not found")
 
@@ -399,11 +381,7 @@ def setup_projects_routes() -> APIRouter:
         owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
+            project = find_project(db, project_id, owner)
             if not project:
                 raise HTTPException(404, f"Project {project_id} not found")
 
@@ -437,17 +415,21 @@ def setup_projects_routes() -> APIRouter:
     @router.patch("/{project_id}/tasks/{task_id}")
     def update_task(request: Request, project_id: str, task_id: str, body: TaskUpdateRequest):
         """Toggle completion or update task title/due date."""
+        owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
+            project = find_project(db, project_id, owner)
+            if project is None:
+                raise HTTPException(404, "Project not found")
             task = (
                 db.query(ProjectTask)
-                .filter(ProjectTask.id == task_id)
+                .filter(ProjectTask.id == task_id, ProjectTask.project_id == project.id)
                 .first()
             )
             if not task:
                 raise HTTPException(404, f"Task {task_id} not found")
 
-            project = db.query(Project).filter(Project.id == task.project_id).first()
+            # The parent project was authorized before reading this task.
 
             if body.completed is not None and body.completed != task.completed:
                 task.completed = body.completed
@@ -480,13 +462,17 @@ def setup_projects_routes() -> APIRouter:
     @router.delete("/{project_id}/tasks/{task_id}")
     def delete_task(request: Request, project_id: str, task_id: str):
         """Delete a task item from a project."""
+        owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            task = db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
+            project = find_project(db, project_id, owner)
+            if project is None:
+                raise HTTPException(404, "Project not found")
+            task = db.query(ProjectTask).filter(ProjectTask.id == task_id, ProjectTask.project_id == project.id).first()
             if not task:
                 raise HTTPException(404, f"Task {task_id} not found")
 
-            project = db.query(Project).filter(Project.id == task.project_id).first()
+            # The parent project was authorized before reading this task.
             if project:
                 project.task_total = max(0, (project.task_total or 0) - 1)
                 if task.completed:
@@ -507,13 +493,10 @@ def setup_projects_routes() -> APIRouter:
     @router.post("/{project_id}/links")
     def add_link(request: Request, project_id: str, body: LinkCreateRequest):
         """Attach a cross-module reference (operations key, email, calendar event, document)."""
+        owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
+            project = find_project(db, project_id, owner)
             if not project:
                 raise HTTPException(404, f"Project {project_id} not found")
 
@@ -540,9 +523,13 @@ def setup_projects_routes() -> APIRouter:
     @router.delete("/{project_id}/links/{link_id}")
     def delete_link(request: Request, project_id: str, link_id: str):
         """Unlink an item from a project."""
+        owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            link = db.query(ProjectLink).filter(ProjectLink.id == link_id).first()
+            project = find_project(db, project_id, owner)
+            if project is None:
+                raise HTTPException(404, "Project not found")
+            link = db.query(ProjectLink).filter(ProjectLink.id == link_id, ProjectLink.project_id == project.id).first()
             if not link:
                 raise HTTPException(404, f"Link {link_id} not found")
             db.delete(link)
@@ -578,13 +565,15 @@ def setup_projects_routes() -> APIRouter:
         owner = get_current_user(request)
         db = cdb.SessionLocal()
         try:
-            project = (
-                db.query(Project)
-                .filter((Project.id == project_id) | (Project.slug == project_id))
-                .first()
-            )
+            project = find_project(db, project_id, owner)
             if not project:
                 raise HTTPException(404, f"Project {project_id} not found")
+
+            task = None
+            if body and body.task_id:
+                task = db.query(ProjectTask).filter(ProjectTask.id == body.task_id, ProjectTask.project_id == project.id).first()
+                if task is None:
+                    raise HTTPException(404, "Task not found")
 
             session_id = str(uuid.uuid4())
             session_name = f"Task: {body.task_title}" if (body and body.task_title) else f"Project: {project.name}"
@@ -600,7 +589,6 @@ def setup_projects_routes() -> APIRouter:
             db.add(session)
             db.flush()
             if body and body.task_id:
-                task = db.query(ProjectTask).filter(ProjectTask.id == body.task_id).first()
                 if task:
                     task.agent_session_id = session_id
             else:

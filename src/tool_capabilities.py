@@ -113,6 +113,12 @@ def _register(
 
 
 _register(
+    {"manage_projects"},
+    ToolEffect.WRITE_PRIVATE,
+    ToolEffect.WRITE_WORKSPACE,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_register(
     {"ask_user", "update_plan"},
     ToolEffect.USER_INTERACTION,
 )
@@ -450,6 +456,7 @@ _PRIVATE_ACTION_READS: Mapping[str, frozenset[str]] = MappingProxyType(
         "manage_session": frozenset({"list", "switch", "open", "select", "view"}),
         "manage_skills": frozenset({"list", "index", "view", "view_ref", "search"}),
         "manage_tasks": frozenset({"list"}),
+        "manage_projects": frozenset({"list", "get", "get_context", "context"}),
     }
 )
 
@@ -477,6 +484,7 @@ _PRIVATE_ACTION_WRITES: Mapping[str, frozenset[str]] = MappingProxyType(
         ),
         "manage_skills": frozenset({"add", "edit", "patch", "publish", "delete"}),
         "manage_tasks": frozenset({"create", "edit", "delete", "pause", "resume", "run"}),
+        "manage_projects": frozenset({"create", "add", "new", "update", "save", "edit", "add_task", "toggle_task", "complete_task", "link_item"}),
     }
 )
 
@@ -506,6 +514,7 @@ _ACTION_DEFAULTS: Mapping[str, str] = MappingProxyType(
         "manage_documents": "list",
         "manage_research": "list",
         "manage_tasks": "list",
+        "manage_projects": "list",
     }
 )
 
@@ -611,6 +620,8 @@ def capabilities_for_action(tool_name: Any, content: Any) -> ToolCapabilities:
             known=base.known,
         )
 
+    if tool_name == "manage_projects":
+        return _UNKNOWN_CAPABILITIES
     return _capabilities(
         ToolEffect.READ_PRIVATE,
         ToolEffect.WRITE_PRIVATE,

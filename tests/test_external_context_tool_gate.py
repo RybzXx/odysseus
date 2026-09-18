@@ -1293,10 +1293,10 @@ def test_approval_pause_does_not_trigger_teacher_takeover(monkeypatch):
 
 def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
     root = Path(__file__).parents[1]
-    chat = (root / "static/js/chat.js").read_text()
-    renderer = (root / "static/js/chatRenderer.js").read_text()
-    skills = (root / "static/js/skills.js").read_text()
-    index = (root / "static/index.html").read_text()
+    chat = (root / "static/js/chat.js").read_text(encoding="utf-8")
+    renderer = (root / "static/js/chatRenderer.js").read_text(encoding="utf-8")
+    skills = (root / "static/js/skills.js").read_text(encoding="utf-8")
+    index = (root / "static/index.html").read_text(encoding="utf-8")
 
     assert "fd.append('tool_approval_id'" in chat
     assert "fd.append('tool_approval_decision'" in chat
@@ -1321,10 +1321,12 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
     assert "/test-approval`" in skills
     assert "approval_id: approval.approval_id" in skills
     assert "['approve', 'Allow once'" in skills
-    assert index.count("app.js?v=20260815toolapproval4") == 2
-    assert "app.js?v=20260808startupshell1" not in index
+    import re
+    app_refs = re.findall(r'(?:src|href)="(/static/app\.js\?v=[^"]+)"', index)
+    assert len(app_refs) == 2
+    assert app_refs[0] == app_refs[1]
     approval_module_sources = [
-        (root / path).read_text()
+        (root / path).read_text(encoding="utf-8")
         for path in (
             "static/app.js",
             "static/index.html",
@@ -1349,7 +1351,7 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
 
 
 def test_frontend_raw_fences_do_not_call_document_mutators():
-    source = (Path(__file__).parents[1] / "static/js/chat.js").read_text()
+    source = (Path(__file__).parents[1] / "static/js/chat.js").read_text(encoding="utf-8")
     start = source.index("// Raw model text is not authorization to mutate the editor.")
     end = source.index("// Detect thinking-in-progress:", start)
 

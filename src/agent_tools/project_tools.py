@@ -10,11 +10,13 @@ import logging
 from typing import Any, Dict, Optional
 
 from src.tool_utils import _parse_tool_args
+from src.project_access import find_project, project_scope
 from src.projects_manager import (
     create_project,
     save_project_content_to_disk,
     sync_project_disk_and_db,
     project_to_dict,
+    sync_tasks_to_manifest_file,
 )
 from core import database as cdb
 from core.database import Project, ProjectTask, ProjectLink
@@ -33,8 +35,13 @@ class ManageProjectsTool:
         except ValueError:
             return {"error": "Invalid JSON arguments", "exit_code": 1}
 
-        action = (args.get("action") or "list").strip().lower()
-        project_id = (args.get("project_id") or args.get("id") or "").strip()
+        if not isinstance(args, dict):
+            return {"error": "Arguments must be an object", "exit_code": 1}
+        action = args.get("action") or "list"
+        project_id = args.get("project_id") or args.get("id") or ""
+        if not isinstance(action, str) or not isinstance(project_id, str):
+            return {"error": "Action and project ID must be strings", "exit_code": 1}
+        action, project_id = action.strip().lower(), project_id.strip()
 
         db = cdb.SessionLocal()
         try:
@@ -42,9 +49,7 @@ class ManageProjectsTool:
             # 1. LIST PROJECTS
             # ---------------------------------------------------------------
             if action == "list":
-                q = db.query(Project)
-                if owner:
-                    q = q.filter((Project.owner == owner) | (Project.owner == None))
+                q = db.query(Project).filter(project_scope(owner))
                 status_filter = args.get("status")
                 if status_filter and status_filter != "all":
                     q = q.filter(Project.status == status_filter)
@@ -76,17 +81,13 @@ class ManageProjectsTool:
                 if not project_id:
                     return {"error": "Missing required argument 'project_id'", "exit_code": 1}
 
-                project = (
-                    db.query(Project)
-                    .filter((Project.id == project_id) | (Project.slug == project_id))
-                    .first()
-                )
+                project = find_project(db, project_id, owner)
                 if not project:
                     return {"error": f"Project '{project_id}' not found", "exit_code": 1}
 
                 return {
                     "project": project_to_dict(
-                        project, db=db, include_tasks=True, include_links=True, include_content=True
+                        project, db=db, owner=owner, include_tasks=True, include_links=True, include_content=True
                     ),
                     "exit_code": 0,
                 }
@@ -98,15 +99,11 @@ class ManageProjectsTool:
                 if not project_id:
                     return {"error": "Missing required argument 'project_id'", "exit_code": 1}
 
-                project = (
-                    db.query(Project)
-                    .filter((Project.id == project_id) | (Project.slug == project_id))
-                    .first()
-                )
+                project = find_project(db, project_id, owner)
                 if not project:
                     return {"error": f"Project '{project_id}' not found", "exit_code": 1}
 
-                p_data = project_to_dict(project, db=db, include_tasks=True, include_links=True)
+                p_data = project_to_dict(project, db=db, owner=owner, include_tasks=True, include_links=True)
                 
                 # Format a compact, token-efficient text block for agent context
                 lines = [
@@ -160,11 +157,7 @@ class ManageProjectsTool:
                 if not project_id:
                     return {"error": "Missing required argument 'project_id'", "exit_code": 1}
 
-                project = (
-                    db.query(Project)
-                    .filter((Project.id == project_id) | (Project.slug == project_id))
-                    .first()
-                )
+                project = find_project(db, project_id, owner)
                 if not project:
                     return {"error": f"Project '{project_id}' not found", "exit_code": 1}
 
@@ -185,7 +178,7 @@ class ManageProjectsTool:
 
                 db.refresh(project)
                 return {
-                    "project": project_to_dict(project, db=db, include_tasks=True, include_links=True),
+                    "project": project_to_dict(project, db=db, owner=owner, include_tasks=True, include_links=True),
                     "exit_code": 0,
                 }
 
@@ -199,11 +192,7 @@ class ManageProjectsTool:
                 if not task_title:
                     return {"error": "Missing required argument 'task_title'", "exit_code": 1}
 
-                project = (
-                    db.query(Project)
-                    .filter((Project.id == project_id) | (Project.slug == project_id))
-                    .first()
-                )
+                project = find_project(db, project_id, owner)
                 if not project:
                     return {"error": f"Project '{project_id}' not found", "exit_code": 1}
 
@@ -223,6 +212,7 @@ class ManageProjectsTool:
                     project.task_completed = (project.task_completed or 0) + 1
 
                 db.commit()
+                sync_tasks_to_manifest_file(project.id, db=db)
                 return {
                     "task": {
                         "id": task.id,
@@ -245,20 +235,24 @@ class ManageProjectsTool:
                 if not task:
                     return {"error": f"Task '{task_id}' not found", "exit_code": 1}
 
-                project = db.query(Project).filter(Project.id == task.project_id).first()
+                project = find_project(db, task.project_id, owner)
+                if project is None or (project_id and project_id not in (project.id, project.slug)):
+                    return {"error": "Task not found", "exit_code": 1}
 
                 new_state = args.get("completed")
                 if new_state is None:
                     new_state = not task.completed
 
+                changed = task.completed != bool(new_state)
                 task.completed = bool(new_state)
-                if project:
+                if project and changed:
                     if task.completed:
                         project.task_completed = (project.task_completed or 0) + 1
                     else:
                         project.task_completed = max(0, (project.task_completed or 0) - 1)
 
                 db.commit()
+                sync_tasks_to_manifest_file(project.id, db=db)
                 return {
                     "task": {
                         "id": task.id,
@@ -279,11 +273,7 @@ class ManageProjectsTool:
                 if not link_type or not link_target:
                     return {"error": "Missing 'link_type' or 'link_target'", "exit_code": 1}
 
-                project = (
-                    db.query(Project)
-                    .filter((Project.id == project_id) | (Project.slug == project_id))
-                    .first()
-                )
+                project = find_project(db, project_id, owner)
                 if not project:
                     return {"error": f"Project '{project_id}' not found", "exit_code": 1}
 

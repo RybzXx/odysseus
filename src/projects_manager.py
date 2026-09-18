@@ -22,8 +22,9 @@ except ImportError:
     yaml = None
 
 from core import database as cdb
-from core.database import Project, ProjectTask, ProjectLink, Document, Note, CalendarEvent, OperationsNote
+from core.database import Project, ProjectTask, ProjectLink, Document, Note, CalendarEvent, CalendarCal, OperationsNote
 from src.constants import DATA_DIR
+from src.project_access import require_project
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,7 @@ def create_project(
 
         db.commit()
         db.refresh(project)
-        return project_to_dict(project, db=db, include_tasks=True, include_links=True)
+        return project_to_dict(project, db=db, owner=owner, include_tasks=True, include_links=True)
     finally:
         db.close()
 
@@ -239,11 +240,7 @@ def sync_project_disk_and_db(project_id_or_slug: str, owner: Optional[str] = Non
     """Re-parse PROJECT.md from disk and synchronize the SQLite index."""
     db = cdb.SessionLocal()
     try:
-        project = (
-            db.query(Project)
-            .filter((Project.id == project_id_or_slug) | (Project.slug == project_id_or_slug))
-            .first()
-        )
+        project = require_project(db, project_id_or_slug, owner)
         if not project:
             raise FileNotFoundError(f"Project {project_id_or_slug} not found in database.")
 
@@ -309,7 +306,7 @@ def sync_project_disk_and_db(project_id_or_slug: str, owner: Optional[str] = Non
 
         db.commit()
         db.refresh(project)
-        return project_to_dict(project, db=db, include_tasks=True, include_links=True)
+        return project_to_dict(project, db=db, owner=owner, include_tasks=True, include_links=True)
     finally:
         db.close()
 
@@ -318,7 +315,7 @@ def save_project_content_to_disk(project_id: str, content: str, owner: Optional[
     """Write updated markdown body / manifest content to PROJECT.md and re-sync."""
     db = cdb.SessionLocal()
     try:
-        project = db.query(Project).filter(Project.id == project_id).first()
+        project = require_project(db, project_id, owner)
         if not project:
             raise FileNotFoundError(f"Project {project_id} not found.")
 
@@ -450,7 +447,7 @@ def sync_notes_to_manifest_file(project_id: str, db=None) -> None:
 # Cross-Module Link Resolution
 # ---------------------------------------------------------------------------
 
-def resolve_project_links(project_id: str, db=None) -> List[Dict[str, Any]]:
+def resolve_project_links(project_id: str, db=None, owner=None) -> List[Dict[str, Any]]:
     """Resolve cross-module pointers into human-readable rich snapshots."""
     close_db = False
     if db is None:
@@ -458,10 +455,24 @@ def resolve_project_links(project_id: str, db=None) -> List[Dict[str, Any]]:
         close_db = True
 
     try:
+        require_project(db, project_id, owner)
         links = db.query(ProjectLink).filter(ProjectLink.project_id == project_id).all()
         resolved = []
 
         for link in links:
+            if link.target_type == "document":
+                target = db.query(Document).filter(Document.id == link.target_id, Document.owner == owner).first()
+                if target is None:
+                    continue
+            elif link.target_type == "calendar":
+                target = db.query(CalendarEvent).join(CalendarCal, CalendarEvent.calendar_id == CalendarCal.id).filter(CalendarEvent.uid == link.target_id, CalendarCal.owner == owner).first()
+                if target is None:
+                    continue
+            elif link.target_type == "email":
+                from core.database import EmailAccount
+                account_id = (link.metadata_json or {}).get("account_id")
+                if not db.query(EmailAccount).filter(EmailAccount.id == account_id, EmailAccount.owner == owner).first():
+                    continue
             item = {
                 "id": link.id,
                 "target_type": link.target_type,
@@ -473,7 +484,7 @@ def resolve_project_links(project_id: str, db=None) -> List[Dict[str, Any]]:
             }
 
             if link.target_type == "operations":
-                notes_count = db.query(OperationsNote).filter(OperationsNote.key == link.target_id).count()
+                notes_count = db.query(OperationsNote).filter(OperationsNote.key == link.target_id, OperationsNote.owner == owner).count()
                 item["details"] = {
                     "key": link.target_id,
                     "notes_count": notes_count,
@@ -481,7 +492,7 @@ def resolve_project_links(project_id: str, db=None) -> List[Dict[str, Any]]:
                 }
 
             elif link.target_type == "document":
-                doc = db.query(Document).filter(Document.id == link.target_id).first()
+                doc = db.query(Document).filter(Document.id == link.target_id, Document.owner == owner).first()
                 if doc:
                     item["label"] = doc.title
                     item["details"] = {
@@ -492,7 +503,7 @@ def resolve_project_links(project_id: str, db=None) -> List[Dict[str, Any]]:
                     }
 
             elif link.target_type == "calendar":
-                event = db.query(CalendarEvent).filter(CalendarEvent.uid == link.target_id).first()
+                event = db.query(CalendarEvent).join(CalendarCal, CalendarEvent.calendar_id == CalendarCal.id).filter(CalendarEvent.uid == link.target_id, CalendarCal.owner == owner).first()
                 if event:
                     item["label"] = event.summary
                     item["details"] = {
@@ -525,6 +536,7 @@ def project_to_dict(
     include_links: bool = True,
     include_content: bool = False,
     include_pinned_notes: bool = False,
+    owner: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Serialize a Project SQLAlchemy row into a structured dictionary."""
     content = ""
@@ -562,7 +574,7 @@ def project_to_dict(
         from core.database import Note
         import json
         
-        pinned = db.query(Note).filter(Note.project_id == project.id, Note.pinned == True).all()
+        pinned = db.query(Note).filter(Note.project_id == project.id, Note.pinned == True, Note.owner == owner).all()
         pinned_list = []
         for n in pinned:
             parsed_items = []
@@ -596,12 +608,12 @@ def project_to_dict(
         ]
 
     if include_links:
-        data["links"] = resolve_project_links(project.id, db=db)
+        data["links"] = resolve_project_links(project.id, db=db, owner=owner)
 
     return data
 
 
-def get_project_structure_and_spec(project_id: str, db=None) -> Dict[str, Any]:
+def get_project_structure_and_spec(project_id: str, db=None, owner=None) -> Dict[str, Any]:
     """Retrieve detailed workspace structure, key configs, git metadata, and spec files."""
     close_db = False
     if db is None:
@@ -609,11 +621,7 @@ def get_project_structure_and_spec(project_id: str, db=None) -> Dict[str, Any]:
         close_db = True
 
     try:
-        project = (
-            db.query(Project)
-            .filter((Project.id == project_id) | (Project.slug == project_id))
-            .first()
-        )
+        project = require_project(db, project_id, owner)
         if not project:
             return {}
 
