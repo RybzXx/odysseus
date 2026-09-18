@@ -497,10 +497,11 @@ function sequenceBlock(sequence, agreement, which, askedDays) {
       ${sequence.note ? `<div class="note">${esc(sequence.note)}</div>` : ""}
       ${rejected}
       <div style="margin-top:8px">${checkBlock(check)}</div>
+      ${(sequence.generation?.errors || []).map((error) => `<div class="warn">${esc(error)}</div>`).join("")}
       <div class="row" style="margin-top:8px">
-        <button class="generate" data-source="${esc(which)}" ${given && check?.is_clean ? "" : "disabled"}>
+        <button class="generate" data-source="${esc(which)}" ${given && check?.is_clean && sequence.generation?.ready ? "" : "disabled"}>
           Build from the ${esc(which)} sequence</button>
-        ${given && check?.is_clean ? "" : '<span class="note">Resolve failed and incomplete checks before generating.</span>'}
+        ${given && check?.is_clean && sequence.generation?.ready ? "" : '<span class="note">Resolve failed and incomplete checks before generating.</span>'}
       </div>
     </div>`;
 }
@@ -624,11 +625,12 @@ function notesBody(draft) {
 function runResultHtml(draft) {
   const chosen = (draft.sequences || []).at(-1);
   if (chosen?.check) {
-    if (chosen.check.is_clean) return "";
+    if (chosen.check.is_clean && chosen.generation?.ready) return "";
     const problems = [
       ...(chosen.check.faults || []).map((fault) => fault.statement),
       ...(chosen.check.unknown_codes || []).map((code) => `Unknown day code: ${code}`),
       ...(chosen.check.untested || []),
+      ...(chosen.generation?.errors || []),
     ];
     return `<section id="run-result" class="run-result error" role="alert">
       <h2>Incomplete itinerary</h2>
@@ -721,7 +723,7 @@ function stripHtml(draft) {
           : "no document yet"}</div>
         <div class="bar">
           <button class="generate primary" data-source="${esc(chosen?.source || "rules")}"
-                  ${given && check?.is_clean ? "" : "disabled"}
+                  ${given && check?.is_clean && chosen?.generation?.ready ? "" : "disabled"}
                   title="Creates a real document in Drive after server validation."
                   >Build the Google Doc</button>
         </div>

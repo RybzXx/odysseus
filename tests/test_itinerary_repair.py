@@ -220,3 +220,22 @@ def test_valid_exact_sequence_can_reach_document_service(monkeypatch):
     result = generator.execute_generation(request(), day_codes=["BG"])
     assert result.status == "success"
     create.assert_called_once_with(["BG"])
+
+
+def test_desk_reports_pricing_failure_on_an_otherwise_valid_route(tmp_path, monkeypatch):
+    from services.itinerary import drafts, generator
+    from routes.curated import itinerary_desk_routes as desk
+    from services.itinerary.models import ItineraryPreviewResult
+    monkeypatch.setattr(drafts, "ITINERARY_DRAFT_DIR", str(tmp_path / "drafts"))
+    draft = drafts.open_draft({"tripDays": "1", "regions": [REGION_CENTRAL],
+        "travelDateMode": "exact", "exactDate": "2026-10-06"}, request_id="curated:price")
+    draft = drafts.add_sequence(draft.draft_id, drafts.ProposedSequence(source="rules", day_codes=["BG"]))
+    monkeypatch.setattr(generator, "preview_itinerary", lambda *a, **k: ItineraryPreviewResult(
+        key="test", matched_route_id="", matched_route_name="", confidence_score=1,
+        confidence_level="high", requested_day_count=1, delivered_day_count=1,
+        bound_day_codes=["BG"], coverage_gaps=[], calendar_warnings=[],
+        validation_errors=["Vehicle VAN is not in the catalogue"]))
+    result = desk._draft_to_dict(draft, templates={"BG": row()})["sequences"][-1]
+    assert result["check"]["is_clean"]
+    assert not result["generation"]["ready"]
+    assert "VAN" in result["generation"]["errors"][0]

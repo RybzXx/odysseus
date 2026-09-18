@@ -265,6 +265,18 @@ def _draft_to_dict(draft, templates: Optional[dict] = None) -> dict:
         except Exception:
             logger.exception("the sequence check failed on %s", draft.draft_id)
             entry["check"] = None
+        entry["generation"] = {"ready": False, "errors": []}
+        if entry.get("check") and entry["check"]["is_clean"]:
+            from services.itinerary.generator import preview_itinerary
+            try:
+                preview = preview_itinerary(normalize_from_dict(
+                    draft.draft_id, draft.request_row, source=request_kind(draft.request_id)),
+                    day_codes=sequence.day_codes)
+                entry["generation"] = {"ready": preview.can_generate_document,
+                                       "errors": preview.validation_errors}
+            except Exception:
+                logger.exception("Document readiness check failed on %s", draft.draft_id)
+                entry["generation"]["errors"] = ["Document readiness could not be checked."]
         if sequence.source == SOURCE_RULES:
             entry["stale"] = stale
         sequences.append(entry)

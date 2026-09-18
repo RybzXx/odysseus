@@ -33,7 +33,7 @@ test("a new rules result takes precedence over model history", () => {
   const { context } = desk();
   context.draft = { normalized: {}, sequences: [
     { source: "model", day_codes: ["OLD"], check: { is_clean: false } },
-    { source: "rules", day_codes: ["A", "B", "C"], check: { is_clean: true } },
+    { source: "rules", day_codes: ["A", "B", "C"], check: { is_clean: true }, generation: { ready: true } },
   ] };
   const output = vm.runInContext("stripHtml(draft)", context);
   assert.match(output, /3 day\(s\)/);
@@ -54,4 +54,14 @@ test("rule books read the API wrapper and identify retired guidance", async () =
   assert.match(output, /Counted road/);
   assert.match(output, /retired/);
   assert.match(output, /Enforced by itinerary checks/);
+});
+
+
+test("a pricing failure blocks a route that passes the itinerary checks", () => {
+  const { context } = desk();
+  context.draft = { normalized: {}, sequences: [{ source: "rules", day_codes: ["A"],
+    check: { is_clean: true }, generation: { ready: false, errors: ["Vehicle VAN is not in the catalogue"] } }] };
+  const output = vm.runInContext("stripHtml(draft) + runResultHtml(draft)", context);
+  assert.match(output, /disabled/);
+  assert.match(output, /Vehicle VAN is not in the catalogue/);
 });
