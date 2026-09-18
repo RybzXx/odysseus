@@ -366,7 +366,7 @@ def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
     )
     from services.itinerary.drafts import (
         NOTE_SOURCE_MODEL,
-        SOURCE_MODEL,
+        SOURCE_MODEL, SOURCE_RULES,
         ProposedSequence,
         add_note,
         add_sequence,
@@ -450,12 +450,27 @@ def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
 
     started = time.perf_counter()
     check_candidates(candidate_set, templates, start_date=request.start_date,
-                     request_row=draft.request_row, day_count=request.day_count)
+                     request_row=draft.request_row, day_count=request.day_count,
+                     normalized_request=request)
     runs.record_step(run, runs.STEP_CHECK, runs.OUTCOME_DONE,
                      statement=(f"{len(candidate_set.candidates)} candidate(s) "
                                 f"checked"),
                      ms=_elapsed_ms(started),
                      result=candidate_set_to_dict(candidate_set))
+
+    valid = [candidate for candidate in candidate_set.candidates if candidate.check.is_clean]
+    if not valid:
+        reason = "No candidate satisfies the request and all required checks. " + "; ".join(candidate_set.untested)
+        runs.untested_step(run, runs.STEP_RANK, reason)
+        runs.untested_step(run, runs.STEP_REVIEW, "No validated itinerary to review.")
+        diagnostic = candidate_set.candidates[0]
+        outcome.draft = add_sequence(draft.draft_id, ProposedSequence(
+            source=SOURCE_RULES, day_codes=list(diagnostic.day_codes),
+            note="INCOMPLETE: " + reason + "; " + diagnostic.statement))
+        return outcome
+    # Valid candidates already form the leading group in build_candidates.
+    # Preserve their indexes so the check and ranking records agree.
+    candidate_set.candidates = valid
 
     # 6. layer 2 ─────────────────────────────────────────────────────────────
     started = time.perf_counter()
@@ -509,7 +524,7 @@ def _run_the_steps(outcome: RunOutcome, draft, templates: dict,
     reason = ranking.reason or (
         "the rules ordered this candidate first, and layer 2 did not run")
     draft = add_sequence(draft.draft_id, ProposedSequence(
-        source=SOURCE_MODEL,
+        source=SOURCE_RULES if ranking.chose_by_default else SOURCE_MODEL,
         day_codes=list(chosen.day_codes),
         note=f"candidate {ranking.index} of {len(candidate_set.candidates)}. "
              f"{chosen.statement}. {reason}",

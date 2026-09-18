@@ -121,44 +121,20 @@ TIE_WIDTH = 0.02
 # ── the rules proposer ────────────────────────────────────────────────────────
 
 def _best_binding_route(request: NormalizedRequest, templates: dict) -> tuple:
+    """Return the strongest checked binding across all historical routes.
+
+    Post: a missing binding returns None and a concrete gap explanation.
     """
-    The tied route that binds the most days, and what it bound.
-
-    Pre:  `templates` maps a code to a live template row.
-    Post: (route, score, day_codes, gap_notes). The route is None only when the
-          corpus is empty.
-    Inv:  every returned route sits within TIE_WIDTH of the top score, so this
-          never trades a better match for a fuller itinerary.
-
-    `find_best_route` answers the first route of the several that tie at the
-    top, and phase four measured that tie at five to eleven routes. The first is
-    an arbitrary choice among equals, and the choice decides how many days bind:
-    three routes tied at 0.83 for one live request, and they bound 1, 3 and 3
-    days (measured 2026-09-08).
-
-    Binding every tied route costs one pass over a handful of routes and is what
-    `candidates.build_candidates` already does for the ranker. The rules
-    proposer answered from the first alone.
-    """
-    routes = list(load_routes())
-    if not routes:
-        return None, 0.0, [], []
-
-    scored = sorted(((score_route(request, route), route) for route in routes),
-                    key=lambda pair: -pair[0])
-    top = scored[0][0]
-    tied = [(score, route) for score, route in scored if score >= top - TIE_WIDTH]
-
-    best = None
-    for score, route in tied:
-        day_codes, gap_notes = bind_route_to_templates(
-            route, templates, requested_regions=list(request.requested_regions))
-        # More days first, then the higher score. A route that binds nothing is
-        # not a better answer for being a closer match.
-        rank = (len(day_codes), score)
-        if best is None or rank > best[0]:
-            best = (rank, route, score, list(day_codes), list(gap_notes))
-    return best[1], best[2], best[3], best[4]
+    from services.itinerary.candidates import build_candidates
+    candidates = build_candidates(request, templates, ceiling=1)
+    if not candidates.candidates:
+        return None, 0.0, [], candidates.untested
+    candidate = candidates.candidates[0]
+    route = next(r for r in load_routes() if r.id == candidate.route_id
+                 and r.source_file == candidate.route_name)
+    issues = list(candidate.gap_notes) + list(candidate.check.untested)
+    issues.extend(f.statement for f in candidate.check.faults)
+    return route, candidate.match_score, candidate.day_codes, issues
 
 
 def propose_by_rules(request: NormalizedRequest, templates: dict) -> ProposedSequence:
@@ -175,30 +151,26 @@ def propose_by_rules(request: NormalizedRequest, templates: dict) -> ProposedSeq
     route, score, day_codes, gap_notes = _best_binding_route(request, templates)
     if route is None:
         return ProposedSequence(source=SOURCE_RULES, day_codes=[],
-                                note="the route corpus is empty")
+                                note="; ".join(gap_notes) or "No historical route could be bound.")
 
-    coverage = region_coverage(request, route)
+    from services.itinerary.regions import sequence_regions, DEFAULT_ROUTE_LABEL
+    requested = set(request.requested_regions)
+    coverage = len(requested & sequence_regions(day_codes, templates)) / len(requested) if requested else 1.0
 
     parts = [f"matched {route.source_file} at {score:.2f}"]
     if score < MATCH_MIN_SCORE:
         parts.append(f"below the {MATCH_MIN_SCORE:.2f} floor, so the match is weak")
 
-    # A coverage of 1.00 against a region the normalizer invented is a
-    # confidence nobody earned. Three of the four live Queue records state no
-    # region, `_normalize_regions` answers Central Iraq & Middle Euphrates for
-    # them, and the note then read "region coverage 1.00" (ws-03 phase seven,
-    # D65). Only the normalizer knows, and `defaulted_fields` is where it says.
+    # The operator default must never read as a customer requirement.
     if request.was_defaulted("requested_regions"):
-        parts.append(f"no region was stated, so "
-                     f"{', '.join(request.requested_regions)} was assumed and "
-                     f"the coverage below measures that assumption")
+        parts.append(DEFAULT_ROUTE_LABEL)
     if request.was_defaulted("day_count"):
         parts.append(f"no trip length was stated, so {request.day_count} days "
                      f"was assumed")
     parts.append(f"region coverage {coverage:.2f}" if coverage >= 0
                  else "no region evidence either way")
     if gap_notes:
-        parts.append(f"{len(gap_notes)} day(s) not covered")
+        parts.append("Not ready: " + "; ".join(gap_notes))
     return ProposedSequence(source=SOURCE_RULES, day_codes=list(day_codes),
                             note=". ".join(parts) + ".")
 

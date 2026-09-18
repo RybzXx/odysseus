@@ -162,72 +162,43 @@ def _format_quote(q: Any, hotel_tier: str = "3star") -> dict:
     }
 
 
-def preview_itinerary(req: NormalizedRequest) -> ItineraryPreviewResult:
-    global _PIPELINE
-    if not _PIPELINE:
-        _PIPELINE = _ensure_pipeline_imported()
+def preview_itinerary(req: NormalizedRequest, day_codes: Optional[list[str]] = None) -> ItineraryPreviewResult:
+    """Check and price the exact sequence. Never render or transmit a document."""
+    from services.itinerary.candidates import build_candidates
+    from services.itinerary.sequence_check import check_sequence
     templates = load_templates()
-    route, match_score = find_best_route(req)
-
-    if not route:
-        return ItineraryPreviewResult(
-            key=req.key,
-            matched_route_id="",
-            matched_route_name="No matching route found",
-            confidence_score=0.0,
-            confidence_level="low",
-            requested_day_count=req.day_count,
-            delivered_day_count=0,
-            bound_day_codes=[],
-            coverage_gaps=["Route corpus is empty or no match could be identified."],
-            calendar_warnings=[],
-            estimated_quote=None,
-            can_generate_document=False,
-            validation_errors=["No matching route."],
-        )
-
-    bound_codes, gap_notes = bind_route_to_templates(route, templates, req.requested_regions)
-    reg_cov = region_coverage(req, route)
-
-    confidence_level = "high" if (match_score >= 0.65 and reg_cov > 0.6) else ("moderate" if match_score >= 0.4 else "low")
-
-    estimated_quote = None
-    cal_warnings: list[str] = []
-    val_errors: list[str] = []
-    can_generate = False
-
-    if bound_codes and _PIPELINE:
+    candidates = build_candidates(req, templates, ceiling=1) if day_codes is None else None
+    candidate = candidates.candidates[0] if candidates and candidates.candidates else None
+    codes = list(day_codes if day_codes is not None else candidate.day_codes if candidate else [])
+    checked = check_sequence(codes, templates, start_date=req.start_date, normalized_request=req)
+    errors = [f.statement for f in checked.faults]
+    errors.extend(f"Unknown code: {code}" for code in checked.unknown_codes)
+    errors.extend(checked.untested)
+    warnings, quote = [], None
+    pipeline_ok = False
+    if codes and checked.is_clean and _PIPELINE:
         try:
-            tour_req = build_tour_request(req, bound_codes)
-            check_res = _PIPELINE["check_request"](tour_req)
-            val_errors = check_res.get("errors", [])
-            cal_warnings = check_res.get("warnings", [])
-            can_generate = check_res.get("ok", False)
-
+            tour_req = build_tour_request(req, codes)
+            result = _PIPELINE["check_request"](tour_req)
+            errors.extend(result.get("errors", []))
+            warnings.extend(result.get("warnings", []))
+            pipeline_ok = bool(result.get("ok"))
             pricing = _PIPELINE["load_pricing"]()
-            built_days = _PIPELINE["build_itinerary"](tour_req, templates)
-            q = _PIPELINE["calculate_quote"](tour_req, built_days, pricing)
-            if q:
-                estimated_quote = _format_quote(q, req.hotel_tier)
-        except Exception as e:
-            logger.warning(f"Error during preview calculation: {e}")
-            val_errors.append(f"Preview calculation notice: {e}")
-
+            days = _PIPELINE["build_itinerary"](tour_req, templates)
+            quote = _format_quote(_PIPELINE["calculate_quote"](tour_req, days, pricing), req.hotel_tier)
+        except Exception as exc:
+            errors.append(f"Pricing validation failed: {exc}")
+            pipeline_ok = False
     return ItineraryPreviewResult(
-        key=req.key,
-        matched_route_id=route.id,
-        matched_route_name=route.source_file.replace(".docx", "").replace("_", " ").title(),
-        confidence_score=match_score,
-        confidence_level=confidence_level,
-        requested_day_count=req.day_count,
-        delivered_day_count=len(bound_codes),
-        bound_day_codes=bound_codes,
-        coverage_gaps=gap_notes,
-        calendar_warnings=cal_warnings,
-        estimated_quote=estimated_quote,
-        can_generate_document=can_generate or (len(bound_codes) > 0 and not val_errors),
-        validation_errors=val_errors,
-    )
+        key=req.key, matched_route_id=candidate.route_id if candidate else "",
+        matched_route_name=candidate.route_name if candidate else "Selected sequence",
+        confidence_score=candidate.match_score if candidate else 0.0,
+        confidence_level="high" if checked.is_clean else "low",
+        requested_day_count=req.day_count, delivered_day_count=len(codes),
+        bound_day_codes=codes, coverage_gaps=candidate.gap_notes if candidate else [],
+        calendar_warnings=warnings, estimated_quote=quote,
+        can_generate_document=checked.is_clean and pipeline_ok and not errors,
+        validation_errors=errors)
 
 
 def execute_generation(req: NormalizedRequest,
@@ -247,7 +218,10 @@ def execute_generation(req: NormalizedRequest,
     global _PIPELINE
     if not _PIPELINE:
         _PIPELINE = _ensure_pipeline_imported()
-    preview = preview_itinerary(req)
+    preview = preview_itinerary(req, day_codes=day_codes)
+    if not preview.can_generate_document:
+        return ItineraryGenerationResult(key=req.key, status="error", preview=preview,
+            error_message="; ".join(preview.validation_errors) or "The itinerary is not ready for document generation.")
 
     if not (day_codes or preview.bound_day_codes):
         return ItineraryGenerationResult(

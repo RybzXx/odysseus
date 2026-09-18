@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +26,29 @@ SCORER_WEIGHTS = {
 }
 
 _ROUTES_CACHE: Optional[list[RouteRecord]] = None
+
+
+def activity_text(text: str) -> str:
+    """Return day activities without the offer's pricing and general information."""
+    return re.split(
+        r"(?im)(?:\bend of (?:the )?tour\b|\bfor the designed itinerary\b|"
+        r"^\s*(?:includes?|excludes?|inclusions?|exclusions?|general information|"
+        r"terms (?:and|&) conditions|price includes)\s*[:\n])", text or "", maxsplit=1)[0]
+
+
+def activity_regions(days) -> set[str]:
+    """Read actual visits. A city substring in another word is not a visit."""
+    from services.itinerary.move_map import place_key
+    regions = set()
+    for day in days:
+        city = place_key(day.overnight_city).lower()
+        if city in CITY_REGION_MAP:
+            regions.add(CITY_REGION_MAP[city])
+        text = activity_text(day.text).lower()
+        for city, region in CITY_REGION_MAP.items():
+            if re.search(r"(?<!\w)" + re.escape(city) + r"(?!\w)", text):
+                regions.add(region)
+    return regions
 
 
 def get_routes_path() -> str:
@@ -58,16 +82,7 @@ def load_routes(force_reload: bool = False) -> list[RouteRecord]:
             for i, d in enumerate(item.get("days", []))
         ]
         city_seq = item.get("city_sequence", [])
-        region_set = set()
-        for city in city_seq:
-            c_norm = str(city).strip().lower()
-            if c_norm in CITY_REGION_MAP:
-                region_set.add(CITY_REGION_MAP[c_norm])
-
-        all_text = " ".join(d.text.lower() for d in days)
-        for c_norm, reg in CITY_REGION_MAP.items():
-            if c_norm in all_text:
-                region_set.add(reg)
+        region_set = activity_regions(days)
 
         record = RouteRecord(
             id=item.get("id", item.get("source_file", "offer")),

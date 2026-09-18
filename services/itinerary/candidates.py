@@ -1,23 +1,7 @@
-"""
-services/itinerary/candidates.py
+"""Bind and check every historical route before ranking distinct candidates.
 
-Several itineraries for one request, all built by the rules.
-
-`find_best_route` returns the first route of the several that tie at the top
-score. Phase four measured the tie at five to eleven routes and ruled a repair
-out of scope, because the tie holds the larger part of the 50 percent night
-accuracy.
-
-This module does not repair it. It reads the tie the function already has, and
-it treats every tied route as a candidate (ws-03 D40).
-
-That gives a model something to choose between without letting a model invent
-anything. Every day code here comes from `bind_route_to_templates`, which is
-the phase four binder with its role filter and its unused-site score. A code no
-active template holds cannot appear (invariant 3.6).
-
-Each candidate carries its own check. A ranker that received the sequences and
-not the faults would rank on wording.
+Validation and request coverage outrank historical text similarity.
+The display ceiling never limits the route search.
 """
 from __future__ import annotations
 
@@ -27,7 +11,6 @@ from typing import Optional
 
 from services.itinerary.matcher import (
     load_routes,
-    region_coverage,
     score_route,
 )
 from services.itinerary.models import NormalizedRequest
@@ -37,12 +20,7 @@ from services.itinerary.models import NormalizedRequest
 # with a rounding difference.
 TIE_WIDTH = 0.02
 
-# How many candidates one request may produce.
-#
-# Five. Phase four measured the exact tie at five to eleven routes. Measured
-# again on 2026-09-07 with TIE_WIDTH applied, over the four live queue drafts:
-# 7, 7, 14 and 20 routes tie. A ceiling of five keeps the prompt readable, and
-# the order below decides which five. Spec item 19.2 records the number as open.
+# Maximum distinct candidates to display after all routes have been checked.
 CANDIDATE_CEILING = 5
 
 
@@ -95,7 +73,7 @@ class Candidate:
 class CandidateSet:
     """Every candidate for one request, and why there are that many."""
     candidates: list = field(default_factory=list)
-    tied_routes: int = 0            # how many tied before the ceiling applied
+    tied_routes: int = 0            # historical routes evaluated (legacy API field name)
     top_score: float = 0.0
     untested: list = field(default_factory=list)
 
@@ -143,7 +121,7 @@ class CandidateSet:
         weak = (f", below the {MATCH_MIN_SCORE:.2f} floor, so the match is weak"
                 if self.is_weak_match else "")
         return (f"{len(self.candidates)} candidate(s) of {self.tied_routes} "
-                f"tied at {self.top_score:.2f}{weak}")
+                f"historical routes evaluated; best historical score {self.top_score:.2f}{weak}")
 
 
 def tied_routes(request: NormalizedRequest, routes: Optional[list] = None,
@@ -184,7 +162,7 @@ def build_candidates(request: NormalizedRequest, templates: dict,
                      routes: Optional[list] = None,
                      ceiling: int = CANDIDATE_CEILING) -> CandidateSet:
     """
-    One candidate per tied route, each bound by the phase four binder.
+    Evaluate every historical route, then display the strongest distinct bindings.
 
     Pre:  `templates` holds only active codes, as `active_day_templates()`
           returns them.
@@ -196,64 +174,73 @@ def build_candidates(request: NormalizedRequest, templates: dict,
     stated reason, not an exception. The desk stays usable, and a proposal is
     an offer rather than a promise.
     """
-    found = CandidateSet()
-    routes_tied, top = tied_routes(request, routes)
-    found.tied_routes = len(routes_tied)
-    found.top_score = top
-    if not routes_tied:
-        found.untested.append("the route corpus is empty, so nothing matched")
-        return found
-
     from services.itinerary.binder import bind_route_to_templates
+    from services.itinerary.sequence_check import check_sequence
+    from services.itinerary.regions import sequence_regions
 
-    for route in routes_tied:
-        if len(found.candidates) >= max(ceiling, 1):
-            break
-        day_codes, gap_notes = bind_route_to_templates(
-            route, templates, requested_regions=list(request.requested_regions))
-        if not day_codes:
-            found.untested.append(
-                f"{route.source_file} bound to no day, so it is not a candidate")
+    found = CandidateSet()
+    corpus = list(load_routes() if routes is None else routes)
+    if not corpus:
+        found.untested.append("The route corpus is empty.")
+        return found
+    found.tied_routes = len(corpus)
+    found.top_score = max(score_route(request, route) for route in corpus)
+    for route in sorted(corpus, key=lambda r: (r.source_file, r.id)):
+        codes, gaps = bind_route_to_templates(route, templates, request.requested_regions)
+        if not codes:
+            if not found.untested:
+                found.untested.append(f"{route.source_file} bound to no day. " + "; ".join(gaps))
             continue
+        coverage = sequence_regions(codes, templates)
+        requested = set(request.requested_regions)
+        check = check_sequence(codes, templates, start_date=request.start_date,
+                               normalized_request=request)
         found.candidates.append(Candidate(
-            index=len(found.candidates) + 1,
-            route_id=route.id,
-            route_name=route.source_file,
-            route_days=route.day_count,
-            match_score=score_route(request, route),
-            region_coverage=region_coverage(request, route),
-            asked_days=request.day_count,
-            day_codes=list(day_codes),
-            gap_notes=list(gap_notes),
-        ))
-
-    if found.tied_routes > len(found.candidates) + len(found.untested):
+            index=0, route_id=route.id, route_name=route.source_file,
+            route_days=route.day_count, match_score=score_route(request, route),
+            region_coverage=len(requested & coverage) / len(requested) if requested else 1.0,
+            asked_days=request.day_count, day_codes=codes, gap_notes=gaps, check=check))
+    # Validation outranks historical similarity. The ceiling limits display only.
+    found.candidates.sort(key=lambda c: (
+        not c.check.is_clean, not c.check.found_no_fault,
+        abs(c.asked_days - len(c.day_codes)), c.fault_count,
+        len(c.check.untested), -c.region_coverage, c.flag_count,
+        -c.match_score, c.route_name, c.route_id, tuple(c.day_codes)))
+    unique = []
+    seen = set()
+    for candidate in found.candidates:
+        signature = tuple(candidate.day_codes)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        candidate.index = len(unique) + 1
+        unique.append(candidate)
+        if len(unique) >= max(ceiling, 1):
+            break
+    found.candidates = unique
+    if not any(c.check.is_clean for c in unique):
         found.untested.append(
-            f"{found.tied_routes} routes tied and the ceiling is {ceiling}, so "
-            f"{found.tied_routes - len(found.candidates)} were not built")
+            f"No fully validated itinerary after checking all {len(corpus)} historical routes. "
+            "Review the candidate gaps, missing requirements, and unresolved checks.")
     return found
 
 
 def check_candidates(found: CandidateSet, templates: dict,
                      start_date: Optional[date] = None,
                      request_row: Optional[dict] = None,
-                     day_count: int = 0) -> CandidateSet:
-    """
-    Run the phase four checks over every candidate.
+                     day_count: int = 0, normalized_request=None) -> CandidateSet:
+    """Refresh candidate checks against the exact normalized request.
 
-    Pre:  `request_row` is the raw submitted record. The named-pair rules read
-          the regions a customer wrote, and normalisation folds the west into
-          the north on purpose (ws-03 D37).
-    Post: every candidate carries a SequenceCheck. Nothing is removed, whatever
-          it found. A candidate with faults is still a candidate, because layer
-          3 never refuses and the human is the gate (ws-03 D41, D15).
+    Post: incomplete candidates remain available for diagnosis. The caller must
+    select only a candidate whose check is clean.
     """
     from services.itinerary.sequence_check import check_sequence
 
     for candidate in found.candidates:
         candidate.check = check_sequence(
             candidate.day_codes, templates, start_date=start_date,
-            request_row=request_row, day_count=day_count)
+            request_row=request_row, day_count=day_count or candidate.asked_days,
+            normalized_request=normalized_request)
     return found
 
 

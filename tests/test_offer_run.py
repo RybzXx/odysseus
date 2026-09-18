@@ -164,7 +164,7 @@ def test_layer_three_sees_one_itinerary_and_no_other_candidate():
 
 # ── the run with every layer off ─────────────────────────────────────────────
 
-def test_a_run_with_every_layer_off_still_produces_a_proposal():
+def test_a_run_never_selects_an_incomplete_proposal():
     """
     The desk's state today: the master switch is off and no layer is
     configured. A run that refused would refuse every request (ws-03 D43).
@@ -178,8 +178,8 @@ def test_a_run_with_every_layer_off_still_produces_a_proposal():
 
     assert outcome.run.is_sealed is True
     assert outcome.run.is_complete is False
-    assert outcome.chosen_codes != []
-    assert outcome.ranking.chose_by_default is True
+    assert outcome.chosen_codes == []
+    assert outcome.ranking is None
 
 
 def test_the_record_says_which_steps_did_not_run():
@@ -218,7 +218,7 @@ def test_the_run_leaves_a_sequence_and_a_run_id_on_the_draft():
     stored = drafts_module.load(draft.draft_id)
 
     assert outcome.run.run_id in stored.run_ids
-    assert any(s.source == drafts_module.SOURCE_MODEL for s in stored.sequences)
+    assert any(s.source == drafts_module.SOURCE_RULES for s in stored.sequences)
 
 
 def test_the_run_builds_no_document():

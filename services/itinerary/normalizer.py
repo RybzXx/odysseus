@@ -215,8 +215,9 @@ def unmapped_regions(regions: list[str]) -> list[str]:
 
 
 def _normalize_regions(raw_regions: Any) -> list[str]:
+    from services.itinerary.regions import DEFAULT_ROUTE_REGIONS
     if not raw_regions:
-        return [REGION_WHEN_UNSTATED]
+        return list(DEFAULT_ROUTE_REGIONS)
     if isinstance(raw_regions, str):
         parts = [p.strip() for p in raw_regions.replace(";", ",").split(",") if p.strip()]
     elif isinstance(raw_regions, (list, set, tuple)):
@@ -231,7 +232,7 @@ def _normalize_regions(raw_regions: Any) -> list[str]:
         mapped = normalize_region_label(p)
         if mapped not in res:
             res.append(mapped)
-    return res or [REGION_WHEN_UNSTATED]
+    return res or list(DEFAULT_ROUTE_REGIONS)
 
 
 def _parse_exact_date(val: Any) -> Optional[date]:

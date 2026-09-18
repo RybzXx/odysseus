@@ -41,7 +41,7 @@ from services.itinerary.regions import (  # noqa: E402
     REGION_KURDISTAN,
     REGION_SOUTH,
     REGION_WEST_NINEVEH,
-    REGION_WHEN_UNSTATED,
+    REGION_WHEN_UNSTATED, DEFAULT_ROUTE_REGIONS,
 )
 from services.itinerary.propose_sequence import (  # noqa: E402
     MODEL_PROPOSALS_SETTING,
@@ -339,7 +339,7 @@ def test_a_placeholder_region_is_not_a_region():
     """"Not Known" filtered every day out of a ten-day trip."""
     from services.itinerary.normalizer import _normalize_regions
 
-    assert _normalize_regions("Not Known") == [REGION_WHEN_UNSTATED]
+    assert _normalize_regions("Not Known") == list(DEFAULT_ROUTE_REGIONS)
     assert _normalize_regions("Iraqi Kurdistan, Not Known") == [REGION_KURDISTAN]
 
 
@@ -350,12 +350,12 @@ def test_two_labels_that_mean_one_region_are_named_once():
         "Central Iraq & Middle Euphrates, Center & Middle Euphrates") == [REGION_CENTRAL]
 
 
-def test_a_queue_request_with_no_stated_region_still_names_one():
+def test_a_queue_request_with_no_stated_region_uses_the_operator_default():
     from services.itinerary.normalizer import normalize_from_dict
 
     normalized = normalize_from_dict(
         "queue:1", dict(QUEUE_RECORD, regions="Not Known"), source="queue")
-    assert normalized.requested_regions == [REGION_WHEN_UNSTATED]
+    assert normalized.requested_regions == list(DEFAULT_ROUTE_REGIONS)
     assert normalized.parse_warnings == []
 
 

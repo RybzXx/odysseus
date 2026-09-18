@@ -145,9 +145,9 @@ class TestItineraryModule(unittest.TestCase):
 
     def test_binder_b19_transit_connector_retention(self):
         templates = {
-            "BGW01": MockDayTemplate("BGW01", "Baghdad", "Baghdad", REGION_CENTRAL, "Baghdad historical tour"),
+            "BGW01": MockDayTemplate("BGW01", "Erbil / Baghdad", "Baghdad", REGION_CENTRAL, "Baghdad historical tour"),
             "EBL01": MockDayTemplate("EBL01", "Erbil", "Erbil", REGION_KURDISTAN, "Erbil Citadel"),
-            "BSR01": MockDayTemplate("BSR01", "Basra", "Basra", REGION_SOUTH, "Basra corniche"),
+            "BSR01": MockDayTemplate("BSR01", "Baghdad / Basra", "Basra", REGION_SOUTH, "Basra corniche"),
         }
         route = RouteRecord(
             id="test_route",
@@ -170,7 +170,7 @@ class TestItineraryModule(unittest.TestCase):
                       "the Central transit connector BGW01 must be retained")
         self.assertIn("EBL01", bound_codes)
         self.assertIn("BSR01", bound_codes)
-        self.assertTrue(any("transit connector" in g.lower() for g in gap_notes))
+        self.assertEqual(gap_notes, [])
 
     def test_reply_builder(self):
         req = NormalizedRequest(

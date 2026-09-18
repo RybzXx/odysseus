@@ -498,9 +498,9 @@ function sequenceBlock(sequence, agreement, which, askedDays) {
       ${rejected}
       <div style="margin-top:8px">${checkBlock(check)}</div>
       <div class="row" style="margin-top:8px">
-        <button class="generate" data-source="${esc(which)}" ${given ? "" : "disabled"}>
+        <button class="generate" data-source="${esc(which)}" ${given && check?.is_clean ? "" : "disabled"}>
           Build from the ${esc(which)} sequence</button>
-        ${given ? "" : '<span class="note">no codes to generate from</span>'}
+        ${given && check?.is_clean ? "" : '<span class="note">Resolve failed and incomplete checks before generating.</span>'}
       </div>
     </div>`;
 }
@@ -622,6 +622,20 @@ function notesBody(draft) {
  *       A usable proposal with only optional untested steps shows no panel.
  */
 function runResultHtml(draft) {
+  const chosen = (draft.sequences || []).at(-1);
+  if (chosen?.check) {
+    if (chosen.check.is_clean) return "";
+    const problems = [
+      ...(chosen.check.faults || []).map((fault) => fault.statement),
+      ...(chosen.check.unknown_codes || []).map((code) => `Unknown day code: ${code}`),
+      ...(chosen.check.untested || []),
+    ];
+    return `<section id="run-result" class="run-result error" role="alert">
+      <h2>Incomplete itinerary</h2>
+      <p>Resolve these requirements before building a document.</p>
+      <ul>${problems.map((problem) => `<li>${esc(problem)}</li>`).join("")}</ul>
+    </section>`;
+  }
   const run = draft.run || (draft.runs || [])[0];
   if (!run) return "";
   const failures = run.failures || [];
@@ -665,7 +679,7 @@ function stripHtml(draft) {
   const normalized = draft.normalized || {};
   const newest = {};
   (draft.sequences || []).forEach((s) => { newest[s.source] = s; });
-  const chosen = newest.model || newest.rules;
+  const chosen = (draft.sequences || []).at(-1);
   const check = chosen && chosen.check;
   const runs = draft.runs || [];
   const run = runs[0];
@@ -679,7 +693,7 @@ function stripHtml(draft) {
         <h3>What they asked for</h3>
         <div class="big">${esc(normalized.day_count ?? "?")} day(s)</div>
         <div class="sub">${esc(normalized.pax ?? "?")} traveller(s)</div>
-        <div class="sub">${esc((normalized.requested_regions || []).join(", ") || "no region")}</div>
+        <div class="sub">${esc((normalized.requested_regions || []).join(", ") || "no region")}</div><div class="note">${esc(normalized.region_basis || "")}</div>
         <div class="sub">${draft.conversation_link
           ? `<a href="${esc(draft.conversation_link)}" target="_blank" rel="noopener"
                style="color:var(--accent)">conversation</a>`
@@ -693,8 +707,8 @@ function stripHtml(draft) {
         <div class="sub">${runs.length} run(s) on this draft</div>
         <div class="bar">
           <button class="run-offer" data-draft="${esc(draft.draft_id)}"
-                  title="Reads the conversation, reasons about it and chooses an itinerary. Builds no document.">
-            <span class="by model">model</span> Read it and propose</button>
+                  title="Recalculate with current rules and keep prior sequences.">
+            <span class="by rules">rules</span> Recalculate itinerary</button>
         </div>
       </div>
       <div class="output">
@@ -706,9 +720,9 @@ function stripHtml(draft) {
                style="color:var(--status-ok)">the document</a>`
           : "no document yet"}</div>
         <div class="bar">
-          <button class="generate primary" data-source="${newest.model ? "model" : "rules"}"
-                  ${given ? "" : "disabled"}
-                  title="Creates a real document in Drive. This is the first press that leaves this machine."
+          <button class="generate primary" data-source="${esc(chosen?.source || "rules")}"
+                  ${given && check?.is_clean ? "" : "disabled"}
+                  title="Creates a real document in Drive after server validation."
                   >Build the Google Doc</button>
         </div>
       </div>
@@ -720,7 +734,7 @@ function renderDetail(draft) {
   const normalized = draft.normalized || {};
   const newest = {};
   (draft.sequences || []).forEach((s) => { newest[s.source] = s; });
-  const chosen = newest.model || newest.rules;
+  const chosen = (draft.sequences || []).at(-1);
   const check = chosen && chosen.check;
   const runs = draft.runs || [];
   const brief = draft.brief || null;
@@ -742,6 +756,7 @@ function renderDetail(draft) {
     </div>
     ${legend()}
     ${stripHtml(draft)}
+    ${draft.stale ? `<div class="warn">Stored rules result is stale. ${esc(draft.stale.statement)} Recalculate to append a current result.</div>` : ""}
     ${section("sec-layers", "What ran",
       runs.length ? `${runs.length} run(s)` : "no run yet",
       runsBody(draft), runFailed || runUntested,
@@ -788,7 +803,7 @@ function renderDetail(draft) {
   $("save-comment")?.addEventListener("click", saveComment);
   document.querySelectorAll(".generate").forEach((b) =>
     b.addEventListener("click", () => generate(b.dataset.source)));
-  document.querySelector(".run-offer")?.addEventListener("click", runTheLayers);
+  document.querySelector(".run-offer")?.addEventListener("click", recalculateRules);
   if (window.DeskWorklist) {
     DeskWorklist.wireMove($("wl-move"), currentRow, reloadStaged);
     DeskWorklist.wireSend($("wl-send-box"), reloadStaged);
@@ -812,17 +827,19 @@ async function loadRuleBooks() {
   if (!holder) return;
   try {
     const data = await api("/api/itinerary/rules");
-    const counted = (data.counted || []).map((r) =>
+    const countedRules = data.counted?.rules || [];
+    const judgedRules = data.judged?.rules || [];
+    const counted = countedRules.map((r) =>
       `<div class="turn"><strong>${esc(FAMILY_LABELS[r.family] || r.family)}</strong>
          <span class="note">${esc(r.subject || "")}</span>
          <div>${esc(r.statement)}</div></div>`).join("");
-    const judged = (data.judged || []).map((r) =>
+    const judged = judgedRules.map((r) =>
       `<div class="turn"><strong>${esc(r.rule_id)}</strong>
          <div>${esc(r.statement)}</div>
-         <div class="note">${esc(r.corpus_verdict || "")}</div></div>`).join("");
+         <div class="note">${esc(r.status || "active")} · ${esc(r.enforced_by ? `Enforced by ${r.enforced_by}` : "Recorded guidance")} · ${esc(r.corpus_verdict || "")}</div></div>`).join("");
     holder.innerHTML =
-      `<div class="note">Counted — ${(data.counted || []).length} rule(s)</div>${counted}
-       <div class="note" style="margin-top:10px">Judged — ${(data.judged || []).length}</div>${judged}`;
+      `<div class="note">Counted — ${countedRules.length} rule(s)</div>${counted}
+       <div class="note" style="margin-top:10px">Judged — ${judgedRules.length}</div>${judged}`;
   } catch (e) {
     holder.innerHTML = `<div class="warn">${esc(e.message)}</div>`;
   }
@@ -840,6 +857,21 @@ async function loadRuleBooks() {
  * Blame: a layer the owner did not configure records itself untested and the
  * run finishes, so this reports a proposal rather than a failure.
  */
+async function recalculateRules() {
+  if (!current) return;
+  const button = document.querySelector(".run-offer");
+  if (button) button.disabled = true;
+  try {
+    const draft = await api(`/api/itinerary/drafts/${encodeURIComponent(current.draft_id)}/propose-again`, { method: "POST" });
+    renderDetail(draft);
+    await loadDrafts();
+  } catch (error) {
+    if (button) { button.disabled = false; button.title = error.message; }
+    const detail = $("detail");
+    detail?.insertAdjacentHTML("afterbegin", `<div class="warn">${esc(error.message)}</div>`);
+  }
+}
+
 async function runTheLayers() {
   if (!current) return;
   $("run-result")?.remove();
@@ -885,9 +917,8 @@ async function saveComment() {
 /**
  * Build the document from a chosen sequence.
  *
- * Pre:  the sequence holds at least one day code, which the button enforces.
- * Post: a real Google Doc, and the draft names it. This is the only side
- *       effect this page has.
+ * Pre: the selected sequence passes the current checks.
+ * Post: the server revalidates it before creating a document.
  */
 async function generate(source) {
   if (!current) return;

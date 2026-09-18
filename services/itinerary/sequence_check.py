@@ -50,7 +50,8 @@ FAULT_ROLE_ORDER = "role_order"            # an arrival or a departure out of pl
 FAULT_ALTERNATIVE_PAIR = "alternative_pair"  # both halves of one day sold two ways
 FAULT_KINDS = (FAULT_SITE_REPEAT, FAULT_DAY_REPEAT, FAULT_FLAG_CAP,
                FAULT_MOVE_NOT_JOINED, FAULT_LEG_TOO_LONG, FAULT_SITE_CLOSED,
-               FAULT_DAY_START, FAULT_ROLE_ORDER, FAULT_ALTERNATIVE_PAIR)
+               FAULT_DAY_START, FAULT_ROLE_ORDER, FAULT_ALTERNATIVE_PAIR,
+               "day_count", "region_coverage", "northbound_excursion", "default_route", "southern_return")
 
 # One site shared by two days is a flag, not a fault. The owner reads it and
 # decides, and the candidate that carries it scores lower than one that does not
@@ -132,7 +133,7 @@ class SequenceCheck:
     def found_no_fault(self) -> bool:
         """Post: whether the checks that ran found nothing. Says nothing about
         the checks that did not run."""
-        return not self.faults
+        return not self.faults and not self.unknown_codes
 
     @property
     def is_clean(self) -> bool:
@@ -211,7 +212,7 @@ def _apply_named_pair_rules(check: SequenceCheck, request_row: Optional[dict],
 def check_sequence(day_codes, templates: dict,
                    start_date: Optional[date] = None,
                    request_row: Optional[dict] = None,
-                   day_count: int = 0) -> SequenceCheck:
+                   day_count: int = 0, normalized_request=None) -> SequenceCheck:
     """
     Every fault this module can find in one proposed sequence.
 
@@ -220,17 +221,23 @@ def check_sequence(day_codes, templates: dict,
     Post: a SequenceCheck naming each fault against the day it sits on, plus
           every check that could not run and why. Nothing is changed.
 
-    A night is a day that carries an overnight city. A day trip and a departure
-    day carry none, so they take no position in the night chain, which is the
-    same rule `sequence_grade` uses. This is also why the Mosul to Sulaymaniyah
-    fault does not appear here: `SUEBDEP` carries no night, so the pair never
-    reaches the chain. That fault needs the start city this module does not have.
+    The night chain checks distances and historical connections. The day-start
+    check also includes templates without an overnight city.
 
     Blame: a code the catalogue does not hold is named in `unknown_codes` and
     contributes nothing. A missing template is a catalogue problem, and scoring
     it as a fault would blame the proposer for it.
     """
     check = SequenceCheck(day_codes=list(day_codes or []))
+    if normalized_request is None and request_row:
+        from services.itinerary.normalizer import normalize_from_dict, SOURCE_UNKNOWN
+        normalized_request = normalize_from_dict("check", request_row, source=SOURCE_UNKNOWN)
+    if normalized_request is not None:
+        day_count = normalized_request.day_count
+    if day_count and len(check.day_codes) != day_count:
+        check.faults.append(SequenceFault(
+            kind="day_count", day=0,
+            statement=f"Requested {day_count} days, received {len(check.day_codes)}."))
     if not check.day_codes:
         # Nothing was checked, because there is nothing to check. Reporting a
         # clean sequence here says the four checks ran and found nothing, and a
@@ -239,10 +246,12 @@ def check_sequence(day_codes, templates: dict,
             "nothing was checked: the sequence holds no day codes")
         return check
 
-    nights = []          # (day_number, city)
+    from services.itinerary.propose_sequence import field_of
+
+    nights = []          # (day_number, code)
     for position, code in enumerate(check.day_codes, start=1):
         template = templates.get(code)
-        if template is None:
+        if template is None or not field_of(template, "active", True):
             check.unknown_codes.append(code)
             continue
         city = _overnight_city(template)
@@ -258,7 +267,60 @@ def check_sequence(day_codes, templates: dict,
     _check_closures(check, templates, start_date)
     # Last, because a judged rule speaks about a fault the checker raised.
     _apply_named_pair_rules(check, request_row, day_count)
+    if normalized_request is not None:
+        _check_request_requirements(check, templates, normalized_request)
     return check
+
+
+def _check_request_requirements(check, templates, request):
+    """Reject unsatisfied request requirements. Missing evidence stays unresolved."""
+    from services.itinerary.regions import (
+        sequence_regions, REGION_CENTRAL, REGION_KURDISTAN, REGION_WEST_NINEVEH, REGION_SOUTH,
+        region_of_template)
+    from services.itinerary.day_shape import shape_of, ROLE_DEPARTURE, OWNER_SETTLED_SHAPES
+    from services.itinerary.move_map import place_key
+    missing = set(request.requested_regions) - sequence_regions(check.day_codes, templates)
+    if missing:
+        check.faults.append(SequenceFault(
+            kind="region_coverage", day=0,
+            statement="Missing requested regions: " + ", ".join(sorted(missing))))
+    shapes = [(i, shape_of(c, templates[c]))
+              for i, c in enumerate(check.day_codes) if c in templates]
+    northbound = REGION_KURDISTAN in request.requested_regions or any(
+        place_key(shape.end_city or "").lower() == "mosul" for _, shape in shapes)
+    if "SAFA" in check.day_codes and northbound:
+        check.faults.append(SequenceFault(
+            kind="northbound_excursion", day=check.day_codes.index("SAFA") + 1,
+            day_code="SAFA", statement="SAFA is a Baghdad excursion. The northbound request needs a connected transit day."))
+    for field in ("day_count",):
+        if request.was_defaulted(field):
+            check.untested.append(f"The customer did not supply {field}.")
+    for _, shape in shapes:
+        if not shape.start_city and shape.code not in OWNER_SETTLED_SHAPES:
+            check.untested.append(f"{shape.code}: the catalogue has no established start city.")
+        if not shape.end_city:
+            check.untested.append(f"{shape.code}: the catalogue has no established end city.")
+    if set(request.requested_regions) == {REGION_CENTRAL, REGION_SOUTH} and shapes:
+        cities = [place_key(shape.end_city or "").lower() for _, shape in shapes]
+        sites = {site for code in check.day_codes if code in templates
+                 for site in sites_of_template(templates[code])}
+        if "nasiriyah" not in cities or "NA_MARSHES" not in sites or cities[-1] != "baghdad":
+            check.faults.append(SequenceFault(
+                kind="southern_return", day=0,
+                statement="The Central and Southern route must reach Nasiriyah and the marshes, then return to Baghdad."))
+    if request.was_defaulted("requested_regions") and shapes:
+        south = [i for i, c in enumerate(check.day_codes)
+                 if region_of_template(c, templates.get(c)) == REGION_SOUTH]
+        mosul = [i for i, shape in shapes
+                 if place_key(shape.end_city or "").lower() == "mosul"]
+        ordered = bool(south and mosul and min(south) < min(mosul))
+        endpoints = (place_key(shapes[0][1].start_city or "").lower() == "baghdad"
+                     and place_key(shapes[-1][1].end_city or "").lower() == "erbil"
+                     and shapes[-1][1].role == ROLE_DEPARTURE)
+        if not ordered or not endpoints:
+            check.faults.append(SequenceFault(
+                kind="default_route", day=0,
+                statement="The operator default requires Baghdad, then south, then Mosul, then departure from Erbil."))
 
 
 def _shapes_for(check: SequenceCheck, templates: dict) -> dict:
@@ -381,6 +443,13 @@ def _check_site_repeats(check: SequenceCheck, templates: dict) -> None:
     day 9 send a customer to Samarra twice, and seven days between them changes
     nothing about that.
     """
+    seen_codes = set()
+    for day, code in enumerate(check.day_codes, 1):
+        if code in seen_codes:
+            check.faults.append(SequenceFault(
+                kind=FAULT_DAY_REPEAT, day=day, day_code=code,
+                statement=f"Day {day} repeats template {code}."))
+        seen_codes.add(code)
     shared: dict = {}
     for repeat in repeated_sites(check.day_codes, templates):
         key = (repeat.first_day, repeat.later_day)
@@ -396,11 +465,6 @@ def _check_site_repeats(check: SequenceCheck, templates: dict) -> None:
         # The same template twice is a fault whatever the site count, because
         # the customer gets the same day again (D32).
         if first_code == later_code:
-            check.faults.append(SequenceFault(
-                kind=FAULT_DAY_REPEAT, day=later_day,
-                statement=(f"day {later_day} runs {later_code} again, which day "
-                           f"{first_day} already ran"),
-                day_code=later_code))
             continue
 
         if len(found["sites"]) > FLAG_SHARED_SITES:

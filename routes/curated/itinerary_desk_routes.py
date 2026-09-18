@@ -163,6 +163,8 @@ def _normalized_view(draft) -> dict:
         # Which of these the record did not state. A reviewer reading a value
         # cannot otherwise tell an answer from a default (ws-03 phase seven, D65).
         "defaulted_fields": normalized.defaulted_fields,
+        "region_basis": ("Operator-approved default: Baghdad → south → Mosul → Erbil"
+                         if normalized.was_defaulted("requested_regions") else "Customer request"),
         "request_kind": normalized.source,
     }
 
@@ -183,7 +185,7 @@ def _staleness_of(draft, templates: dict) -> Optional[dict]:
     empty sequence and none is empty on recomputation, so half the owner's
     comments describe sequences the code no longer produces.
     """
-    stored = next((s for s in draft.sequences if s.source == SOURCE_RULES), None)
+    stored = next((s for s in reversed(draft.sequences) if s.source == SOURCE_RULES), None)
     if stored is None:
         return None
     try:
@@ -196,7 +198,7 @@ def _staleness_of(draft, templates: dict) -> Optional[dict]:
                          draft.draft_id)
         return None
 
-    if list(fresh.day_codes) == list(stored.day_codes):
+    if list(fresh.day_codes) == list(stored.day_codes) and fresh.note == stored.note:
         return None
     differ = sum(1 for a, b in zip_longest(stored.day_codes, fresh.day_codes)
                  if a != b)
@@ -257,7 +259,9 @@ def _draft_to_dict(draft, templates: Optional[dict] = None) -> dict:
             entry["check"] = check_to_dict(check_sequence(
                 sequence.day_codes, rows, start_date=start_date,
                 request_row=draft.request_row,
-                day_count=normalized.get("day_count") or 0))
+                day_count=normalized.get("day_count") or 0,
+                normalized_request=normalize_from_dict(
+                    draft.draft_id, draft.request_row, source=request_kind(draft.request_id))))
         except Exception:
             logger.exception("the sequence check failed on %s", draft.draft_id)
             entry["check"] = None
@@ -347,7 +351,7 @@ def _draft_row(draft, templates: Optional[dict] = None) -> dict:
 
     rows = active_day_templates() if templates is None else templates
     newest = draft.latest
-    chosen = newest.get(SOURCE_MODEL) or newest.get(SOURCE_RULES)
+    chosen = draft.sequences[-1] if draft.sequences else None
     day_codes = list(getattr(chosen, "day_codes", []) or [])
 
     faults = flags = unknown = 0
@@ -357,7 +361,9 @@ def _draft_row(draft, templates: Optional[dict] = None) -> dict:
             check = check_sequence(
                 day_codes, rows, start_date=_start_date_of(normalized),
                 request_row=draft.request_row,
-                day_count=normalized.get("day_count") or 0)
+                day_count=normalized.get("day_count") or 0,
+                normalized_request=normalize_from_dict(
+                    draft.draft_id, draft.request_row, source=request_kind(draft.request_id)))
             faults, flags = len(check.faults), len(check.flags)
             # A code the catalogue does not hold is not a fault: the checker
             # blames the catalogue rather than the proposer (phase four). The

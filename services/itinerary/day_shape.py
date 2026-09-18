@@ -229,12 +229,10 @@ def all_shapes(templates: dict, force_reload: bool = False) -> dict:
 
     Pre:  `templates` maps a code to its row.
 
-    Cached on the first call, because a sequence check asks for a shape once
-    per day and the desk checks eleven drafts in one request.
+    Read current rows on every call. A code can keep its name when its city
+    or role changes, so caching by code names would preserve an obsolete shape.
     """
     global _SHAPES
-    if _SHAPES is not None and not force_reload and set(_SHAPES) == set(templates):
-        return _SHAPES
     _SHAPES = {code: shape_of(code, row) for code, row in templates.items()}
     return _SHAPES
 

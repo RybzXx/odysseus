@@ -310,14 +310,18 @@ class JudgedRule:
     subject: str = ""
     corpus_verdict: str = VERDICT_SILENT
     corpus_evidence: str = ""      # the counted statement the verdict rests on
+    status: str = "active"
+    enforced_by: str = ""
     accepted_at: str = ""
     synced_at: Optional[str] = None
     synced_hash: Optional[str] = None
 
     @property
     def content_hash(self) -> str:
-        seed = json.dumps([self.statement, self.family, self.subject,
-                           list(self.corrected_sequence)],
+        content = [self.statement, self.family, self.subject, list(self.corrected_sequence)]
+        if self.status != "active" or self.enforced_by:
+            content.extend([self.status, self.enforced_by])
+        seed = json.dumps(content,
                           ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
@@ -424,6 +428,8 @@ def _judged_from_dict(record: dict) -> JudgedRule:
         subject=record.get("subject", ""),
         corpus_verdict=record.get("corpus_verdict") or VERDICT_SILENT,
         corpus_evidence=record.get("corpus_evidence", ""),
+        status=record.get("status", "active"),
+        enforced_by=record.get("enforced_by", ""),
         accepted_at=record.get("accepted_at", ""),
         synced_at=record.get("synced_at"),
         synced_hash=record.get("synced_hash"),

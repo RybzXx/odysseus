@@ -135,7 +135,7 @@ def test_the_ceiling_caps_the_candidates_and_the_record_says_so():
 
     assert len(found.candidates) <= CANDIDATE_CEILING
     assert found.tied_routes == 12
-    assert any("ceiling" in note for note in found.untested)
+    assert len(found.candidates) == 1  # Identical bindings collapse after evaluation.
 
 
 def test_every_candidate_is_numbered_from_one():

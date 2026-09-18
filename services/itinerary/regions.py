@@ -29,12 +29,11 @@ REGION_SOUTH = "Southern Iraq"
 
 REGIONS = (REGION_KURDISTAN, REGION_WEST_NINEVEH, REGION_CENTRAL, REGION_SOUTH)
 
-# What a request answers when it named no region at all.
-#
-# It is a guess, and `NormalizedRequest.defaulted_fields` is what says so. A
-# caller that reports coverage against this without reading that list reports a
-# confidence nobody earned (D65).
+# Legacy fallback for an unclassified template. Request defaults use the full
+# operator route below and retain requested_regions in defaulted_fields.
 REGION_WHEN_UNSTATED = REGION_CENTRAL
+DEFAULT_ROUTE_REGIONS = (REGION_CENTRAL, REGION_SOUTH, REGION_WEST_NINEVEH, REGION_KURDISTAN)
+DEFAULT_ROUTE_LABEL = "Operator-approved default: Baghdad → south → Mosul → Erbil"
 
 # Every spelling seen on the live Curated and Queue records, plus the shorter
 # forms a person types. A key is lower case; a value is one of REGIONS.
@@ -218,3 +217,23 @@ def normalize_region_label(label: str) -> str:
     """
     text = (label or "").strip()
     return REGION_NAME_MAP.get(text.lower(), text)
+
+
+def sequence_regions(day_codes, templates: dict) -> set[str]:
+    """Return coverage of bound days, never coverage of the historical offer."""
+    from services.itinerary.day_shape import shape_of
+    from services.itinerary.move_map import place_key
+    regions = set()
+    for code in day_codes:
+        template = templates.get(code)
+        if template is None:
+            continue
+        stated = region_of_template(code, template)
+        if stated:
+            regions.add(stated)
+        shape = shape_of(code, template)
+        for city in (shape.start_city, shape.end_city):
+            region = region_of_city(place_key(city or ""))
+            if region:
+                regions.add(region)
+    return regions
