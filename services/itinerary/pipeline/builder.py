@@ -79,10 +79,16 @@ def count_hotel_nights_by_city(built_days: list) -> dict:
     """Returns {city: nights_count}."""
     nights = {}
     for d in built_days:
-        if "hotel_night" in d.template.pricing_tags and d.template.overnight_city:
+        if has_included_accommodation(d):
             city = d.template.overnight_city
             nights[city] = nights.get(city, 0) + 1
     return nights
+
+
+def has_included_accommodation(day: BuiltDay) -> bool:
+    """The same included-night rule governs pricing and document promises."""
+    return bool(day.template.overnight_city and day.night_number is not None
+                and "hotel_night" in (day.template.pricing_tags or []))
 
 
 def collect_all_sites(built_days: list) -> list:

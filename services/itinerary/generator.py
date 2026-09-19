@@ -95,6 +95,7 @@ def build_tour_request(
         raise RuntimeError("services.itinerary.pipeline failed to import.")
 
     TourRequest = _PIPELINE["TourRequest"]
+    from services.itinerary.pipeline.config import DEFAULT_MARKUP_PCT
 
     single_rooms = 1 if req.pax == 1 else 0
     double_rooms = req.pax // 2 if req.pax > 1 else (0 if single_rooms == 1 else 1)
@@ -120,14 +121,14 @@ def build_tour_request(
         include_food=False,
         food_tier=None,
         apply_markup=True,
-        markup_percent=0.20,
+        markup_percent=DEFAULT_MARKUP_PCT,
         exchange_rate=exchange_rate,
         group_sizes=[],
         foc_per_group=1,
         group_vehicle="VIP_BUS" if req.tour_type == "group" else req.vehicle_type,
         sgl_supplement=400,
         apply_office_markup=True,
-        office_markup_percent=0.20,
+        office_markup_percent=DEFAULT_MARKUP_PCT,
         apply_margin_markup=False,
         margin_markup_percent=0.0,
     )

@@ -1,6 +1,9 @@
 # Option B adversarial test report - 19 September 2026
 
-The deployed release fails the new boundary tests.
+This report records failures at revision `2419d82`.
+The subsequent [repair](itinerary-five-defect-repair.md) resolves all five defects.
+
+That revision fails the new boundary tests.
 Five defects reproduce locally and on the phone as six failing cases.
 Production code and live request data remain unchanged during this test task.
 
@@ -78,12 +81,12 @@ node --test tests/itinerary_desk.test.mjs
 
 The private execution logs are outside Git under `../scratch/option-b-test-sept19-*`.
 The test harness supports repeated `--target-id` arguments for stable historical comparisons.
-Fixes are intentionally absent from this Test-mode task.
+Production changes were intentionally absent from that Test-mode task.
 
 
 ## Historical replay
 
-The replay reconstructed all 335 offers and compared six fixed targets against strictly older offers.
+The replay reconstructed all 335 offers and compared six selected targets against strictly older offers.
 The targets cover 2024, 2025, and 2026, with one-day and 16-to-17-day trips.
 The six IDs are `06fd4ca4fa74`, `b5df34cbfe2f`, `0813d635e6eb`, `6d2a3d0bad92`, `7ffef15c9aec`, and `913ec1f61139`.
 All reconstruction and comparison results match the preceding Option B audit.

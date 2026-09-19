@@ -9,19 +9,20 @@ from pathlib import Path
 
 from services.itinerary.places import normalize_place
 
-PLAN_VERSION = 1
+PLAN_VERSION = 2
 _pricing_cache = None
 
 
 def pricing_version():
     """Fingerprint pricing data without copying rates into each saved plan."""
-    from services.itinerary.pipeline.config import PRICING_DIR
+    from services.itinerary.pipeline.config import PRICING_DIR, DEFAULT_MARKUP_PCT
     global _pricing_cache
     paths = sorted(Path(PRICING_DIR).glob("*.json"))
-    stamps = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
+    stamps = (DEFAULT_MARKUP_PCT, tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths))
     if _pricing_cache and _pricing_cache[0] == stamps:
         return _pricing_cache[1]
-    version = content_hash({p.name: json.loads(p.read_text(encoding="utf-8")) for p in paths})
+    version = content_hash({"office_markup_percent": DEFAULT_MARKUP_PCT,
+                           "files": {p.name: json.loads(p.read_text(encoding="utf-8")) for p in paths}})
     _pricing_cache = (stamps, version)
     return version
 
@@ -97,8 +98,9 @@ def resolve_plan(codes, templates, request=None, route=None) -> ResolvedPlan:
         raw_overnight = field_of(row, "overnight_city", "")
         overnight = normalize_place(raw_overnight)
         status = "present" if overnight else "none" if shape.role in {"departure", "day_trip"} else "unknown"
-        tags = field_of(row, "pricing_tags", [])
-        accommodation = "included" if tags is not None and "hotel_night" in tags else "unknown" if tags is None else "excluded"
+        tags = row.get("pricing_tags", []) if isinstance(row, dict) else getattr(row, "pricing_tags", [])
+        known_tags = isinstance(tags, (list, tuple, set)) and all(isinstance(tag, str) for tag in tags)
+        accommodation = ("included" if "hotel_night" in tags else "excluded") if known_tags else "unknown"
         start, end = normalize_place(shape.start_city), normalize_place(shape.end_city)
         if raw_overnight and not overnight:
             plan.issues.append(f"Day {number} ({code}): the overnight place is ambiguous.")

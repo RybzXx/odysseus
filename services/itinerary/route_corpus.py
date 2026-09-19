@@ -15,6 +15,17 @@ _cache = None
 _lock = threading.RLock()
 
 
+def _source_day_number(value):
+    """Accept positive integers and integer strings without coercing other types."""
+    if type(value) is int and value > 0:
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[0-9]+", value.strip()):
+        number = int(value)
+        if number > 0:
+            return number
+    raise ValueError("Source day number must be a positive integer")
+
+
 def load_reference_pool(force_reload=False):
     """Return all record dispositions and deduplicated usable route references.
 
@@ -43,7 +54,7 @@ def load_reference_pool(force_reload=False):
                     reasons.append("The reference has no sent date.")
                 else:
                     datetime.fromisoformat(raw["sent_at"])
-                days = [RouteDay(int(d["day"]), str(d.get("overnight_city") or ""),
+                days = [RouteDay(_source_day_number(d["day"]), str(d.get("overnight_city") or ""),
                                  activity_text(str(d.get("text") or ""))) for d in raw["days"]]
                 if not days:
                     status = "rejected"

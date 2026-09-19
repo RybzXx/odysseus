@@ -1,8 +1,4 @@
-"""Adversarial contracts for the deployed Option B release.
-
-Strict expected failures retain confirmed defects without changing production.
-Use --runxfail to reproduce the underlying failures.
-"""
+"""Regression contracts for Option B pricing, documents, and source facts."""
 from dataclasses import replace
 from datetime import date
 import json
@@ -27,7 +23,6 @@ def rows(tags):
         active=True, needs_review=False, internal_notes="")}
 
 
-@pytest.mark.xfail(strict=True, reason="B-T01: desk ignores configured markup percentage")
 def test_desk_and_pipeline_default_use_the_same_markup_units():
     from services.itinerary.generator import build_tour_request
     from services.itinerary.pipeline.app_core import build_default_request
@@ -37,7 +32,6 @@ def test_desk_and_pipeline_default_use_the_same_markup_units():
     assert _effective_multiplier(desk) == _effective_multiplier(pipeline)
 
 
-@pytest.mark.xfail(strict=True, reason="B-T02: document promises excluded accommodation")
 def test_excluded_hotel_is_not_promised_by_document_assembly(monkeypatch):
     from services.itinerary import generator
     from services.itinerary.generator import build_tour_request
@@ -60,9 +54,9 @@ def test_excluded_hotel_is_not_promised_by_document_assembly(monkeypatch):
     sections = assemble(tour, built, quote, {}, pricing)
     includes = next(s.content["items"] for s in sections if s.section_type == "includes")
     assert not any("Accommodation in hotels" in item for item in includes)
+    assert not any(s.section_type == "hotel_options" for s in sections)
 
 
-@pytest.mark.xfail(strict=True, reason="B-T03: null tags silently mean excluded accommodation")
 def test_unknown_accommodation_stays_unknown():
     plan = resolve_plan(["BG"], rows(None), request())
     assert plan.days[0]["accommodation"] == "unknown"
@@ -72,8 +66,14 @@ def test_unknown_accommodation_stays_unknown():
 @pytest.mark.parametrize("text,role", [
     ("Transfer to Erbil airport.", "departure"),
     ("Visit Erbil. Return to Erbil.", "day_trip"),
-    pytest.param("No transfer to Erbil airport is included. Return to Erbil.", "day_trip",
-        marks=pytest.mark.xfail(strict=True, reason="B-T04: negated airport transfer becomes departure")),
+    ("No transfer to Erbil airport is included. Return to Erbil.", "day_trip"),
+    ("Optional departure from Erbil airport.", "unknown"),
+    ("We may transfer to Erbil airport.", "unknown"),
+    ("We do not return to Erbil.", "unknown"),
+    ("We don't transfer to Erbil airport.", "unknown"),
+    ("No hotel is included. Transfer to Erbil airport.", "departure"),
+    ("30th May 2024. Transfer to Erbil airport.", "departure"),
+    ("May 30 transfer to Erbil airport.", "departure"),
     ("Tour Erbil.", "unknown"),
 ])
 def test_source_role_requires_positive_departure_evidence(text, role):
@@ -84,8 +84,7 @@ def test_source_role_requires_positive_departure_evidence(text, role):
 
 @pytest.mark.parametrize("number", [
     0, -1, None, "1.5",
-    pytest.param(1.5, marks=pytest.mark.xfail(strict=True, reason="B-T05: fractional day silently becomes day 1")),
-    pytest.param(True, marks=pytest.mark.xfail(strict=True, reason="B-T05: boolean silently becomes day 1")),
+    1.5, True,
 ])
 def test_malformed_source_day_numbers_never_become_usable(number, tmp_path, monkeypatch):
     from services.offers import offer_store
@@ -116,3 +115,46 @@ def test_changed_code_count_or_identity_expires_plan(codes):
     req, catalogue = request(), rows(["hotel_night"])
     saved = resolve_plan(["BG"], catalogue, req).to_dict()
     assert stale_plan_errors(saved, req, catalogue, codes)
+
+
+@pytest.mark.parametrize("percent", [0, 10, 17.5])
+def test_configured_markup_controls_quote_and_plan_version(percent, monkeypatch):
+    from services.itinerary.generator import build_tour_request
+    from services.itinerary.pipeline import config
+    from services.itinerary.pipeline.calculator import _effective_multiplier
+    req, catalogue = request(), rows(["hotel_night"])
+    monkeypatch.setattr(config, "DEFAULT_MARKUP_PCT", percent)
+    tour = build_tour_request(req, ["BG"])
+    assert _effective_multiplier(tour) == pytest.approx(1 + percent / 100)
+    saved = resolve_plan(["BG"], catalogue, req).to_dict()
+    monkeypatch.setattr(config, "DEFAULT_MARKUP_PCT", percent + 1)
+    assert any("Pricing changed" in error for error in stale_plan_errors(saved, req, catalogue, ["BG"]))
+
+
+@pytest.mark.parametrize("no_hotels", [False, True])
+def test_mixed_stays_only_promise_and_override_included_nights(no_hotels):
+    from services.itinerary.generator import build_tour_request
+    from services.itinerary.pipeline.builder import build_itinerary, count_hotel_nights_by_city
+    from services.itinerary.pipeline.assembler import _build_includes_content, _build_hotel_options_content, _compute_custom_acc
+    from types import SimpleNamespace
+    catalogue = rows(["hotel_night"])
+    catalogue["OWNBG"] = replace(catalogue["BG"], code="OWNBG", pricing_tags=[])
+    catalogue["OWNMO"] = replace(catalogue["BG"], code="OWNMO", city="Mosul", overnight_city="Mosul", pricing_tags=[])
+    tour = build_tour_request(request(), ["BG", "OWNBG", "OWNMO"])
+    tour.no_hotels_mode = no_hotels
+    tour.selected_include_keys = ["accommodation"]
+    built = build_itinerary(tour, catalogue)
+    assert count_hotel_nights_by_city(built) == {"Baghdad": 1}
+    quote = SimpleNamespace(num_days=3)
+    includes = _build_includes_content(tour, quote, built)["items"]
+    assert includes == ([] if no_hotels else ["Accommodation in hotels for nights 1 only, as per the selection."])
+    options = _build_hotel_options_content(tour, built, quote, {})
+    assert all("Mosul" not in line for tier in options["tier_blocks"] for line in tier["lines"])
+    assert _compute_custom_acc(built, {"Baghdad": "HOTEL"}, 0, 0, 1,
+                               {"HOTEL": {"double_rate": 100}}) == 100
+
+
+@pytest.mark.parametrize("number", [1, "1", " 1 "])
+def test_source_day_number_preserves_supported_integer_forms(number):
+    from services.itinerary.route_corpus import _source_day_number
+    assert _source_day_number(number) == 1

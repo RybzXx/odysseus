@@ -4,7 +4,7 @@ Takes built itinerary days, a quote, and request details,
 and returns an ordered list of DocumentSection objects ready for rendering.
 """
 from services.itinerary.pipeline.models import DocumentSection, TourRequest, Quote
-from services.itinerary.pipeline.builder import format_day_header, format_overnight_line
+from services.itinerary.pipeline.builder import format_day_header, format_overnight_line, has_included_accommodation
 from services.itinerary.pipeline import config
 
 
@@ -63,7 +63,7 @@ def assemble(request: TourRequest, built_days: list, quote: Quote,
     ))
 
     # 4b. Hotel options by tier (suppressed in no-hotels mode)
-    if not getattr(request, 'no_hotels_mode', False):
+    if not getattr(request, 'no_hotels_mode', False) and any(map(has_included_accommodation, built_days)):
         sections.append(DocumentSection(
             section_type="hotel_options",
             content=_build_hotel_options_content(
@@ -75,7 +75,7 @@ def assemble(request: TourRequest, built_days: list, quote: Quote,
     # 5. Includes
     sections.append(DocumentSection(
         section_type="includes",
-        content=_build_includes_content(request, quote),
+        content=_build_includes_content(request, quote, built_days),
     ))
 
     # 6. Payment notes
@@ -101,6 +101,8 @@ def _build_hotel_options_content(request: TourRequest, built_days: list, quote: 
     city_hotel_rows = []
     seen_cities = set()
     for built_day in built_days:
+        if not has_included_accommodation(built_day):
+            continue
         city = built_day.template.overnight_city
         if not city or city in seen_cities:
             continue
@@ -166,7 +168,7 @@ def _compute_custom_acc(built_days: list, hotel_overrides: dict, triple_rooms: i
     """Compute total accommodation cost using custom hotel overrides."""
     city_nights: dict[str, int] = {}
     for bd in built_days:
-        if bd.night_number is not None and bd.template.overnight_city:
+        if has_included_accommodation(bd):
             city = bd.template.overnight_city
             city_nights[city] = city_nights.get(city, 0) + 1
 
@@ -272,7 +274,7 @@ def _build_pricing_content(request: TourRequest, quote: Quote, include_breakdown
         }
 
 
-def _build_includes_content(request: TourRequest, quote: Quote) -> dict:
+def _build_includes_content(request: TourRequest, quote: Quote, built_days: list) -> dict:
     # Transportation description
     vehicle_map = {
         "SMALL_CAR": "a comfortable private car",
@@ -306,6 +308,15 @@ def _build_includes_content(request: TourRequest, quote: Quote) -> dict:
     }
 
     selected_keys = getattr(request, 'selected_include_keys', [])
+    hotel_nights = [day.night_number for day in built_days if has_included_accommodation(day)]
+    if getattr(request, "no_hotels_mode", False):
+        hotel_nights = []
+    if not hotel_nights:
+        all_possible.pop("accommodation")
+    elif len(hotel_nights) != sum(day.night_number is not None for day in built_days):
+        all_possible["accommodation"] = (
+            "Accommodation in hotels for nights " + ", ".join(map(str, hotel_nights))
+            + " only, as per the selection.")
     if selected_keys:
         # Explicit selection from the web GUI checkboxes
         items = [all_possible[k] for k in selected_keys if k in all_possible]
@@ -317,8 +328,9 @@ def _build_includes_content(request: TourRequest, quote: Quote) -> dict:
             all_possible["entry_tickets"],
             all_possible["tours"],
             all_possible["transport"],
-            all_possible["accommodation"],
         ]
+        if hotel_nights:
+            items.append(all_possible["accommodation"])
         if request.include_shrine_help:
             items.append(all_possible["shrine_help"])
         if request.tour_type == "group":
@@ -477,7 +489,7 @@ def assemble_day_trips(
         ))
 
         # 2e. Hotel options (suppressed in no_hotels_mode)
-        if not getattr(request, "no_hotels_mode", False):
+        if not getattr(request, "no_hotels_mode", False) and any(map(has_included_accommodation, built_days)):
             sections.append(DocumentSection(
                 section_type="hotel_options",
                 content=_build_hotel_options_content(
@@ -489,7 +501,7 @@ def assemble_day_trips(
         # 2f. Includes
         sections.append(DocumentSection(
             section_type="includes",
-            content=_build_includes_content(request, quote),
+            content=_build_includes_content(request, quote, built_days),
         ))
 
         # 2g. Payment notes (once per trip)
