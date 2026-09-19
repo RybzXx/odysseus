@@ -26,7 +26,7 @@ Overnight locations remain visible because a stay location does not establish ho
 The broad local focused run passed 622 tests.
 The isolated phone integration run passed 320 tests.
 The final source-parser follow-up passed 44 historical and boundary tests locally.
-The same phone follow-up covers the dated-May correction.
+The same phone follow-up passed 44 tests, including the dated-May correction.
 The five browser logic tests passed.
 The six original failing cases now pass without expected-failure markers.
 
@@ -51,3 +51,20 @@ The deployment check must preserve source files, prior draft history, settings, 
 
 The remaining VAN, NA1, departure-template, date, and closure blockers are unchanged.
 This repair does not invent their missing catalogue or request facts.
+
+## Phone release acceptance
+
+The phone daily-driver branch deployed code revision `7b45cf3c77d6242a1ad30c1e0c6828420528438b`.
+The supervisor restarted the service, and the health endpoint passed.
+All six saved drafts now use plan version 2 without stale results.
+One draft is ready. Five retain the existing blockers listed above.
+The deployed quote check returned $1,531.84 with 10.0% markup and zero difference from the shared calculator setting.
+That check blocked network calls and did not create a document.
+
+The live acceptance check preserved all prior draft sequences, request rows, comments, document links, and run records.
+It also preserved settings, schedule states, and all 407 source file hashes.
+The database check returned `ok` with 21 projects, 64 tasks, 36 sessions, and 14 schedules.
+The three active rule corrections remain enforced, and the retired exception remains retired.
+All affected customer-data model steps remain disabled.
+
+This acceptance covers the itinerary repair. It does not establish a passing result for the entire application test suite.
