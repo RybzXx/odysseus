@@ -39,6 +39,8 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--newer-year", type=int, default=2026)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--target-id", action="append", default=[],
+                        help="Replay this hashed target ID. Repeat for a fixed comparison set.")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root))
@@ -146,6 +148,12 @@ def main():
             key = (offer.sent_at.year, offer.day_count, tuple(sorted(routes[id(offer)].region_set)))
             groups[key] = offer
     selected += list(groups.values())
+    if args.target_id:
+        requested_ids = set(args.target_id)
+        selected = [o for o in offers if references[id(o)] in requested_ids]
+        missing = requested_ids - {references[id(o)] for o in selected}
+        if missing:
+            raise ValueError("Unknown target IDs: " + ", ".join(sorted(missing)))
     selected.sort(key=lambda o: (o.sent_at, references[id(o)]))
     if args.limit:
         selected = selected[:args.limit]
