@@ -16,12 +16,15 @@ _pricing_cache = None
 def pricing_version():
     """Fingerprint pricing data without copying rates into each saved plan."""
     from services.itinerary.pipeline.config import PRICING_DIR, DEFAULT_MARKUP_PCT, DEFAULT_MARGIN_PCT
+    from services.itinerary.pipeline.group_revenue import GROUP_PRICING_POLICY_VERSION
     global _pricing_cache
     paths = sorted(Path(PRICING_DIR).glob("*.json"))
-    stamps = (DEFAULT_MARKUP_PCT, DEFAULT_MARGIN_PCT, tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths))
+    stamps = (DEFAULT_MARKUP_PCT, DEFAULT_MARGIN_PCT, GROUP_PRICING_POLICY_VERSION,
+              tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths))
     if _pricing_cache and _pricing_cache[0] == stamps:
         return _pricing_cache[1]
     version = content_hash({"office_markup_percent": DEFAULT_MARKUP_PCT, "margin_markup_percent": DEFAULT_MARGIN_PCT,
+                           "group_pricing_policy": GROUP_PRICING_POLICY_VERSION,
                            "files": {p.name: json.loads(p.read_text(encoding="utf-8")) for p in paths}})
     _pricing_cache = (stamps, version)
     return version

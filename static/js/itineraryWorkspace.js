@@ -190,18 +190,30 @@ function applyWorkspaceView() {
 
 function groupQuoteHtml(quote) {
   const dollars = amount => `$${Number(amount).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  const priceCell = (row, vehicle) => `${dollars(row[vehicle])}${row.revenue_checks?.[vehicle]?.increase_per_person > 0 ? `<br><small>Raised from ${dollars(row.calculated_prices[vehicle])}</small>` : ''}`;
   return `<h3>${esc(quote.num_days)} days / ${esc(quote.num_nights)} nights</h3>
     <p>${esc(quote.basis_label)}${quote.basis_is_operations_variant ? ' · Operations planning variant. The Overview proposal and its document checks remain separate.' : ''}</p>
     <p>${esc(quote.options.office_markup_percent)}% office + ${esc(quote.options.margin_markup_percent)}% margin, compounded: cost × ${esc(quote.multiplier)}.</p>
     <div class="quote-table-wrap"><table class="quote-table"><caption>USD per paying guest · ${esc(quote.hotel_tier)} · twin sharing</caption>
       <thead><tr><th scope="col">Paying guests + FOC</th><th scope="col">Coaster</th><th scope="col">VIP coach</th></tr></thead>
-      <tbody>${quote.rows.map(row => `<tr><th scope="row">${esc(row.paying_min === row.paying_max ? row.paying_min : `${row.paying_min}–${row.paying_max}`)} + ${esc(row.foc)} FOC</th><td>${dollars(row.TOYOTA_COASTER)}</td><td>${dollars(row.VIP_BUS)}</td></tr>`).join('')}</tbody></table></div>
-    <p>The FOC traveller’s room, transport, transfers and entry costs are shared among the paying guests. Each range uses its highest per-person price, rounded up to $25.</p>
+      <tbody>${quote.rows.map(row => `<tr><th scope="row">${esc(row.paying_min === row.paying_max ? row.paying_min : `${row.paying_min}–${row.paying_max}`)} + ${esc(row.foc)} FOC</th><td>${priceCell(row, 'TOYOTA_COASTER')}</td><td>${priceCell(row, 'VIP_BUS')}</td></tr>`).join('')}</tbody></table></div>
+    <p>The FOC traveller’s room, transport, transfers and entry costs are shared among the paying guests. First, each range covers its highest calculated per-person cost, rounded up to $25. The second check raises prices where needed to protect total revenue.</p>
+    ${groupRevenueHtml(quote, dollars)}
     <p>Single supplement: ${dollars(quote.single_supplement)}${quote.options.single_supplement_override === null ? ' (calculated)' : ' (fixed override)'}. ${esc(quote.guide_days)} guide days; ${esc(quote.transport_days)} tour vehicle days.</p>
     <p>Vehicle rates: Coaster ${dollars(quote.vehicle_daily_rates.TOYOTA_COASTER)}/day; VIP coach ${dollars(quote.vehicle_daily_rates.VIP_BUS)}/day.</p>
     <p>Hotel nights: ${Object.entries(quote.nights_by_city).map(([city, nights]) => `${esc(city)} ${esc(nights)}`).join(' · ')}.</p>
     <details class="sec"><summary>Operating checks and pricing assumptions (${quote.warnings.length})</summary><ul>${quote.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>
     <details class="sec"><summary>Full itinerary used for these prices</summary><ol class="day-list">${quote.days.map(day => `<li><strong>Day ${esc(day.number)} · ${esc(day.date || '')} · ${esc(day.title)}</strong><p class="quote-day-text">${esc(day.text)}</p><p>Overnight: ${esc(day.overnight_city || 'None · departure')}</p></li>`).join('')}</ol></details>`;
+}
+
+function groupRevenueHtml(quote, dollars) {
+  const confirmation = quote.revenue_confirmation;
+  if (!confirmation?.passed) return '<p class="warn">Revenue confirmation is unavailable or failed. Recalculate before using these prices.</p>';
+  return `<p><strong>Revenue check passed.</strong> At its minimum paying headcount, each higher band receives at least ${dollars(confirmation.minimum_increase_usd)} more than the preceding band at its maximum headcount. FOC travellers do not count as revenue.</p>
+    <details class="sec"><summary>Revenue confirmation details</summary>${[['TOYOTA_COASTER', 'Coaster'], ['VIP_BUS', 'VIP coach']].map(([vehicle, label]) => `<div class="quote-table-wrap"><table class="quote-table"><caption>${label} · USD received from paying guests</caption><thead><tr><th scope="col">Paying guests</th><th scope="col">Total received</th><th scope="col">Previous band maximum</th><th scope="col">Increase at minimum</th></tr></thead><tbody>${quote.rows.map(row => {
+      const check = row.revenue_checks[vehicle];
+      return `<tr><th scope="row">${esc(row.paying_min)}${row.paying_max === row.paying_min ? '' : `–${esc(row.paying_max)}`}</th><td>${dollars(check.minimum_revenue)}–${dollars(check.maximum_revenue)}</td><td>${check.previous_maximum_revenue === null ? 'First band' : dollars(check.previous_maximum_revenue)}</td><td>${check.revenue_increase === null ? '—' : dollars(check.revenue_increase)}</td></tr>`;
+    }).join('')}</tbody></table></div>`).join('')}</details>`;
 }
 
 async function loadGroupQuote(save = false) {

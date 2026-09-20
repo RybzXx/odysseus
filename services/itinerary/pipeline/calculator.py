@@ -4,8 +4,10 @@ Calculates tour quotes (individual and group) from structured pricing data.
 All prices in USD. IQD prices are converted using request.exchange_rate.
 """
 import copy
+from dataclasses import replace
 from datetime import datetime
 from services.itinerary.pipeline.models import TourRequest, Quote, QuoteLineItem, GroupPricingRow
+from services.itinerary.pipeline.group_revenue import confirm_group_revenue, GROUP_PRICING_POLICY_VERSION
 from services.itinerary.pipeline.builder import (
     count_guide_days, count_transport_days,
     count_hotel_nights_by_city, collect_all_sites,
@@ -267,52 +269,27 @@ def _calculate_group(request, built_days, pricing, now, num_days, num_nights):
     where paying_pax = group_size - foc_count.
     """
     group_rows = []
-    settings = pricing["settings"]
     first_row_items = []
     first_row_acc_3 = first_row_acc_4 = first_row_acc_5 = 0.0
     first_row_non_acc = 0.0
 
     for i, (min_pax, max_pax) in enumerate(request.group_sizes):
-        # Price from the minimum PAX in the band to avoid underquoting the
-        # lower end of the range. This gives the highest per-person cost,
-        # which is safe for the whole band.
-        pricing_pax = min_pax
-        paying_pax = max(pricing_pax - request.foc_per_group, 1)
-
-        import copy as _copy
-        fake_req = _copy.copy(request)
-        fake_req.tour_type = "individual"
-        fake_req.num_people = pricing_pax
-        # FOC traveller(s) get single room(s); remaining pax twin-share doubles
         foc = request.foc_per_group
-        fake_req.single_rooms = foc
-        fake_req.double_rooms = max((pricing_pax - foc + 1) // 2, 0)
-        fake_req.selected_vehicle = request.group_vehicle
-        fake_req.guide_days_override = request.guide_days_override
-        fake_req.transport_days_override = request.transport_days_override
-        fake_req.apply_markup = request.apply_markup
-        fake_req.markup_percent = request.markup_percent
-        fake_req.apply_office_markup = request.apply_office_markup
-        fake_req.office_markup_percent = request.office_markup_percent
-        fake_req.apply_margin_markup = request.apply_margin_markup
-        fake_req.margin_markup_percent = request.margin_markup_percent
-        fake_req.no_hotels_mode = request.no_hotels_mode
-        fake_req.extra_staff_enabled = request.extra_staff_enabled
-        fake_req.extra_staff_count = request.extra_staff_count
-        fake_req.extra_staff_days = request.extra_staff_days
-        fake_req.extra_staff_daily_rate = request.extra_staff_daily_rate
-        fake_req.show_optional_suv_upgrade = False  # SUV upgrade is individual-only
-        fake_req.transport_rate_override = getattr(request, 'transport_rate_override', 0.0)
-
-        ind_quote = _calculate_individual(fake_req, built_days, pricing, now, num_days, num_nights)
-
-        # Use the selected hotel tier for group pricing
-        tier = request.hotel_tier
-        total = getattr(ind_quote, f"final_total_{tier.replace('star', '')}star",
-                        ind_quote.final_total_3star)
-
-        # Round up to nearest $25 (commercial practice)
-        per_person = round_up_to_25(total / paying_pax)
+        if any(type(n) is not int for n in (min_pax, max_pax, foc)) or foc < 0 or min_pax <= foc or max_pax < min_pax:
+            raise ValueError("Each group band must contain at least one paying guest.")
+        headcount_prices = []
+        for pricing_pax in range(min_pax, max_pax + 1):
+            paying_pax = pricing_pax - foc
+            fake_req = replace(request, tour_type="individual", num_people=pricing_pax,
+                               single_rooms=foc, double_rooms=(paying_pax + 1) // 2,
+                               selected_vehicle=request.group_vehicle, show_optional_suv_upgrade=False)
+            headcount_quote = _calculate_individual(fake_req, built_days, pricing, now, num_days, num_nights)
+            total = getattr(headcount_quote, f"final_total_{request.hotel_tier}")
+            headcount_prices.append(round_up_to_25(total / paying_pax))
+            if pricing_pax == min_pax:
+                ind_quote = headcount_quote
+        # Odd guest counts can require an extra room. Cover the entire band.
+        per_person = max(headcount_prices)
 
         group_rows.append(GroupPricingRow(
             min_pax=min_pax,
@@ -348,7 +325,7 @@ def _calculate_group(request, built_days, pricing, now, num_days, num_nights):
         per_person_3star=0,
         per_person_4star=0,
         per_person_5star=0,
-        group_rows=group_rows,
+        group_rows=confirm_group_revenue(group_rows),
         prices_snapshot=_snapshot(pricing, request),
         generated_at=now,
         num_people=0,
@@ -386,6 +363,7 @@ def _calculate_sgl_supplement(tier: str, built_days: list, pricing: dict,
 def _snapshot(pricing: dict, request: TourRequest) -> dict:
     """Returns a frozen copy of the pricing data used, for the quote log."""
     snap = {
+        "group_pricing_policy": GROUP_PRICING_POLICY_VERSION,
         "exchange_rate": request.exchange_rate,
         "office_markup_percent": request.office_markup_percent,
         "margin_markup_percent": request.margin_markup_percent,

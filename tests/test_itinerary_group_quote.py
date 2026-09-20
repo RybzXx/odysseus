@@ -61,7 +61,14 @@ def test_prices_cover_every_headcount_and_share_all_foc_costs(scenario):
                 hotel = 9 * (30 + math.ceil(paying / 2) * 40 + 50)
                 other = 9 * 80 + 9 * rate + (paying + 1) * (100 + 9 * 10)
                 expected.append(math.ceil((hotel + other) * 1.32 / paying / 25) * 25)
-            assert row[vehicle] == max(expected)
+            assert row["calculated_prices"][vehicle] == max(expected)
+            assert row[vehicle] >= max(expected)
+            check = row["revenue_checks"][vehicle]
+            assert check["passed"]
+            assert check["minimum_revenue"] == row["paying_min"] * row[vehicle]
+            assert check["maximum_revenue"] == row["paying_max"] * row[vehicle]
+            if check["previous_maximum_revenue"] is not None:
+                assert check["revenue_increase"] >= 450
         assert row["VIP_BUS"] > row["TOYOTA_COASTER"]
     assert [(r["paying_min"], r["paying_max"]) for r in result["rows"]] == [(8, 9), (10, 11), (12, 13), (14, 14)]
 
@@ -131,3 +138,11 @@ def test_default_pricing_applies_both_markups():
     request = build_default_request(1310)
     assert request.apply_office_markup and request.office_markup_percent == 10
     assert request.apply_margin_markup and request.margin_markup_percent == 20
+
+
+def test_revenue_policy_changes_invalidate_saved_pricing(monkeypatch):
+    from services.itinerary import resolved_plan
+    from services.itinerary.pipeline import group_revenue
+    previous = resolved_plan.pricing_version()
+    monkeypatch.setattr(group_revenue, "GROUP_PRICING_POLICY_VERSION", "changed-policy")
+    assert resolved_plan.pricing_version() != previous

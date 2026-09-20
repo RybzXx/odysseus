@@ -66,3 +66,14 @@ test('a delayed quote response cannot replace another draft panel',async()=>{
   await pending;
   assert.equal(nodes['group-quote-status'].textContent,'Second draft');
 });
+
+test('revenue confirmation shows the 450 floor and adjusted predecessor totals',()=>{
+  const c=workspace();
+  const check={minimum_revenue:17500,maximum_revenue:19250,previous_maximum_revenue:16875,revenue_increase:625,increase_per_person:75};
+  c.quote={revenue_confirmation:{passed:true,minimum_increase_usd:450},
+    rows:[{paying_min:10,paying_max:11,revenue_checks:{VIP_BUS:check,TOYOTA_COASTER:{...check,minimum_revenue:14000,maximum_revenue:15400,previous_maximum_revenue:13500,revenue_increase:500}}}]};
+  const html=vm.runInContext('groupRevenueHtml(quote, amount => "$"+amount.toLocaleString("en-US"))',c);
+  for(const expected of ['Revenue check passed','at least $450','FOC travellers do not count','$17,500–$19,250','$16,875','$625','$500']) assert.ok(html.includes(expected),expected);
+  c.quote.revenue_confirmation.passed=false;
+  assert.doesNotMatch(vm.runInContext('groupRevenueHtml(quote, String)',c),/Revenue check passed/);
+});

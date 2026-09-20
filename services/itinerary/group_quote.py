@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from services.itinerary.pipeline.app_core import build_default_request, check_request
 from services.itinerary.pipeline.builder import build_itinerary, count_hotel_nights_by_city, count_transport_days, count_guide_days
 from services.itinerary.pipeline.calculator import calculate_quote
+from services.itinerary.pipeline.group_revenue import GROUP_PRICING_POLICY_VERSION, MINIMUM_REVENUE_INCREASE
 from services.itinerary.pipeline.loader import load_all_templates, load_pricing
 
 
@@ -51,7 +52,7 @@ def quote_draft(draft, options: GroupQuoteOptions, *, templates=None, pricing=No
     req.start_date = date.fromisoformat(basis["start_date"]) if basis.get("start_date") else normalized.start_date
     req.hotel_tier = basis.get("hotel_tier") or normalized.hotel_tier
     req.tour_type = "group"
-    req.group_sizes = [(paying + 1, paying + 1) for paying in range(8, 15)]
+    req.group_sizes = [(lower + 1, upper + 1) for lower, upper in PAYING_BANDS]
     req.foc_per_group = 1
     req.office_markup_percent = options.office_markup_percent
     req.margin_markup_percent = options.margin_markup_percent
@@ -98,14 +99,16 @@ def quote_draft(draft, options: GroupQuoteOptions, *, templates=None, pricing=No
         warnings.extend(checked["warnings"])
         results[vehicle] = calculate_quote(req, built, pricing)
     rows = []
-    for lower, upper in PAYING_BANDS:
-        row = {"paying_min": lower, "paying_max": upper, "foc": 1}
+    for index, (lower, upper) in enumerate(PAYING_BANDS):
+        row = {"paying_min": lower, "paying_max": upper, "foc": 1, "calculated_prices": {}, "revenue_checks": {}}
         for vehicle in VEHICLES:
-            # Odd groups need another double room. Check every size in the band.
-            row[vehicle] = max(r.price_per_person for r in results[vehicle].group_rows
-                               if lower <= r.min_pax - r.foc_count <= upper)
+            confirmed = results[vehicle].group_rows[index]
+            row[vehicle] = confirmed.price_per_person
+            row["calculated_prices"][vehicle] = confirmed.calculated_price_per_person
+            row["revenue_checks"][vehicle] = confirmed.revenue_check
         rows.append(row)
-    source = {"templates": [asdict(templates[c]) for c in codes], "pricing": pricing, "basis": basis}
+    source = {"templates": [asdict(templates[c]) for c in codes], "pricing": pricing, "basis": basis,
+              "group_pricing_policy": GROUP_PRICING_POLICY_VERSION}
     return {
         "draft_id": draft.draft_id, "options": options.model_dump(),
         "basis_label": basis.get("label") or "Latest proposed itinerary",
@@ -115,6 +118,9 @@ def quote_draft(draft, options: GroupQuoteOptions, *, templates=None, pricing=No
         "hotel_tier": req.hotel_tier, "nights_by_city": count_hotel_nights_by_city(built),
         "multiplier": round((1 + options.office_markup_percent / 100) * (1 + options.margin_markup_percent / 100), 6),
         "rows": rows, "single_supplement": results[VEHICLES[0]].group_rows[0].sgl_supplement,
+        "revenue_confirmation": {"policy": GROUP_PRICING_POLICY_VERSION,
+                                 "minimum_increase_usd": float(MINIMUM_REVENUE_INCREASE),
+                                 "passed": all(check["passed"] for row in rows for check in row["revenue_checks"].values())},
         "vehicle_daily_rates": {v: pricing["_transport_by_code"][v]["daily_rate_usd"] for v in VEHICLES},
         "days": [{"number": d.day_number, "date": str(d.date) if d.date else None,
                   "code": d.template.code, "title": d.template.title, "text": d.template.full_text,

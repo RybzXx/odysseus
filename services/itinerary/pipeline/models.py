@@ -117,6 +117,8 @@ class GroupPricingRow:
     vehicle: str
     price_per_person: float
     sgl_supplement: float
+    calculated_price_per_person: Optional[float] = None
+    revenue_check: dict = field(default_factory=dict)
 
 
 @dataclass
