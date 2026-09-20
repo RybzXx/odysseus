@@ -54,3 +54,22 @@ The pre-release phone backup is `odysseus-itinerary-backup-20260920T142707Z`.
 Its database integrity check returned `ok`.
 It contains 69 files, 21 projects, 64 tasks, 36 sessions, and 14 schedules.
 Release acceptance must compare these records after deployment.
+
+## Phone release acceptance
+
+The phone daily-driver branch deployed revision `7da920c67070c2c0d042a3e2fa1229b1dafbce00`.
+The supervisor restarted the app, and its health check passed.
+The phone passed all ten JavaScript tests.
+The served HTML, JavaScript, and stylesheet matched the deployed files.
+
+The release check preserved all 69 backup files and 407 source file hashes.
+Database integrity remained `ok` with the same project, task, session, and schedule counts.
+Schedule states remained unchanged. Affected model steps remained disabled.
+
+The live browser displayed all four views for an existing five-day request.
+At width 390, its title appeared 135 pixels from the top with no visible queue or page-wide horizontal overflow.
+The existing catalogue blocker remained visible, and document generation remained disabled.
+The browser check also opened the live Rules and sources view.
+The browser viewport returned to its original dimensions after testing.
+
+Requirements 6.1-6.4 are complete through the focused tests, synthetic browser checks, verified backup, and live release checks above.
