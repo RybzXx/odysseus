@@ -56,6 +56,10 @@ def test_prices_cover_every_headcount_and_share_all_foc_costs(scenario):
     assert result["single_supplement"] == 400
     for row in result["rows"]:
         for vehicle, rate in (("TOYOTA_COASTER", 200), ("VIP_BUS", 450)):
+            if vehicle == "TOYOTA_COASTER" and row["paying_max"] > 12:
+                assert row[vehicle] is None
+                assert "13 travellers" in row["unavailable"][vehicle]
+                continue
             expected = []
             for paying in range(row["paying_min"], row["paying_max"] + 1):
                 hotel = 9 * (30 + math.ceil(paying / 2) * 40 + 50)
@@ -69,7 +73,8 @@ def test_prices_cover_every_headcount_and_share_all_foc_costs(scenario):
             assert check["maximum_revenue"] == row["paying_max"] * row[vehicle]
             if check["previous_maximum_revenue"] is not None:
                 assert check["revenue_increase"] >= 450
-        assert row["VIP_BUS"] > row["TOYOTA_COASTER"]
+        if row["TOYOTA_COASTER"] is not None:
+            assert row["VIP_BUS"] > row["TOYOTA_COASTER"]
     assert [(r["paying_min"], r["paying_max"]) for r in result["rows"]] == [(8, 9), (10, 11), (12, 13), (14, 14)]
 
 
@@ -78,6 +83,17 @@ def test_unknown_rates_block_instead_of_producing_free_services(scenario):
     del pricing["_transport_by_code"]["VIP_BUS"]
     with pytest.raises(ValueError, match="VIP_BUS"):
         quote_draft(draft, GroupQuoteOptions(), templates=templates, pricing=pricing)
+
+
+def test_coaster_accepts_twelve_paying_plus_one_foc(scenario, monkeypatch):
+    from services.itinerary import group_quote
+    monkeypatch.setattr(group_quote, "PAYING_BANDS", ((12, 12), (13, 13)))
+    draft, templates, pricing = scenario
+    pricing["_transport_by_code"]["TOYOTA_COASTER"]["capacity_max"] = 10
+    result = quote_draft(draft, GroupQuoteOptions(), templates=templates, pricing=pricing)
+    assert result["rows"][0]["TOYOTA_COASTER"] > 0
+    assert result["rows"][1]["TOYOTA_COASTER"] is None
+    assert result["revenue_confirmation"]["passed"]
 
 
 @pytest.mark.parametrize("value", [-1, float("nan"), float("inf")])

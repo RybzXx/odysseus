@@ -24,6 +24,7 @@ class GroupQuoteOptions(BaseModel):
 
 PAYING_BANDS = ((8, 9), (10, 11), (12, 13), (14, 14))
 VEHICLES = ("TOYOTA_COASTER", "VIP_BUS")
+VEHICLE_TRAVELLER_LIMITS = {"TOYOTA_COASTER": 13}
 
 
 def quote_draft(draft, options: GroupQuoteOptions, *, templates=None, pricing=None):
@@ -100,15 +101,20 @@ def quote_draft(draft, options: GroupQuoteOptions, *, templates=None, pricing=No
         results[vehicle] = calculate_quote(req, built, pricing)
     rows = []
     for index, (lower, upper) in enumerate(PAYING_BANDS):
-        row = {"paying_min": lower, "paying_max": upper, "foc": 1, "calculated_prices": {}, "revenue_checks": {}}
+        row = {"paying_min": lower, "paying_max": upper, "foc": 1, "calculated_prices": {}, "revenue_checks": {}, "unavailable": {}}
         for vehicle in VEHICLES:
+            limit = VEHICLE_TRAVELLER_LIMITS.get(vehicle, pricing["_transport_by_code"][vehicle].get("capacity_max", 0))
+            if limit and upper + req.foc_per_group > limit:
+                row[vehicle] = None
+                row["unavailable"][vehicle] = f"Limit: {limit} travellers total, including FOC. This range must fit in full."
+                continue
             confirmed = results[vehicle].group_rows[index]
             row[vehicle] = confirmed.price_per_person
             row["calculated_prices"][vehicle] = confirmed.calculated_price_per_person
             row["revenue_checks"][vehicle] = confirmed.revenue_check
         rows.append(row)
     source = {"templates": [asdict(templates[c]) for c in codes], "pricing": pricing, "basis": basis,
-              "group_pricing_policy": GROUP_PRICING_POLICY_VERSION}
+              "group_pricing_policy": GROUP_PRICING_POLICY_VERSION, "vehicle_traveller_limits": VEHICLE_TRAVELLER_LIMITS}
     return {
         "draft_id": draft.draft_id, "options": options.model_dump(),
         "basis_label": basis.get("label") or "Latest proposed itinerary",
@@ -122,6 +128,7 @@ def quote_draft(draft, options: GroupQuoteOptions, *, templates=None, pricing=No
                                  "minimum_increase_usd": float(MINIMUM_REVENUE_INCREASE),
                                  "passed": all(check["passed"] for row in rows for check in row["revenue_checks"].values())},
         "vehicle_daily_rates": {v: pricing["_transport_by_code"][v]["daily_rate_usd"] for v in VEHICLES},
+        "vehicle_traveller_limits": VEHICLE_TRAVELLER_LIMITS,
         "days": [{"number": d.day_number, "date": str(d.date) if d.date else None,
                   "code": d.template.code, "title": d.template.title, "text": d.template.full_text,
                   "overnight_city": d.template.overnight_city} for d in built],

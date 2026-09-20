@@ -125,7 +125,7 @@ function renderDetail(draft) {
           <label>Margin markup (%)<input id="quote-margin" type="number" min="0" max="100" step="0.1" value="20" required></label>
           <label>Single supplement (USD)<input id="quote-single" type="number" min="0" max="10000" step="0.01" placeholder="Calculate from hotel rates"></label>
         </div><button type="submit">Save options and calculate</button>
-      </form><p id="group-quote-status" role="status"></p><div id="group-quote-result"></div>
+      </form><button id="share-team-quote" type="button">Share saved itinerary with team dashboard</button><p id="group-quote-status" role="status"></p><div id="group-quote-result"></div>
     </section>
     <section class="workspace-panel" id="view-request" aria-label="Request" hidden>
       ${draft.conversation_link ? `<p><a href="${esc(draft.conversation_link)}" target="_blank" rel="noopener">Open conversation</a></p>` : '<p>No conversation link.</p>'}
@@ -156,6 +156,22 @@ function renderDetail(draft) {
   $('discard-comment').addEventListener('click', () => { $('comment').value = ''; rememberWorkspace(); });
   $('save-comment').addEventListener('click', saveComment);
   $('group-quote-form').addEventListener('submit', event => { event.preventDefault(); loadGroupQuote(true); });
+  $('share-team-quote').addEventListener('click', async () => {
+    const button = $('share-team-quote');
+    const status = $('group-quote-status');
+    if ($('group-quote-result').dataset.outdated) {
+      status.textContent = 'Save and calculate the changed options before sharing.';
+      return;
+    }
+    button.disabled = true;
+    status.textContent = 'Pricing with New Operations and sharing with the team…';
+    try {
+      await api(`/api/itinerary/drafts/${encodeURIComponent(draft.draft_id)}/share-team`, { method: 'POST' });
+      status.textContent = 'Shared with the team dashboard. New Operations rates are saved with this version.';
+    } catch (error) {
+      status.textContent = `The itinerary was not shared. ${error.message}`;
+    } finally { button.disabled = false; }
+  });
   $('group-quote-form').addEventListener('input', () => {
     $('group-quote-status').textContent = 'Options changed. Save and calculate to update the prices.';
     $('group-quote-result').dataset.outdated = 'true';
@@ -190,7 +206,7 @@ function applyWorkspaceView() {
 
 function groupQuoteHtml(quote) {
   const dollars = amount => `$${Number(amount).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
-  const priceCell = (row, vehicle) => `${dollars(row[vehicle])}${row.revenue_checks?.[vehicle]?.increase_per_person > 0 ? `<br><small>Raised from ${dollars(row.calculated_prices[vehicle])}</small>` : ''}`;
+  const priceCell = (row, vehicle) => row.unavailable?.[vehicle] ? `Unavailable<br><small>${esc(row.unavailable[vehicle])}</small>` : `${dollars(row[vehicle])}${row.revenue_checks?.[vehicle]?.increase_per_person > 0 ? `<br><small>Raised from ${dollars(row.calculated_prices[vehicle])}</small>` : ''}`;
   return `<h3>${esc(quote.num_days)} days / ${esc(quote.num_nights)} nights</h3>
     <p>${esc(quote.basis_label)}${quote.basis_is_operations_variant ? ' · Operations planning variant. The Overview proposal and its document checks remain separate.' : ''}</p>
     <p>${esc(quote.options.office_markup_percent)}% office + ${esc(quote.options.margin_markup_percent)}% margin, compounded: cost × ${esc(quote.multiplier)}.</p>
@@ -201,6 +217,7 @@ function groupQuoteHtml(quote) {
     ${groupRevenueHtml(quote, dollars)}
     <p>Single supplement: ${dollars(quote.single_supplement)}${quote.options.single_supplement_override === null ? ' (calculated)' : ' (fixed override)'}. ${esc(quote.guide_days)} guide days; ${esc(quote.transport_days)} tour vehicle days.</p>
     <p>Vehicle rates: Coaster ${dollars(quote.vehicle_daily_rates.TOYOTA_COASTER)}/day; VIP coach ${dollars(quote.vehicle_daily_rates.VIP_BUS)}/day.</p>
+    <p>Coaster limit: 12 paying guests + 1 FOC (13 travellers total).</p>
     <p>Hotel nights: ${Object.entries(quote.nights_by_city).map(([city, nights]) => `${esc(city)} ${esc(nights)}`).join(' · ')}.</p>
     <details class="sec"><summary>Operating checks and pricing assumptions (${quote.warnings.length})</summary><ul>${quote.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>
     <details class="sec"><summary>Full itinerary used for these prices</summary><ol class="day-list">${quote.days.map(day => `<li><strong>Day ${esc(day.number)} · ${esc(day.date || '')} · ${esc(day.title)}</strong><p class="quote-day-text">${esc(day.text)}</p><p>Overnight: ${esc(day.overnight_city || 'None · departure')}</p></li>`).join('')}</ol></details>`;
@@ -211,6 +228,7 @@ function groupRevenueHtml(quote, dollars) {
   if (!confirmation?.passed) return '<p class="warn">Revenue confirmation is unavailable or failed. Recalculate before using these prices.</p>';
   return `<p><strong>Revenue check passed.</strong> At its minimum paying headcount, each higher band receives at least ${dollars(confirmation.minimum_increase_usd)} more than the preceding band at its maximum headcount. FOC travellers do not count as revenue.</p>
     <details class="sec"><summary>Revenue confirmation details</summary>${[['TOYOTA_COASTER', 'Coaster'], ['VIP_BUS', 'VIP coach']].map(([vehicle, label]) => `<div class="quote-table-wrap"><table class="quote-table"><caption>${label} · USD received from paying guests</caption><thead><tr><th scope="col">Paying guests</th><th scope="col">Total received</th><th scope="col">Previous band maximum</th><th scope="col">Increase at minimum</th></tr></thead><tbody>${quote.rows.map(row => {
+      if (row.unavailable?.[vehicle]) return '';
       const check = row.revenue_checks[vehicle];
       return `<tr><th scope="row">${esc(row.paying_min)}${row.paying_max === row.paying_min ? '' : `–${esc(row.paying_max)}`}</th><td>${dollars(check.minimum_revenue)}–${dollars(check.maximum_revenue)}</td><td>${check.previous_maximum_revenue === null ? 'First band' : dollars(check.previous_maximum_revenue)}</td><td>${check.revenue_increase === null ? '—' : dollars(check.revenue_increase)}</td></tr>`;
     }).join('')}</tbody></table></div>`).join('')}</details>`;

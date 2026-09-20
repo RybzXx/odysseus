@@ -34,6 +34,7 @@ append names a person, because the run that consumes it does not.
 Environment:
     OPS_API_BASE_URL   e.g. https://dev.bilweekend.iq
     OPS_AGENT_TOKEN    the bearer token, set on both sides
+    VERCEL_AUTOMATION_BYPASS_SECRET  optional access to a protected deployment
 
 Neither is ever accepted as an argument: a caller asks for a post, it does not
 supply the authority for one.
@@ -147,6 +148,15 @@ def hub_config() -> tuple[str, str] | None:
     return base_url, token
 
 
+def _agent_headers(token: str) -> dict[str, str]:
+    """Authenticate to the configured website and its optional deployment protection."""
+    headers = {"Authorization": f"Bearer {token}"}
+    bypass = os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET", "").strip()
+    if bypass:
+        headers["x-vercel-protection-bypass"] = bypass
+    return headers
+
+
 async def _post(path: str, payload: dict) -> dict:
     """One POST to the agent API.
 
@@ -163,10 +173,10 @@ async def _post(path: str, payload: dict) -> dict:
     base_url, token = config
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
             response = await client.post(
                 f"{base_url}{path}",
-                headers={"Authorization": f"Bearer {token}"},
+                headers=_agent_headers(token),
                 json=payload,
             )
     except Exception as exc:
@@ -242,10 +252,10 @@ async def _get(path: str, params: dict | None = None) -> dict:
     base_url, token = config
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
             response = await client.get(
                 f"{base_url}{path}",
-                headers={"Authorization": f"Bearer {token}"},
+                headers=_agent_headers(token),
                 params=params or {},
             )
     except Exception as exc:

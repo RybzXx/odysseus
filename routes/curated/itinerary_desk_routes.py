@@ -497,6 +497,18 @@ def _request_pill(row: dict, drafts_by_key: dict) -> dict:
 def setup_itinerary_desk_routes() -> APIRouter:
     router = APIRouter(prefix="/api/itinerary")
 
+    @router.post("/drafts/{draft_id}/share-team")
+    async def share_with_team(request: Request, draft_id: str):
+        require_admin(request)
+        draft = load(draft_id)
+        if draft is None:
+            raise HTTPException(404, "Draft not found.")
+        from services.itinerary.workspace_sync import share_draft
+        result = await share_draft(draft, GroupQuoteOptions(**draft.group_quote_options))
+        if not result.get("ok"):
+            raise HTTPException(503, result.get("error", "Team sharing failed."))
+        return result
+
     @router.get("/drafts/{draft_id}/group-quote")
     def get_group_quote(request: Request, draft_id: str):
         require_admin(request)
