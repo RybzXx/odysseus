@@ -203,9 +203,12 @@ def build_candidates(request: NormalizedRequest, templates: dict,
             route_days=route.day_count, match_score=score_route(request, route),
             region_coverage=len(requested & coverage) / len(requested) if requested else 1.0,
             asked_days=request.day_count, day_codes=codes, gap_notes=gaps, check=check, plan=plan))
-    # Validation outranks historical similarity. The ceiling limits display only.
+    # Respect fixed endpoints even when every candidate still needs repair.
+    # The ceiling limits display only; a wrong starting city cannot hide the
+    # available routes that start where the customer arrives.
     found.candidates.sort(key=lambda c: (
-        not c.check.is_clean, not c.check.found_no_fault,
+        not c.check.is_clean, len(c.check.of_kind("required_endpoint")),
+        not c.check.found_no_fault,
         abs(c.asked_days - len(c.day_codes)), c.fault_count,
         len(c.check.untested), -c.region_coverage, c.flag_count,
         -c.match_score, c.route_name, c.route_id, tuple(c.day_codes)))

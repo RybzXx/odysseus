@@ -421,6 +421,18 @@ def normalize_queue_record(key: str, record: dict) -> NormalizedRequest:
     for region in unmapped_regions(regions):
         special_notes.append(f"Region not in the catalogue: {region}")
 
+    requirements = _explicit_requirements(record)
+    from services.itinerary.arrival_requirement import arrival_from_entry_notes
+    arrival, arrival_warnings = arrival_from_entry_notes(record.get("entry_notes"))
+    if arrival:
+        if requirements["arrival_city"] and requirements["arrival_city"] != arrival:
+            arrival_warnings.append(
+                f"Arrival city conflict: the explicit field says {requirements['arrival_city']}, "
+                f"but entry notes say {arrival}. Confirm the arrival city.")
+        elif not requirements["arrival_city"]:
+            requirements["arrival_city"] = arrival
+            requirements["requirement_sources"]["arrival_city"] = "explicit arrival statement in entry_notes"
+
     return NormalizedRequest(
         key=key,
         source="queue",
@@ -438,12 +450,12 @@ def normalize_queue_record(key: str, record: dict) -> NormalizedRequest:
         travel_year=travel_year,
         special_notes=special_notes,
         parse_warnings=[f"the catalogue has no region called {r}"
-                        for r in unmapped_regions(regions)],
+                        for r in unmapped_regions(regions)] + arrival_warnings,
         defaulted_fields=defaulted_fields_of(
             record, day_value=raw_days, pax_value=raw_pax,
             raw_regions=record.get("regions"), date_value=travel_date_str),
         raw_record=record,
-        **_explicit_requirements(record),
+        **requirements,
     )
 
 
