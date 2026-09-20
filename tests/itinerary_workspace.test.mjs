@@ -37,3 +37,32 @@ test('day summaries preserve exclusion and never invent absent places',()=>{
   assert.match(html,/Unknown start/);assert.match(html,/Unknown destination/);assert.match(html,/excluded/);
   assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>/);
 });
+
+test('group pricing shows both vehicles, FOC, markups and full operating details',()=>{
+  const c=workspace();
+  c.quote={num_days:10,num_nights:9,basis_label:'Owner variant <test>',basis_is_operations_variant:true,
+    options:{office_markup_percent:10,margin_markup_percent:20,single_supplement_override:400},multiplier:1.32,
+    rows:[{paying_min:8,paying_max:9,foc:1,TOYOTA_COASTER:1500,VIP_BUS:1900}],hotel_tier:'3star',
+    single_supplement:400,guide_days:9,transport_days:9,vehicle_daily_rates:{TOYOTA_COASTER:200,VIP_BUS:450},
+    nights_by_city:{Erbil:1},warnings:['Confirm flight <time>'],
+    days:[{number:10,date:'2027-04-04',title:'EBSORA',text:'Visit and transfer',overnight_city:''}]};
+  const html=vm.runInContext('groupQuoteHtml(quote)',c);
+  for(const expected of ['10 days / 9 nights','VIP coach','$1,900','$1,500','8–9 + 1 FOC','cost × 1.32','$400','Visit and transfer','None · departure','Overview proposal']) assert.ok(html.includes(expected),expected);
+  assert.ok(html.includes('&lt;test&gt;'));assert.ok(html.includes('&lt;time&gt;'));
+});
+
+test('a delayed quote response cannot replace another draft panel',async()=>{
+  const c=workspace();let resolve;
+  const form={dataset:{},querySelectorAll:()=>[]};
+  const nodes={'group-quote-form':form,'group-quote-status':{textContent:''}};
+  c.document.getElementById=id=>nodes[id];
+  c.fetch=()=>new Promise(r=>{resolve=r;});
+  vm.runInContext("current={draft_id:'first'}",c);
+  const pending=vm.runInContext('loadGroupQuote()',c);
+  vm.runInContext("current={draft_id:'second'}",c);
+  nodes['group-quote-form']={dataset:{},querySelectorAll:()=>[]};
+  nodes['group-quote-status']={textContent:'Second draft'};
+  resolve({ok:true,json:async()=>({})});
+  await pending;
+  assert.equal(nodes['group-quote-status'].textContent,'Second draft');
+});

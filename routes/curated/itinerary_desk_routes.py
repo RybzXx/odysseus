@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.middleware import require_admin
+from services.itinerary.group_quote import GroupQuoteOptions, quote_draft
 
 from services.itinerary.drafts import (
     OPEN_REQUEST_ORIGINS,
@@ -495,6 +496,33 @@ def _request_pill(row: dict, drafts_by_key: dict) -> dict:
 
 def setup_itinerary_desk_routes() -> APIRouter:
     router = APIRouter(prefix="/api/itinerary")
+
+    @router.get("/drafts/{draft_id}/group-quote")
+    def get_group_quote(request: Request, draft_id: str):
+        require_admin(request)
+        draft = load(draft_id)
+        if draft is None:
+            raise HTTPException(404, "Draft not found.")
+        try:
+            return quote_draft(draft, GroupQuoteOptions(**draft.group_quote_options))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.post("/drafts/{draft_id}/group-quote")
+    def save_group_quote(request: Request, draft_id: str, body: GroupQuoteOptions):
+        require_admin(request)
+        from services.itinerary.drafts import draft_lock
+        with draft_lock(draft_id):
+            draft = load(draft_id)
+            if draft is None:
+                raise HTTPException(404, "Draft not found.")
+            try:
+                result = quote_draft(draft, body)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            draft.group_quote_options = body.model_dump()
+            save(draft)
+        return result
 
     @router.get("/reference-pool")
     async def reference_pool(request: Request):

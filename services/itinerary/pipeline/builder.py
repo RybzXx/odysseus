@@ -4,6 +4,7 @@ Resolves day codes into an ordered list of BuiltDay objects with day numbers,
 night numbers, and dates assigned.
 """
 from datetime import date, timedelta
+from dataclasses import replace
 from typing import Optional
 from services.itinerary.pipeline.models import BuiltDay, TourRequest, DayTemplate
 
@@ -19,6 +20,12 @@ def build_itinerary(request: TourRequest, templates: dict) -> list:
 
     for i, code in enumerate(request.day_codes):
         tmpl = templates[code]
+        if request.arrival_rest_only and i == 0:
+            tmpl = replace(tmpl, title="Arrival and rest", full_text="Airport reception and hotel transfer. Rest without scheduled sightseeing.",
+                           included_sites=[], pricing_tags=[tag for tag in tmpl.pricing_tags if tag not in ("guide_day", "transport_day")])
+        if request.omit_final_night and i == len(request.day_codes) - 1:
+            tmpl = replace(tmpl, overnight_city="", pricing_tags=[tag for tag in tmpl.pricing_tags if tag != "hotel_night"],
+                           full_text=tmpl.full_text + "\nTransfer to the airport after the tour. No hotel night is included; confirm a suitable flight time.")
         day_number = i + 1
 
         has_overnight = bool(tmpl.overnight_city)
@@ -39,6 +46,12 @@ def build_itinerary(request: TourRequest, templates: dict) -> list:
             template=tmpl,
         ))
 
+    if request.append_departure_day and built and built[-1].night_number is not None:
+        city = built[-1].template.overnight_city
+        departure = DayTemplate(code="DEPARTURE_TRANSFER", title=f"{city} departure", city=city,
+            region=built[-1].template.region, overnight_city="", full_text="Hotel checkout and airport transfer for the confirmed flight.",
+            included_sites=[], pricing_tags=[], active=True, needs_review=False, internal_notes="Transfers are priced separately.")
+        built.append(BuiltDay(day_number=len(built)+1, night_number=None, date=current_date, template=departure))
     return built
 
 

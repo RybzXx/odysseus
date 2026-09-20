@@ -95,7 +95,7 @@ def build_tour_request(
         raise RuntimeError("services.itinerary.pipeline failed to import.")
 
     TourRequest = _PIPELINE["TourRequest"]
-    from services.itinerary.pipeline.config import DEFAULT_MARKUP_PCT
+    from services.itinerary.pipeline.config import DEFAULT_MARKUP_PCT, DEFAULT_MARGIN_PCT, DEFAULT_GROUP_SIZES
 
     single_rooms = 1 if req.pax == 1 else 0
     double_rooms = req.pax // 2 if req.pax > 1 else (0 if single_rooms == 1 else 1)
@@ -123,14 +123,14 @@ def build_tour_request(
         apply_markup=True,
         markup_percent=DEFAULT_MARKUP_PCT,
         exchange_rate=exchange_rate,
-        group_sizes=[],
+        group_sizes=list(DEFAULT_GROUP_SIZES) if req.tour_type == "group" else [],
         foc_per_group=1,
         group_vehicle="VIP_BUS" if req.tour_type == "group" else req.vehicle_type,
         sgl_supplement=400,
         apply_office_markup=True,
         office_markup_percent=DEFAULT_MARKUP_PCT,
-        apply_margin_markup=False,
-        margin_markup_percent=0.0,
+        apply_margin_markup=True,
+        margin_markup_percent=DEFAULT_MARGIN_PCT,
     )
 
 
@@ -154,6 +154,10 @@ def _format_quote(q: Any, hotel_tier: str = "3star") -> dict:
         hotel = getattr(q, "accommodation_3star", 0.0)
 
     return {
+        "tour_type": getattr(q, "tour_type", "individual"),
+        "group_rows": [vars(row).copy() for row in getattr(q, "group_rows", [])],
+        "office_markup_percent": getattr(q, "office_markup_percent", 0),
+        "margin_markup_percent": getattr(q, "margin_markup_percent", 0),
         "total_usd": round(float(total), 2),
         "per_person_usd": round(float(pp), 2),
         "hotel_total_usd": round(float(hotel), 2),

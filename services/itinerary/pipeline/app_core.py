@@ -57,11 +57,11 @@ def build_default_request(exchange_rate: float) -> TourRequest:
         foc_per_group=1,
         group_vehicle="VIP_BUS",
         sgl_supplement=400,
-        # Tkinter / CLI: only one markup level (office only, no margin)
+        # Apply office markup, then margin markup, consistently across entry points.
         apply_office_markup=True,
         office_markup_percent=config.DEFAULT_MARKUP_PCT,
-        apply_margin_markup=False,
-        margin_markup_percent=0.0,
+        apply_margin_markup=True,
+        margin_markup_percent=config.DEFAULT_MARGIN_PCT,
     )
 
 

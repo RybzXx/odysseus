@@ -311,9 +311,8 @@ def _calculate_group(request, built_days, pricing, now, num_days, num_nights):
         total = getattr(ind_quote, f"final_total_{tier.replace('star', '')}star",
                         ind_quote.final_total_3star)
 
-        per_person = round(total / paying_pax, 0)
         # Round up to nearest $25 (commercial practice)
-        per_person = round_up_to_25(per_person)
+        per_person = round_up_to_25(total / paying_pax)
 
         group_rows.append(GroupPricingRow(
             min_pax=min_pax,
@@ -321,7 +320,7 @@ def _calculate_group(request, built_days, pricing, now, num_days, num_nights):
             foc_count=request.foc_per_group,
             vehicle=request.group_vehicle,
             price_per_person=per_person,
-            sgl_supplement=_calculate_sgl_supplement(
+            sgl_supplement=request.single_supplement_override if request.single_supplement_override is not None else _calculate_sgl_supplement(
                 request.hotel_tier, built_days, pricing, request,
             ),
         ))

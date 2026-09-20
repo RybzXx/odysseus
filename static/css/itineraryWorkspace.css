@@ -96,3 +96,15 @@ textarea { min-height: 110px; }
   .dd-option { white-space: normal; min-height: 44px; }
   .filters { padding: 8px 12px; }
 }
+.quote-fields { display: flex; flex-wrap: wrap; gap: 14px; margin: 14px 0; }
+.quote-fields label { display: flex; flex: 1 1 170px; flex-direction: column; gap: 6px; }
+.quote-fields input { width: 100%; min-height: 44px; box-sizing: border-box; }
+.quote-night { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.quote-night input { width: 22px; height: 22px; flex-shrink: 0; }
+.quote-table-wrap { overflow-x: auto; }
+.quote-table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+.quote-table caption { text-align: left; margin-bottom: 10px; }
+.quote-table th, .quote-table td { padding: 12px; border-bottom: 1px solid var(--border); text-align: left; }
+.quote-table thead { background: var(--bg-elev); }
+.quote-day-text { white-space: pre-line; }
+#group-quote-result[data-outdated] { opacity: .6; }

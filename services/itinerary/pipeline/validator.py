@@ -4,6 +4,7 @@ Validates a TourRequest before document generation.
 Returns a list of error/warning strings. Empty list = all clear.
 """
 from services.itinerary.pipeline.models import TourRequest
+import math
 
 
 # Recognised site availability statuses (Column I in entry_tickets sheet)
@@ -21,6 +22,10 @@ def validate(request: TourRequest, templates: dict, pricing: dict,
              built_days: list = None) -> list:
     errors = []
     warnings = []
+
+    supplement = request.single_supplement_override
+    if supplement is not None and (not math.isfinite(supplement) or supplement < 0):
+        errors.append("Single supplement must be a finite, nonnegative amount.")
 
     # ── Day codes ────────────────────────────────────────────────────────────
     if not request.day_codes:

@@ -102,6 +102,9 @@ class ItineraryDraft:
     generated_from: Optional[str] = None
     doc_url: str = ""
     created_at: str = ""
+    group_quote_options: dict = field(default_factory=dict)
+    # Operator planning basis, separate from the submitted request and proposal history.
+    group_quote_basis: dict = field(default_factory=dict)
 
     @property
     def latest(self) -> dict:

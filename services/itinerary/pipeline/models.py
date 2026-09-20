@@ -63,9 +63,9 @@ class TourRequest:
 
     # ── Dual markup (web GUI; replaces single apply_markup / markup_percent) ──
     apply_office_markup: bool = True          # operational/overhead markup
-    office_markup_percent: float = 20.0
+    office_markup_percent: float = 10.0
     apply_margin_markup: bool = True          # profit margin on top
-    margin_markup_percent: float = 10.0
+    margin_markup_percent: float = 20.0
 
     # ── Pricing output mode ───────────────────────────────────────────────────
     # "selected_only" → show only the chosen tier in the document
@@ -92,6 +92,12 @@ class TourRequest:
     extra_staff_count: int = 1
     extra_staff_days: Optional[int] = None   # None = same number as guide_days
     extra_staff_daily_rate: float = 70.0
+    # These options change the built days, so pricing and document text agree.
+    omit_final_night: bool = False
+    append_departure_day: bool = False
+    arrival_rest_only: bool = False
+    # None derives the supplement from room rates. A value is a commercial override.
+    single_supplement_override: Optional[float] = None
 
 
 @dataclass

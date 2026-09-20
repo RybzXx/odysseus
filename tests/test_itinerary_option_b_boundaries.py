@@ -118,16 +118,21 @@ def test_changed_code_count_or_identity_expires_plan(codes):
 
 
 @pytest.mark.parametrize("percent", [0, 10, 17.5])
-def test_configured_markup_controls_quote_and_plan_version(percent, monkeypatch):
+@pytest.mark.parametrize("margin", [0, 20])
+def test_configured_markup_controls_quote_and_plan_version(percent, margin, monkeypatch):
     from services.itinerary.generator import build_tour_request
     from services.itinerary.pipeline import config
     from services.itinerary.pipeline.calculator import _effective_multiplier
     req, catalogue = request(), rows(["hotel_night"])
     monkeypatch.setattr(config, "DEFAULT_MARKUP_PCT", percent)
+    monkeypatch.setattr(config, "DEFAULT_MARGIN_PCT", margin)
     tour = build_tour_request(req, ["BG"])
-    assert _effective_multiplier(tour) == pytest.approx(1 + percent / 100)
+    assert _effective_multiplier(tour) == pytest.approx((1 + percent / 100) * (1 + margin / 100))
     saved = resolve_plan(["BG"], catalogue, req).to_dict()
     monkeypatch.setattr(config, "DEFAULT_MARKUP_PCT", percent + 1)
+    assert any("Pricing changed" in error for error in stale_plan_errors(saved, req, catalogue, ["BG"]))
+    monkeypatch.setattr(config, "DEFAULT_MARKUP_PCT", percent)
+    monkeypatch.setattr(config, "DEFAULT_MARGIN_PCT", margin + 1)
     assert any("Pricing changed" in error for error in stale_plan_errors(saved, req, catalogue, ["BG"]))
 
 
