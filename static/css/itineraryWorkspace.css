@@ -1,43 +1,22 @@
 /* This palette applies only to the itinerary workspace. */
 html.desk-standalone {
-  color-scheme: dark;
-  --bg: #202625;
-  --panel: #252c2b;
-  --bg-elev: #303a38;
-  --fg: #e4e8e3;
-  --fg-dim: #bdc7c0;
-  --fg-muted: #aab4ae;
-  --border: #48534e;
-  --accent: #a8c5b5;
-  --accent-foreground: #1f3028;
-  --accent-error: #e3a2a5;
-  --status-warn: #d8bf8d;
-  --status-error: #e3a2a5;
-  --status-ok: #a3c7ad;
-  --by-model: #b4abc8;
-  --by-rules: #a2bcb6;
-  --by-human: #c8b394;
-}
-@media (prefers-color-scheme: light) {
-  html.desk-standalone {
-    color-scheme: light;
-    --bg: #f2f3ee;
-    --panel: #fafbf7;
-    --bg-elev: #e6ebe3;
-    --fg: #27342e;
-    --fg-dim: #48594e;
-    --fg-muted: #5b695f;
-    --border: #bac4b9;
-    --accent: #3e6855;
-    --accent-foreground: #fafbf7;
-    --accent-error: #a83f45;
-    --status-warn: #795b26;
-    --status-error: #a83f45;
-    --status-ok: #376748;
-    --by-model: #66576f;
-    --by-rules: #47675f;
-    --by-human: #75603e;
-  }
+  color-scheme: light;
+  --bg: #f2f3ee;
+  --panel: #fafbf7;
+  --bg-elev: #e6ebe3;
+  --fg: #27342e;
+  --fg-dim: #48594e;
+  --fg-muted: #5b695f;
+  --border: #bac4b9;
+  --accent: #3e6855;
+  --accent-foreground: #fafbf7;
+  --accent-error: #a83f45;
+  --status-warn: #795b26;
+  --status-error: #a83f45;
+  --status-ok: #376748;
+  --by-model: #66576f;
+  --by-rules: #47675f;
+  --by-human: #75603e;
 }
 button.primary, .chip.active, .dd-toggle.active { color: var(--accent-foreground); }
 a { color: var(--accent); }
