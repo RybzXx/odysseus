@@ -270,6 +270,7 @@
   @media (prefers-reduced-motion: reduce) { * { animation: none !important;
                                                 transition: none !important; } }
 </style>
+<link rel="stylesheet" href="/static/css/itineraryWorkspace.css?v=20260920a">
 </head>
 <body>
 
@@ -284,12 +285,13 @@
 <div class="filters" id="filters"><span class="note">loading requests…</span></div>
 
 <main>
-  <section id="queue"><div class="empty">loading…</div></section>
-  <section id="detail"><div class="empty">Choose a request.</div></section>
+  <section id="queue" aria-label="Requests"><div class="empty">loading…</div></section>
+  <section id="detail" aria-label="Selected request"><div class="empty">Choose a request.</div></section>
 </main>
 
 <script src="/static/js/briefCard.js?v=20260908b"></script>
 <script src="/static/js/deskWorklistActions.js?v=20260908"></script>
-<script src="/static/js/itineraryDesk.js?v=20260908run1"></script>
+<script src="/static/js/itineraryWorkspace.js?v=20260920a"></script>
+<script src="/static/js/itineraryDesk.js?v=20260920a"></script>
 </body>
 </html>

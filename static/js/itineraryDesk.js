@@ -91,7 +91,12 @@ async function api(path, options) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" }, ...options,
   });
-  if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) {
+    const raw = await res.text();
+    let message = raw;
+    try { const body = JSON.parse(raw); message = body.detail || body.error || raw; } catch {}
+    throw new Error(`${res.status}: ${typeof message === 'string' ? message.slice(0, 300) : JSON.stringify(message).slice(0, 300)}`);
+  }
   return res.json();
 }
 
@@ -239,7 +244,7 @@ function renderFilters() {
     </div>
     <div class="filters-row">
       <input type="text" class="search" id="filter-search"
-             placeholder="Search name, reference, operator…"
+             aria-label="Search requests" placeholder="Search name, reference, operator…"
              value="${esc(filters.search)}">
       <button type="button" class="chip${filters.spam ? " active" : ""}"
               id="toggle-spam">Show spam</button>
@@ -302,7 +307,7 @@ function wireFilters() {
  * Post: the filters travel in the query string, so a link carries a view
  *       (ws-03 item 27.7). The chosen draft travels with them.
  */
-function writeFiltersToUrl() {
+function writeFiltersToUrl(push = false) {
   const params = new URLSearchParams();
   ["status", "flags", "source", "operator", "desk"].forEach((dim) => {
     if (filters[dim].size) params.set(dim, [...filters[dim]].join("|"));
@@ -310,18 +315,22 @@ function writeFiltersToUrl() {
   if (filters.search) params.set("q", filters.search);
   if (filters.spam) params.set("spam", "1");
   if (current) params.set("draft", current.draft_id);
+  params.set("view", workspaceView);
+  if (workspaceList) params.set("pane", "list");
   const query = params.toString();
-  history.replaceState(null, "", query ? `?${query}` : location.pathname);
+  history[push ? "pushState" : "replaceState"](null, "", query ? `?${query}` : location.pathname);
 }
 
 function readFiltersFromUrl() {
   const params = new URLSearchParams(location.search);
   ["status", "flags", "source", "operator", "desk"].forEach((dim) => {
     const raw = params.get(dim);
-    if (raw) filters[dim] = new Set(raw.split("|").filter(Boolean));
+    filters[dim] = new Set((raw || "").split("|").filter(Boolean));
   });
   filters.search = params.get("q") || "";
   filters.spam = params.get("spam") === "1";
+  workspaceView = Object.hasOwn(workspaceViews, params.get("view")) ? params.get("view") : "overview";
+  workspaceList = params.get("pane") === "list" || !params.get("draft");
   return params.get("draft") || "";
 }
 
@@ -361,6 +370,7 @@ function renderQueue() {
     `<div class="qcount">${rows.length} of ${all.length} request(s)</div>`
     + (rows.length ? rows.map(queueRowHtml).join("")
        : `<div class="empty">No request matches these filters.</div>`);
+  $("queue").scrollTop = queuePosition;
   $("queue").querySelectorAll(".qrow").forEach((button) =>
     button.addEventListener("click", () => openRow(button.dataset.key,
                                                    button.dataset.draft)));
@@ -377,21 +387,30 @@ function redraw() { renderFilters(); renderQueue(); writeFiltersToUrl(); }
  * Post: the pane holds that draft. A row with no draft opens one from the
  *       request, which is what the desk has always done on a first read.
  */
-async function openRow(key, draftId) {
-  $("detail").innerHTML = `<div class="empty">reading ${esc(key)}…</div>`;
-  currentRow = queueRows().find((r) => r.key === key) || null;
+async function openRow(key, draftId, push = true) {
+  rememberWorkspace();
+  const serial = ++openRequestSerial;
+  workspaceList = false;
+  applyWorkspaceView();
+  $("detail").removeAttribute("data-draft");
+  $("detail").innerHTML = `<div class="empty"><button onclick="showRequestList(true)">← Back to requests</button><p role="status">Loading request…</p></div>`;
+  currentRow = queueRows().find((r) => r.key === key || r.draft?.draft_id === draftId) || null;
   lastBuild = null;
   try {
     const draft = draftId
       ? await api(`/api/itinerary/drafts/${encodeURIComponent(draftId)}`)
       : await api("/api/itinerary/drafts/from-request", {
           method: "POST", body: JSON.stringify({ key }) });
+    if (serial !== openRequestSerial) return;
+    workspaceView = draftPresentation.get(draft.draft_id)?.view || "overview";
     renderDetail(draft);
+    writeFiltersToUrl(push);
+    $("workspace-title")?.focus({ preventScroll: true });
     await loadDrafts();
     renderQueue();
-    writeFiltersToUrl();
   } catch (e) {
-    $("detail").innerHTML = `<div class="empty err">${esc(e.message)}</div>`;
+    if (serial !== openRequestSerial) return;
+    $("detail").innerHTML = `<div class="empty err" role="alert"><button onclick="showRequestList(true)">← Back to requests</button><p>${esc(e.message)}</p></div>`;
   }
 }
 
@@ -576,7 +595,7 @@ function stepsHtml(run) {
 function runsBody(draft) {
   const runs = draft.runs || [];
   if (!runs.length) {
-    return `<div class="note">No run yet. The create button is in Operations.</div>`;
+    return `<div class="note">No model run recorded for this request.</div>`;
   }
   return runs.map((run) => `<div class="card">
       <div class="row"><strong>${esc(run.statement)}</strong>
@@ -687,7 +706,7 @@ function runResultHtml(draft) {
     : "No itinerary was proposed";
   const explanation = hasProposal
     ? "The run kept its proposal, but one or more steps failed."
-    : "The run finished, but it could not build a candidate. Open What ran for the full trace.";
+    : "The run finished, but it could not build a candidate. Open Activity → Run history for the full trace.";
   return `<section id="run-result" class="run-result error" role="alert">
       <h2>${esc(title)}</h2>
       <p>${esc(explanation)}</p>
@@ -762,93 +781,6 @@ function stripHtml(draft) {
     </div>`;
 }
 
-function renderDetail(draft) {
-  current = draft;
-  const normalized = draft.normalized || {};
-  const newest = {};
-  (draft.sequences || []).forEach((s) => { newest[s.source] = s; });
-  const chosen = (draft.sequences || []).at(-1);
-  const check = chosen && chosen.check;
-  const runs = draft.runs || [];
-  const brief = draft.brief || null;
-
-  // Each section opens on its own content (ws-03 D53, item 28.3).
-  const runFailed = runs.some((r) => (r.failures || []).length);
-  const runUntested = runs.some((r) => (r.untested || []).length);
-  const briefDisagrees = brief && (brief.contradiction_count
-    || (brief.refused || []).length);
-
-  $("detail").innerHTML = `
-    ${runResultHtml(draft)}
-    <div class="who-line">
-      <h2>${esc(normalized.customer_name || draft.request_id || draft.draft_id)}</h2>
-      <div class="note">${esc(draft.request_id || draft.draft_id)} · ${esc(draft.origin)}${
-        draft.day_count ? " · " + esc(draft.day_count) + " day(s) asked" : ""}</div>
-      ${(draft.parse_warnings || []).map((w) =>
-        `<div class="warn">${esc(w)}</div>`).join("")}
-    </div>
-    ${legend()}
-    ${referencePoolBlock(draft.reference_pool)}
-    ${stripHtml(draft)}
-    ${draft.stale ? `<div class="warn">Stored rules result is stale. ${esc(draft.stale.statement)} Recalculate to append a current result.</div>` : ""}
-    ${section("sec-layers", "What ran",
-      runs.length ? `${runs.length} run(s)` : "no run yet",
-      runsBody(draft), chosen?.source !== "rules" && (runFailed || runUntested),
-      runFailed ? "bad" : runUntested ? "warn" : "", "")}
-    ${section("sec-brief", "What the customer asked for",
-      brief ? (window.BriefCard ? BriefCard.headline(brief) : "") : "layer 1 did not run",
-      window.BriefCard ? BriefCard.html(brief) : "", Boolean(briefDisagrees),
-      briefDisagrees ? "warn" : "", "model")}
-    ${section("sec-sequences", "The itinerary",
-      chosen ? `${(chosen.day_codes || []).length} day(s)` : "nothing proposed",
-      [chosen, ...Object.values(newest).filter((sequence) => sequence !== chosen)]
-        .filter(Boolean).map((sequence) => sequenceBlock(sequence, draft.agreement, sequence.source, draft.day_count)).join(""),
-      true, (check && check.fault_count) ? "bad" : "", "")}
-    ${section("sec-request", "The request as read", "",
-      normalizedBlock(draft), false, "", "rules")}
-    ${section("sec-feedback", "Your comments",
-      `${(draft.comments || []).length} comment(s)`,
-      `${thread(draft)}
-       <div style="margin-top:10px"><textarea id="comment"
-         placeholder="e.g. keep the first three days but end in Erbil — the judged rule book reads this"></textarea></div>
-       <div class="row" style="margin-top:8px">
-         <button id="save-comment">Save this comment</button>
-         <span class="note" id="comment-msg"></span></div>`,
-      false, "", "human")}
-    ${section("sec-notes", "What the machine noticed",
-      `${(draft.notes || []).length} note(s)`, notesBody(draft),
-      chosen?.source !== "rules" && Boolean((draft.notes || []).length), "", "model")}
-    ${section("sec-move", "Move this request",
-      currentRow ? esc(currentRow.status || "New") : "no worklist row",
-      `<div id="wl-move">${window.DeskWorklist
-        ? DeskWorklist.moveHtml(currentRow) : ""}</div>
-       ${window.DeskWorklist ? DeskWorklist.replyHtml(lastBuild) : ""}`,
-      false, "", "human")}
-    ${section("sec-send", "Waiting to send",
-      `${stagedRows.length} queued`,
-      `<div id="wl-send-box">${window.DeskWorklist
-        ? DeskWorklist.sendHtml(stagedRows) : ""}</div>`,
-      Boolean(stagedRows.length), stagedRows.some((s) => s.conflict) ? "bad" : "",
-      "human")}
-    ${section("sec-rules", "The rule books", "",
-      `<div id="rule-books"><div class="note">loading…</div></div>`,
-      false, "", "rules")}`;
-
-  $("save-comment")?.addEventListener("click", saveComment);
-  document.querySelectorAll(".generate").forEach((b) =>
-    b.addEventListener("click", () => generate(b.dataset.source)));
-  document.querySelector(".run-offer")?.addEventListener("click", recalculateRules);
-  if (window.DeskWorklist) {
-    DeskWorklist.wireMove($("wl-move"), currentRow, reloadStaged);
-    DeskWorklist.wireSend($("wl-send-box"), reloadStaged);
-    DeskWorklist.wireReply($("wl-move"), lastBuild, currentRow, reloadStaged);
-  }
-  document.querySelectorAll(".steps[data-run]").forEach(loadSteps);
-  $("sec-rules").addEventListener("toggle", function once() {
-    if (this.open) { this.removeEventListener("toggle", once); loadRuleBooks(); }
-  });
-}
-
 /* ── the rule books ───────────────────────────────────────────────────────── */
 
 const FAMILY_LABELS = {
@@ -893,16 +825,20 @@ async function loadRuleBooks() {
  */
 async function recalculateRules() {
   if (!current) return;
+  const draftId = current.draft_id;
+  const operationSerial = openRequestSerial;
   const button = document.querySelector(".run-offer");
-  if (button) button.disabled = true;
+  if (button) { button.disabled = true; button.textContent = "Recalculating…"; button.setAttribute("aria-busy", "true"); }
   try {
-    const draft = await api(`/api/itinerary/drafts/${encodeURIComponent(current.draft_id)}/propose-again`, { method: "POST" });
+    const draft = await api(`/api/itinerary/drafts/${encodeURIComponent(draftId)}/propose-again`, { method: "POST" });
+    if (current?.draft_id !== draftId || operationSerial !== openRequestSerial) return;
     renderDetail(draft);
     await loadDrafts();
   } catch (error) {
-    if (button) { button.disabled = false; button.title = error.message; }
+    if (current?.draft_id !== draftId || operationSerial !== openRequestSerial) return;
+    if (button) { button.disabled = false; button.textContent = "Recalculate itinerary"; button.removeAttribute("aria-busy"); }
     const detail = $("detail");
-    detail?.insertAdjacentHTML("afterbegin", `<div class="warn">${esc(error.message)}</div>`);
+    detail?.insertAdjacentHTML("afterbegin", `<div class="attention" role="alert">Recalculation failed: ${esc(error.message)}</div>`);
   }
 }
 
@@ -935,6 +871,8 @@ async function reloadStaged() {
 }
 
 async function saveComment() {
+  const draftId = current.draft_id;
+  const operationSerial = openRequestSerial;
   const text = $("comment").value.trim();
   if (!text || !current) return;
   $("comment-msg").textContent = "saving…";
@@ -942,8 +880,15 @@ async function saveComment() {
     const draft = await api(
       `/api/itinerary/drafts/${encodeURIComponent(current.draft_id)}/comment`,
       { method: "POST", body: JSON.stringify({ text }) });
-    renderDetail(draft);
+    const state = draftPresentation.get(draftId) || {};
+    if (state.comment === text) state.comment = "";
+    draftPresentation.set(draftId, state);
+    if (current?.draft_id === draftId && operationSerial === openRequestSerial) {
+      if ($("comment").value.trim() === text) $("comment").value = "";
+      renderDetail(draft);
+    }
   } catch (e) {
+    if (current?.draft_id !== draftId || operationSerial !== openRequestSerial) return;
     $("comment-msg").innerHTML = `<span class="err">${esc(e.message)}</span>`;
   }
 }
@@ -955,32 +900,43 @@ async function saveComment() {
  * Post: the server revalidates it before creating a document.
  */
 async function generate(source) {
-  if (!current) return;
+  if (!current || !readiness(current).ready) return;
+  const draftId = current.draft_id;
+  const operationSerial = openRequestSerial;
   const buttons = [...document.querySelectorAll(".generate")];
   buttons.forEach((b) => { b.disabled = true; });
   try {
     const answer = await api(
       `/api/itinerary/drafts/${encodeURIComponent(current.draft_id)}/generate`,
       { method: "POST", body: JSON.stringify({ source }) });
+    if (current?.draft_id !== draftId || operationSerial !== openRequestSerial) return;
     lastBuild = answer;
     renderDetail(answer);
     await loadDrafts();
     renderQueue();
   } catch (e) {
+    if (current?.draft_id !== draftId || operationSerial !== openRequestSerial) return;
     $("detail").insertAdjacentHTML("afterbegin",
-      `<div class="warn" style="margin:12px 18px">${esc(e.message)}</div>`);
-    buttons.forEach((b) => { b.disabled = false; });
+      `<div class="attention" role="alert">Document request failed: ${esc(e.message)}</div>`);
+    buttons.forEach((b) => { b.disabled = !readiness(current).ready; });
   }
 }
 
 function newRequestForm() {
+  rememberWorkspace();
+  openRequestSerial++;
+  workspaceList = false;
+  applyWorkspaceView();
+  $("detail").removeAttribute("data-draft");
   current = null;
-  $("detail").innerHTML = `<div class="who-line"><h2>New request</h2></div>
+  currentRow = null;
+  lastBuild = null;
+  $("detail").innerHTML = `<div class="who-line"><button onclick="showRequestList(true)">← Back to requests</button><h2>New request</h2></div>
     <div style="margin:0 18px">
       ${REQUEST_FIELDS.map(([key, label, hint]) => `
         <div style="margin-bottom:8px">
-          <div class="note">${esc(label)}</div>
-          <input type="text" data-key="${esc(key)}" placeholder="${esc(hint)}"></div>`).join("")}
+          <label for="typed-${esc(key)}">${esc(label)}</label>
+          <input id="typed-${esc(key)}" type="text" data-key="${esc(key)}" placeholder="${esc(hint)}"></div>`).join("")}
       <div class="row"><button id="open-typed" class="primary">Open and propose</button>
         <span class="note" id="typed-msg"></span></div>
     </div>`;
@@ -997,6 +953,7 @@ async function openTyped() {
     const draft = await api("/api/itinerary/drafts",
       { method: "POST", body: JSON.stringify({ row, origin: "typed" }) });
     renderDetail(draft);
+    writeFiltersToUrl(true);
     await loadDrafts();
     renderQueue();
   } catch (e) {
@@ -1038,7 +995,9 @@ async function loadRequests() {
 $("new-request").addEventListener("click", newRequestForm);
 
 (async function start() {
+  initializeWorkspace();
   const asked = readFiltersFromUrl();
+  applyWorkspaceView();
   await loadDrafts();
   await reloadStaged();
   if (asked) {
@@ -1060,6 +1019,8 @@ $("new-request").addEventListener("click", newRequestForm);
   try {
     const codes = await api("/api/itinerary/templates");
     $("codes-note").textContent = `${codes.count} active day codes`;
+    dayTitles = new Map((codes.codes || []).map(row => [row.code, row.title]));
+    if (current) renderDetail(current);
   } catch (e) {
     $("codes-note").innerHTML = `<span class="err">${esc(e.message)}</span>`;
   }
