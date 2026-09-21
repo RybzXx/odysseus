@@ -1405,10 +1405,22 @@ async def _startup_event():
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
 
+    if os.getenv("ITINERARY_CREATION_ENABLED") == "1":
+        from services.itinerary.creation_worker import creation_loop
+        app.state.itinerary_creation_task = asyncio.create_task(creation_loop())
+        _startup_tasks.append(app.state.itinerary_creation_task)
+
     logger.info("Application startup complete")
 
 async def _shutdown_event():
     logger.info("Application shutting down...")
+    creation_task = getattr(app.state, "itinerary_creation_task", None)
+    if creation_task:
+        creation_task.cancel()
+        try:
+            await creation_task
+        except asyncio.CancelledError:
+            pass
     if upload_cleanup_task:
         upload_cleanup_task.cancel()
         try:
