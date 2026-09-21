@@ -179,6 +179,7 @@ def build_candidates(request: NormalizedRequest, templates: dict,
     from services.itinerary.sequence_check import check_sequence
     from services.itinerary.regions import sequence_regions
     from services.itinerary.resolved_plan import resolve_plan
+    from services.itinerary.day_preferences import preferred_day_codes
 
     found = CandidateSet()
     corpus = list(load_routes() if routes is None else routes)
@@ -189,13 +190,14 @@ def build_candidates(request: NormalizedRequest, templates: dict,
     found.top_score = max(score_route(request, route) for route in corpus)
     for route in sorted(corpus, key=lambda r: (r.source_file, r.id)):
         codes, gaps = bind_route_to_templates(route, templates, request.requested_regions)
+        codes, overrides = preferred_day_codes(codes, request)
         if not codes:
             if not found.untested:
                 found.untested.append(f"{route.source_file} bound to no day. " + "; ".join(gaps))
             continue
         coverage = sequence_regions(codes, templates)
         requested = set(request.requested_regions)
-        plan = resolve_plan(codes, templates, request, route)
+        plan = resolve_plan(codes, templates, request, route, operator_overrides=overrides)
         check = check_sequence(codes, templates, start_date=request.start_date,
                                normalized_request=request, plan=plan)
         found.candidates.append(Candidate(

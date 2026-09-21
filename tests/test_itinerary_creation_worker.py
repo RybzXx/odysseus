@@ -15,7 +15,7 @@ def prepared(monkeypatch):
     draft = ItineraryDraft('dr-123456789abc', {}, request_id='manual:test')
     request = NormalizedRequest('manual:test', 'curated', 'Test', pax=2, day_count=1)
     check = NS(faults=[], unknown_codes=[], untested=[], flags=[])
-    candidate = NS(day_codes=['BG1'], check=check, plan=NS(issues=[], to_dict=lambda: {}), statement='Matched route')
+    candidate = NS(day_codes=['BG1'], check=check, plan=NS(issues=[], days=[], to_dict=lambda: {}), statement='Matched route')
     monkeypatch.setattr(worker, 'normalize_from_dict', lambda *a, **k: request)
     monkeypatch.setattr(worker, 'open_draft', lambda *a, **k: draft)
     monkeypatch.setattr(worker, 'active_day_templates', lambda: {})

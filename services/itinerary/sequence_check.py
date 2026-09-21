@@ -51,7 +51,8 @@ FAULT_ALTERNATIVE_PAIR = "alternative_pair"  # both halves of one day sold two w
 FAULT_KINDS = (FAULT_SITE_REPEAT, FAULT_DAY_REPEAT, FAULT_FLAG_CAP,
                FAULT_MOVE_NOT_JOINED, FAULT_LEG_TOO_LONG, FAULT_SITE_CLOSED,
                FAULT_DAY_START, FAULT_ROLE_ORDER, FAULT_ALTERNATIVE_PAIR,
-               "day_count", "region_coverage", "northbound_excursion", "default_route", "southern_return")
+               "day_count", "region_coverage", "northbound_excursion", "default_route", "southern_return",
+               "bakhdida_unrequested")
 
 # One site shared by two days is a flag, not a fault. The owner reads it and
 # decides, and the candidate that carries it scores lower than one that does not
@@ -285,6 +286,10 @@ def _check_request_requirements(check, templates, request):
     from services.itinerary.move_map import place_key
     from services.itinerary.places import normalize_place
     from services.itinerary.site_index import load_sites, canonical_site_code
+    from services.itinerary.day_preferences import bakhdida_requested
+    if any(code in ('MOBKHEB', 'MOBKEB') for code in check.day_codes) and not bakhdida_requested(request):
+        check.faults.append(SequenceFault(kind='bakhdida_unrequested', day=0,
+            statement='Use BAEB. MOBKHEB is available only when the request asks for Bakhdida.'))
     cities = set()
     site_codes = set()
     index = load_sites()
@@ -352,7 +357,8 @@ def _check_request_requirements(check, templates, request):
         ordered = bool(south and mosul and min(south) < min(mosul))
         endpoints = (place_key(shapes[0][1].start_city or "").lower() == "baghdad"
                      and place_key(shapes[-1][1].end_city or "").lower() == "erbil"
-                     and shapes[-1][1].role == ROLE_DEPARTURE)
+                     # BAEB offers the final-night/airport-departure options in pricing.
+                     and (shapes[-1][1].role == ROLE_DEPARTURE or shapes[-1][1].code == 'BAEB'))
         if not ordered or not endpoints:
             check.faults.append(SequenceFault(
                 kind="default_route", day=0,

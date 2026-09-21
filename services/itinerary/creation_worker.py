@@ -31,6 +31,9 @@ def prepare_job(job):
         checks += list(candidate.check.untested) + list(request.parse_warnings)
         checks += [flag.statement for flag in candidate.check.flags]
         checks += list(candidate.plan.issues)
+        for day in candidate.plan.days:
+            if day.get('evidence', {}).get('operator_override'):
+                checks.append(f"Day {day['number']}: uses BAEB. Bakhdida was not requested.")
         blocked = bool(candidate.check.faults or candidate.check.unknown_codes or candidate.check.untested
                        or candidate.plan.issues or request.parse_warnings)
         if len(candidate.day_codes) != request.day_count:

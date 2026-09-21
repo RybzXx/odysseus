@@ -75,7 +75,7 @@ class ResolvedPlan:
         return data
 
 
-def resolve_plan(codes, templates, request=None, route=None) -> ResolvedPlan:
+def resolve_plan(codes, templates, request=None, route=None, *, operator_overrides=None) -> ResolvedPlan:
     """Freeze catalogue facts. Never infer hotel inclusion from the end city.
 
     A catalogue conflict is owned by the catalogue and blocks this plan only.
@@ -128,11 +128,16 @@ def resolve_plan(codes, templates, request=None, route=None) -> ResolvedPlan:
             facts = source_day_facts(source, previous_source)
             previous_source = facts["overnight_city"] or facts["end_city"]
             evidence.update(route_id=route.id, source_day=source.day, source_facts=facts)
-            if facts["overnight_status"] == "unknown":
+            override = (operator_overrides or {}).get(number)
+            if override:
+                # Keep the original source facts and record the operator's change.
+                # Catalogue, routing, closure, and all other day checks still run.
+                evidence['operator_override'] = dict(override)
+            elif facts["overnight_status"] == "unknown":
                 plan.issues.append(f"Day {number}: the historical overnight status needs review.")
             elif facts["overnight_status"] != status or facts["overnight_city"] != overnight:
                 plan.issues.append(f"Day {number} ({code}): the binding changes the historical overnight stay.")
-            if facts["role"] == "departure" and not facts["end_city"]:
+            if not override and facts["role"] == "departure" and not facts["end_city"]:
                 plan.issues.append(f"Day {number}: the source does not establish the departure destination.")
         plan.days.append({"number": number, "code": code, "role": shape.role,
                           "start_city": start, "end_city": end, "overnight_status": status,

@@ -13,6 +13,9 @@ def workspace_request(draft, options):
     basis = draft.group_quote_basis or {}
     latest = draft.sequences[-1] if draft.sequences else None
     codes = list(basis.get("day_codes") or getattr(latest, "day_codes", []) or [])
+    normalized = normalize_from_dict(draft.request_id or draft.draft_id, draft.request_row, source=request_kind(draft.request_id))
+    from services.itinerary.day_preferences import preferred_day_codes
+    codes, _ = preferred_day_codes(codes, normalized)
     templates = load_all_templates()
     if not codes or any(code not in templates for code in codes):
         raise ValueError("A complete itinerary is required before sharing.")
@@ -30,7 +33,6 @@ def workspace_request(draft, options):
         # A repeated code can have a different arrival treatment. Keep each occurrence distinct.
         day = replace(day, code=f"{code}_DAY_{index + 1}")
         selected.append(asdict(day))
-    normalized = normalize_from_dict(draft.request_id or draft.draft_id, draft.request_row, source=request_kind(draft.request_id))
     start_date = basis.get("start_date") or (normalized.start_date.isoformat() if normalized.start_date else None)
     title = basis.get("title") or basis.get("label") or draft.request_row.get("Name") or draft.request_row.get("name") or draft.request_id or draft.draft_id
     return {
