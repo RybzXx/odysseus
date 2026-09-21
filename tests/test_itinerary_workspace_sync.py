@@ -22,3 +22,14 @@ def test_request_preserves_rest_arrival_and_repeated_codes(monkeypatch):
     assert payload["day_templates"][0]["code"] != payload["day_templates"][1]["code"]
     assert draft.__dict__ == before
     assert day.included_sites == ["MUSEUM"]
+
+
+def test_staff_route_is_not_silently_substituted(monkeypatch):
+    bakhdida = DayTemplate("MOBKHEB", "Bakhdida", "Mosul", "federal", "Erbil", "Visit Bakhdida", [], ["transport_day"], True, False, "")
+    plains = replace(bakhdida, code="BAEB", title="Plains of Nineveh")
+    monkeypatch.setattr(workspace_sync, "load_all_templates", lambda: {"MOBKHEB": bakhdida, "BAEB": plains})
+    draft = SimpleNamespace(draft_id="dr-test", request_id="queue:sample", doc_url="",
+        request_row={"name": "Test group", "tripDays": 1, "_staff_route_codes": ["MOBKHEB"]},
+        sequences=[], group_quote_basis={"day_codes": ["BAEB"]})
+    payload = workspace_sync.workspace_request(draft, GroupQuoteOptions())
+    assert payload["day_templates"][0]["code"] == "MOBKHEB_DAY_1"

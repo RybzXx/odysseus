@@ -14,8 +14,12 @@ def workspace_request(draft, options):
     latest = draft.sequences[-1] if draft.sequences else None
     codes = list(basis.get("day_codes") or getattr(latest, "day_codes", []) or [])
     normalized = normalize_from_dict(draft.request_id or draft.draft_id, draft.request_row, source=request_kind(draft.request_id))
-    from services.itinerary.day_preferences import preferred_day_codes
-    codes, _ = preferred_day_codes(codes, normalized)
+    staff_codes = draft.request_row.get('_staff_route_codes')
+    if staff_codes:
+        codes = list(staff_codes)
+    else:
+        from services.itinerary.day_preferences import preferred_day_codes
+        codes, _ = preferred_day_codes(codes, normalized)
     templates = load_all_templates()
     if not codes or any(code not in templates for code in codes):
         raise ValueError("A complete itinerary is required before sharing.")

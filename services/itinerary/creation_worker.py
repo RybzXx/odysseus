@@ -10,6 +10,8 @@ from services.itinerary.drafts import open_draft, add_sequence, ProposedSequence
 from services.itinerary.group_quote import GroupQuoteOptions
 from services.itinerary.normalizer import normalize_from_dict, request_kind
 from services.itinerary.propose_sequence import active_day_templates
+from services.itinerary.resolved_plan import resolve_plan
+from services.itinerary.sequence_check import check_sequence
 from services.itinerary.workspace_sync import workspace_request
 
 logger = logging.getLogger(__name__)
@@ -23,28 +25,40 @@ def prepare_job(job):
     checks = []
     blocked = False
     if not draft.group_quote_basis:
-        found = build_candidates(request, active_day_templates(), ceiling=1)
-        if not found.candidates:
-            return None, {'days': [], 'checks': found.untested or ['No matching route is available.']}
-        candidate = found.candidates[0]
-        checks = [fault.statement for fault in candidate.check.faults]
-        checks += list(candidate.check.untested) + list(request.parse_warnings)
-        checks += [flag.statement for flag in candidate.check.flags]
-        checks += list(candidate.plan.issues)
-        for day in candidate.plan.days:
+        templates = active_day_templates()
+        staff_codes = row.get('_staff_route_codes')
+        if staff_codes is not None:
+            if (not isinstance(staff_codes, list) or len(staff_codes) != request.day_count
+                    or any(not isinstance(code, str) or code not in templates for code in staff_codes)):
+                return None, {'days': [], 'checks': ['The saved team route is incomplete or uses an inactive code. Edit the route again.']}
+            day_codes = list(staff_codes)
+            plan = resolve_plan(day_codes, templates, request)
+            check = check_sequence(day_codes, templates, start_date=request.start_date,
+                                   normalized_request=request, plan=plan)
+            statement = 'Team-selected route'
+        else:
+            found = build_candidates(request, templates, ceiling=1)
+            if not found.candidates:
+                return None, {'days': [], 'checks': found.untested or ['No matching route is available.']}
+            candidate = found.candidates[0]
+            day_codes, plan, check, statement = candidate.day_codes, candidate.plan, candidate.check, candidate.statement
+        checks = [fault.statement for fault in check.faults]
+        checks += list(check.untested) + list(request.parse_warnings)
+        checks += [flag.statement for flag in check.flags]
+        checks += list(plan.issues)
+        for day in plan.days:
             if day.get('evidence', {}).get('operator_override'):
                 checks.append(f"Day {day['number']}: uses BAEB. Bakhdida was not requested.")
-        blocked = bool(candidate.check.faults or candidate.check.unknown_codes or candidate.check.untested
-                       or candidate.plan.issues or request.parse_warnings)
-        if len(candidate.day_codes) != request.day_count:
-            checks.append(f'The draft has {len(candidate.day_codes)} days. The request needs {request.day_count}.')
+        blocked = bool(check.faults or check.unknown_codes or check.untested or plan.issues or request.parse_warnings)
+        if len(day_codes) != request.day_count:
+            checks.append(f'The draft has {len(day_codes)} days. The request needs {request.day_count}.')
             blocked = True
         for field in ('pax', 'day_count'):
             if request.was_defaulted(field):
                 checks.append(f'Confirm the missing {field.replace("_", " ")} before pricing.')
                 blocked = True
-        sequence = ProposedSequence(source=SOURCE_RULES, day_codes=candidate.day_codes,
-                                    note=candidate.statement, plan=candidate.plan.to_dict())
+        sequence = ProposedSequence(source=SOURCE_RULES, day_codes=day_codes,
+                                    note=statement, plan=plan.to_dict())
         if not draft.sequences or draft.sequences[-1].plan != sequence.plan:
             draft = add_sequence(draft.draft_id, sequence)
         # Use the queued source snapshot for this calculation. Preserve saved history.

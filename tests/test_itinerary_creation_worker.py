@@ -52,6 +52,25 @@ def test_saved_operations_basis_keeps_group_bands(prepared):
     assert body['request']['foc_per_group'] == 1
 
 
+def test_team_route_replaces_the_candidate_exactly(prepared, monkeypatch):
+    draft, _, check = prepared
+    plan = NS(issues=[], days=[], to_dict=lambda: {'source': 'team'})
+    captured = []
+    monkeypatch.setattr(worker, 'active_day_templates', lambda: {'SAFA': NS(active=True)})
+    monkeypatch.setattr(worker, 'resolve_plan', lambda codes, templates, normalized: plan)
+    monkeypatch.setattr(worker, 'check_sequence', lambda *a, **k: check)
+    monkeypatch.setattr(worker, 'add_sequence', lambda draft_id, sequence: captured.append(sequence) or draft)
+    worker.prepare_job({'source_key': 'manual:test', 'request_data': {'_staff_route_codes': ['SAFA']}})
+    assert captured[0].day_codes == ['SAFA']
+    assert captured[0].note == 'Team-selected route'
+
+
+def test_invalid_team_route_stays_unpriced(prepared):
+    body, result = worker.prepare_job({'source_key': 'manual:test', 'request_data': {'_staff_route_codes': ['MISSING']}})
+    assert body is None
+    assert result['checks'] == ['The saved team route is incomplete or uses an inactive code. Edit the route again.']
+
+
 @pytest.mark.parametrize('cause', ['fault', 'missing_pax', 'length', 'plan', 'untested'])
 def test_invalid_route_is_visible_but_unpriced(prepared, cause):
     if cause == 'fault': prepared[2].faults = [NS(statement='Wrong arrival city')]
