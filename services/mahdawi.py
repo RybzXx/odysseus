@@ -59,6 +59,12 @@ def post_to_dict(row: MahdawiPost) -> dict:
         "flags": row.flags or [], "package_dir": row.package_dir,
         "fedshi_url": row.fedshi_url or (_FEDSHI_PRODUCT_URL % row.sku),
         "thumb_url": row.thumb_url,
+        "category": row.category, "original_price": row.original_price,
+        "discount_pct": row.discount_pct, "variants": row.variants or [],
+        "curation_score": row.curation_score,
+        "views": row.views, "orders": row.orders, "post_urls": row.post_urls or {},
+        "scheduled_at": row.scheduled_at.isoformat() if row.scheduled_at else None,
+        "posted_at": row.posted_at.isoformat() if row.posted_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
@@ -126,6 +132,8 @@ def stage_records(db: Session, records: List[ProductRecord],
             status=STATUS_STAGED,
             fedshi_url=record.source_url or (_FEDSHI_PRODUCT_URL % record.sku),
             thumb_url=(record.image_urls[0] if record.image_urls else None),
+            category=record.category,           # null until thread C confirms a source
+            variants=list(record.colors or []),  # colours we already read off the page
         )
         db.add(row)
         staged += 1
@@ -189,13 +197,53 @@ def build_package(db: Session, sku: str, owner: Optional[str] = None) -> str:
     return pkg
 
 
-def mark_posted(db: Session, sku: str, owner: Optional[str] = None) -> dict:
+def mark_posted(db: Session, sku: str, owner: Optional[str] = None,
+                post_urls: Optional[Dict[str, str]] = None) -> dict:
+    """
+    Record that a post went live.
+
+    Pre : the row exists. Post: status posted, posted_at stamped, and any
+          per-channel URLs merged into post_urls (existing channels kept).
+    """
     row = get_post(db, sku, owner)
     if not row:
         raise NotFound(sku)
     row.status = STATUS_POSTED
+    row.posted_at = utcnow_naive()
+    if post_urls:
+        merged = dict(row.post_urls or {})
+        merged.update(post_urls)
+        row.post_urls = merged
     db.commit()
     return post_to_dict(row)
+
+
+# -- drive a post onto a platform (blocking; call via asyncio.to_thread) ------
+def drive_instagram(db: Session, sku: str, owner: Optional[str] = None,
+                    dry_run: bool = True) -> dict:
+    """
+    Drive an already-packaged product onto Instagram through the phone.
+
+    Pre : status is packaged and package_dir exists on disk.
+    Post: dry_run -> a report, status unchanged, nothing posted. live -> status
+          posted and posted_at stamped only when the driver reports "posted".
+    Invariant (fail closed, spec 0.3): a DriverError propagates and the row
+          stays packaged, never a false "posted".
+    """
+    from mahdawi.driver.instagram import InstagramDriver
+
+    row = get_post(db, sku, owner)
+    if not row:
+        raise NotFound(sku)
+    if row.status != STATUS_PACKAGED:
+        raise BadState("sku %s is %s, not packaged" % (sku, row.status))
+    if not row.package_dir or not os.path.isdir(row.package_dir):
+        raise BadState("sku %s has no package on disk" % sku)
+
+    result = InstagramDriver().post(row.package_dir, dry_run=dry_run)
+    if not dry_run and result.get("status") == "posted":
+        mark_posted(db, sku, owner)
+    return result
 
 
 # -- fetch run (Playwright, blocking; call via asyncio.to_thread) -------------

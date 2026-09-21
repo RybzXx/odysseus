@@ -35,6 +35,25 @@ def ensure_dir() -> str:
     return SESSION_DIR
 
 
+def product_sku_from_url(url: str) -> str:
+    """
+    The SKU segment of a product URL, or "" when the URL is not a product.
+
+    Inverse of PRODUCT_URL. Post: "/products/AFOZC?x=1" -> "AFOZC";
+    "https://web.fedshi.com/" -> "". A query or fragment is stripped.
+    """
+    marker = "/products/"
+    i = url.find(marker)
+    if i < 0:
+        return ""
+    rest = url[i + len(marker):]
+    for sep in ("/", "?", "#"):
+        j = rest.find(sep)
+        if j >= 0:
+            rest = rest[:j]
+    return rest
+
+
 def listing_query(collection: str) -> str:
     """
     Map a friendly collection name to the Fedshi listing query string.

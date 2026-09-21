@@ -1,0 +1,9 @@
+{
+  "app_package": "com.instagram.android",
+  "create_button": {"fallback_xy": [0.0625, 0.075]},
+  "next": {"texts": ["Next"], "descs": ["Next"]},
+  "audio_remove": {"descs": ["Remove audio", "Clear audio", "Remove sound"]},
+  "sharing_ok": {"texts": ["OK"]},
+  "caption_field": {"rid": "caption_input_text_view"},
+  "share_button": {"rid": "share_footer_button"}
+}

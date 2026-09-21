@@ -117,6 +117,13 @@ class PlaywrightFedshiSource:
                 raw = page.evaluate(_EXTRACT_JS)
             finally:
                 browser.close()
+        # F1: confirm the page stayed on the requested product. A bounce to
+        # home or another product still renders an h1/title, so a title check
+        # alone would extract the wrong item. The landed SKU must match.
+        landed = session.product_sku_from_url(raw.get("url") or "")
+        if landed != sku:
+            raise ExtractionError(
+                "fetch for %s landed on %r" % (sku, raw.get("url")))
         if not raw.get("title"):
             raise ExtractionError("no product title for %s" % sku)
         record = build_record(raw, sku)

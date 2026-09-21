@@ -862,6 +862,20 @@ class MahdawiPost(TimestampMixin, Base):
     package_dir  = Column(String, nullable=True)       # set when packaged
     fedshi_url   = Column(String, nullable=True)       # product page on Fedshi
     thumb_url    = Column(String, nullable=True)       # first image, for the grid
+    # Catalog detail — "as much as possible, always on me". category and the
+    # original_price/discount pair stay null until a live DOM check confirms a
+    # source (spec 1.4, thread C); variants carries the colours we already read.
+    category       = Column(String, nullable=True)
+    original_price = Column(Integer, nullable=True)    # crossed-out retail, IQD
+    discount_pct   = Column(Integer, nullable=True)    # 0-100
+    variants       = Column(JSON, default=list)        # colours/sizes read off the page
+    curation_score = Column(Integer, nullable=True)    # agent rank, 0-100
+    # Post-time facts, filled when a post goes live.
+    views        = Column(Integer, nullable=True)
+    orders       = Column(Integer, nullable=True)
+    post_urls    = Column(JSON, default=dict)          # {"instagram": url, ...}
+    scheduled_at = Column(DateTime, nullable=True)
+    posted_at    = Column(DateTime, nullable=True)
 
     __table_args__ = (
         Index('ix_mahdawi_posts_owner_status', 'owner', 'status'),
@@ -2593,6 +2607,39 @@ def init_db():
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
     _migrate_notes_project_and_attachments()
+    _migrate_add_mahdawi_catalog_columns()
+
+
+def _migrate_add_mahdawi_catalog_columns():
+    """Ensure the catalog + post-lifecycle columns exist on mahdawi_posts.
+
+    create_all never alters a table it already made, so a phone that created
+    mahdawi_posts before these columns landed keeps the old shape. Idempotent:
+    each column is added only when PRAGMA shows it missing.
+    """
+    columns = {
+        "category": "TEXT",
+        "original_price": "INTEGER",
+        "discount_pct": "INTEGER",
+        "variants": "TEXT",
+        "curation_score": "INTEGER",
+        "views": "INTEGER",
+        "orders": "INTEGER",
+        "post_urls": "TEXT",
+        "scheduled_at": "DATETIME",
+        "posted_at": "DATETIME",
+    }
+    try:
+        with engine.connect() as conn:
+            existing = [r[1] for r in conn.execute(text("PRAGMA table_info(mahdawi_posts)"))]
+            if not existing:
+                return  # table not created yet; create_all will build it in full
+            for name, sqltype in columns.items():
+                if name not in existing:
+                    conn.execute(text("ALTER TABLE mahdawi_posts ADD COLUMN %s %s" % (name, sqltype)))
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"mahdawi_posts catalog columns migration: {e}")
 
 
 def _migrate_notes_project_and_attachments():

@@ -54,6 +54,11 @@ def test_full_lifecycle(session, tmp_path):
     rep = svc.stage_records(session, [rec], media, owner="u1")
     assert rep["staged"] == 1 and rep["skipped_duplicate"] == 0
 
+    # catalog fields: variants carry the colours read off the page
+    staged = svc.list_products(session, owner="u1")[0]
+    assert staged["variants"] == ["Black"]
+    assert staged["posted_at"] is None and staged["post_urls"] == {}
+
     # dedupe: a second stage of the same sku is a no-op
     rep2 = svc.stage_records(session, [rec], media, owner="u1")
     assert rep2["staged"] == 0 and rep2["skipped_duplicate"] == 1
@@ -73,8 +78,11 @@ def test_full_lifecycle(session, tmp_path):
     meta = json.load(open(os.path.join(pkg, "meta.json"), encoding="utf-8"))
     assert meta["sku"] == "AFOZC" and meta["price"] and meta["price"] > 0
 
-    svc.mark_posted(session, "AFOZC", owner="u1")
+    posted = svc.mark_posted(session, "AFOZC", owner="u1",
+                             post_urls={"instagram": "https://instagram.com/p/xyz"})
     assert svc.platform_status(session, "u1")["counts"]["posted"] == 1
+    assert posted["posted_at"] is not None
+    assert posted["post_urls"]["instagram"] == "https://instagram.com/p/xyz"
 
 
 def test_no_price_flagged(session):
