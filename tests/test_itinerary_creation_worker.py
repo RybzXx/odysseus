@@ -66,8 +66,11 @@ def test_team_route_replaces_the_candidate_exactly(prepared, monkeypatch):
 
 
 def test_invalid_team_route_stays_unpriced(prepared):
-    body, result = worker.prepare_job({'source_key': 'manual:test', 'request_data': {'_staff_route_codes': ['MISSING']}})
+    saved_days = [{'number': 1, 'code': 'BG1'}]
+    body, result = worker.prepare_job({'source_key': 'manual:test', 'request_data': {'_staff_route_codes': ['MISSING']},
+                                       'result': {'days': saved_days}})
     assert body is None
+    assert result['days'] == saved_days
     assert result['checks'] == ['The saved team route is incomplete or uses an inactive code. Edit the route again.']
 
 

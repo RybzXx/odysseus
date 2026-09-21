@@ -30,7 +30,8 @@ def prepare_job(job):
         if staff_codes is not None:
             if (not isinstance(staff_codes, list) or len(staff_codes) != request.day_count
                     or any(not isinstance(code, str) or code not in templates for code in staff_codes)):
-                return None, {'days': [], 'checks': ['The saved team route is incomplete or uses an inactive code. Edit the route again.']}
+                previous_days = list((job.get('result') or {}).get('days') or [])
+                return None, {'days': previous_days, 'checks': ['The saved team route is incomplete or uses an inactive code. Edit the route again.']}
             day_codes = list(staff_codes)
             plan = resolve_plan(day_codes, templates, request)
             check = check_sequence(day_codes, templates, start_date=request.start_date,
