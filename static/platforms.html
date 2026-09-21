@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Platforms — Mahdawi.store</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1c1b19; --muted: #6b6862;
+    --line: #e2e0da; --accent: #0f766e; --amber: #f59e0b; --warn: #8a5a1c;
+    --gone: #8a2f2f; --ok: #1d6b45;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a; --panel: #1e2024; --ink: #e8e6e1; --muted: #9a978f;
+      --line: #313439; --accent: #7fb8a4; --amber: #d3a15f; --warn: #d3a15f;
+      --gone: #d98b8b; --ok: #7fb8a4;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel);
+           border-bottom: 1px solid var(--line); padding: 14px 20px; }
+  h1 { margin: 0 0 2px; font-size: 17px; font-weight: 620; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel);
+           color: var(--ink); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  input { font: inherit; border: 1px solid var(--line); background: var(--panel);
+          color: var(--ink); border-radius: 7px; padding: 6px 10px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+           gap: 12px; margin-bottom: 22px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+  .stat { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  .stat b { color: var(--ink); font-weight: 600; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--gone); }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .grow { flex: 1; }
+  .grid { display: grid; gap: 10px; }
+  .row { display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center;
+         background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  .thumb { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: var(--bg); }
+  .prod { min-width: 0; }
+  .prod .t { font-weight: 600; direction: rtl; text-align: right; overflow: hidden;
+             text-overflow: ellipsis; white-space: nowrap; }
+  .prod .m { font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+  .acts { display: flex; gap: 6px; align-items: center; }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
+          color: var(--muted); }
+  .pill.staged { color: var(--warn); } .pill.approved { color: var(--accent); }
+  .pill.packaged { color: var(--ok); } .pill.posted { color: var(--muted); }
+  a { color: var(--accent); }
+  .msg { font-size: 12px; color: var(--muted); margin-left: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Platforms — Mahdawi.store</h1>
+  <div class="sub">Fedshi products, priced and captioned, staged for your approval. Nothing posts on its own.</div>
+</header>
+<main>
+  <div class="cards" id="cards"><!-- platform cards --></div>
+
+  <div class="bar">
+    <input id="skus" placeholder="SKUs, comma-separated (e.g. AFOZC, AFTQX)" style="min-width:280px">
+    <button id="fetch-skus">Fetch SKUs</button>
+    <button id="fetch-best">Fetch best-sellers</button>
+    <button id="fetch-new">Fetch new</button>
+    <span class="msg" id="run-msg"></span>
+    <span class="grow"></span>
+    <button id="refresh">Refresh</button>
+  </div>
+
+  <div class="grid" id="grid"><!-- product rows --></div>
+</main>
+<script src="/static/js/platforms.js?v=20260921"></script>
+</body>
+</html>
