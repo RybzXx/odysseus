@@ -14,7 +14,7 @@ from services.itinerary.models import NormalizedRequest
 def prepared(monkeypatch):
     draft = ItineraryDraft('dr-123456789abc', {}, request_id='manual:test')
     request = NormalizedRequest('manual:test', 'curated', 'Test', pax=2, day_count=1)
-    check = NS(faults=[], unknown_codes=[], untested=[])
+    check = NS(faults=[], unknown_codes=[], untested=[], flags=[])
     candidate = NS(day_codes=['BG1'], check=check, plan=NS(issues=[], to_dict=lambda: {}), statement='Matched route')
     monkeypatch.setattr(worker, 'normalize_from_dict', lambda *a, **k: request)
     monkeypatch.setattr(worker, 'open_draft', lambda *a, **k: draft)
@@ -52,11 +52,12 @@ def test_saved_operations_basis_keeps_group_bands(prepared):
     assert body['request']['foc_per_group'] == 1
 
 
-@pytest.mark.parametrize('cause', ['fault', 'missing_pax', 'length', 'plan'])
+@pytest.mark.parametrize('cause', ['fault', 'missing_pax', 'length', 'plan', 'untested'])
 def test_invalid_route_is_visible_but_unpriced(prepared, cause):
     if cause == 'fault': prepared[2].faults = [NS(statement='Wrong arrival city')]
     elif cause == 'missing_pax': prepared[1].defaulted_fields = ['pax']
     elif cause == 'length': prepared[1].day_count = 4
+    elif cause == 'untested': prepared[2].untested = ['The start city is unknown.']
     else: prepared[1].parse_warnings = ['Unknown region']
     body, result = worker.prepare_job({'source_key': 'manual:test', 'request_data': {}})
     assert body is None

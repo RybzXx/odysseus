@@ -29,8 +29,10 @@ def prepare_job(job):
         candidate = found.candidates[0]
         checks = [fault.statement for fault in candidate.check.faults]
         checks += list(candidate.check.untested) + list(request.parse_warnings)
+        checks += [flag.statement for flag in candidate.check.flags]
         checks += list(candidate.plan.issues)
-        blocked = bool(candidate.check.faults or candidate.check.unknown_codes or candidate.plan.issues or request.parse_warnings)
+        blocked = bool(candidate.check.faults or candidate.check.unknown_codes or candidate.check.untested
+                       or candidate.plan.issues or request.parse_warnings)
         if len(candidate.day_codes) != request.day_count:
             checks.append(f'The draft has {len(candidate.day_codes)} days. The request needs {request.day_count}.')
             blocked = True
