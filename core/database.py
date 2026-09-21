@@ -837,6 +837,37 @@ class EditorDraft(TimestampMixin, Base):
     )
 
 
+class MahdawiPost(TimestampMixin, Base):
+    """A Fedshi product turned into a post, plus its approval lifecycle.
+
+    One row per product (sku unique = post-once). It holds the whole staged
+    draft — caption, price, media — so the Platforms dashboard reads app.db
+    natively, with no second store and no Supabase. status walks
+    staged -> approved -> packaged -> posted; nothing posts without a human.
+    """
+    __tablename__ = "mahdawi_posts"
+
+    id           = Column(String, primary_key=True, index=True)
+    owner        = Column(String, nullable=True, index=True)
+    sku          = Column(String, nullable=False, unique=True, index=True)
+    title        = Column(String, nullable=True)
+    caption      = Column(Text, nullable=True)
+    price        = Column(Integer, nullable=True)      # reselling price, IQD
+    profit       = Column(Integer, nullable=True)      # price - wholesale, IQD
+    media_dir    = Column(String, nullable=True)       # local dir of downloaded media
+    media_files  = Column(JSON, default=list)          # ordered basenames for the post
+    channels     = Column(JSON, default=list)          # ["instagram","tiktok"]
+    flags        = Column(JSON, default=list)          # NO_PRICE, PRICE_AT_FLOOR, ...
+    status       = Column(String, default="staged", index=True)
+    package_dir  = Column(String, nullable=True)       # set when packaged
+    fedshi_url   = Column(String, nullable=True)       # product page on Fedshi
+    thumb_url    = Column(String, nullable=True)       # first image, for the grid
+
+    __table_args__ = (
+        Index('ix_mahdawi_posts_owner_status', 'owner', 'status'),
+    )
+
+
 class TaskRun(Base):
     """Record of a single execution of a ScheduledTask."""
     __tablename__ = "task_runs"
