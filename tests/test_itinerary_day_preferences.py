@@ -35,7 +35,7 @@ def test_structured_request_and_code_alias():
     assert preferred_day_codes(['MOBKHEB'], request)[0] == ['BAEB']
 
 
-def test_historical_bakhdida_does_not_request_it_and_provenance_is_retained():
+def test_historical_bakhdida_does_not_request_it_and_provenance_is_retained(monkeypatch):
     request = normalize_from_dict('queue:test', {'tripDays': 1})
     route = RouteRecord(id='test', source_file='historical.docx', day_count=1,
         tour_type='individual', city_sequence=['Erbil'], themes=[],
@@ -48,6 +48,14 @@ def test_historical_bakhdida_does_not_request_it_and_provenance_is_retained():
     assert plan.days[0]['evidence']['operator_override']['from_code'] == 'MOBKHEB'
     assert plan.days[0]['evidence']['source_facts']['overnight_status'] == 'none'
     assert not any('historical overnight' in issue for issue in plan.issues)
+    # The phone desk must keep the checked plan and its replacement evidence.
+    from services.itinerary import candidates, propose_sequence
+    candidate = SimpleNamespace(route_id=route.id, route_name=route.source_file,
+        match_score=0.8, day_codes=codes, plan=plan, gap_notes=[],
+        check=SimpleNamespace(untested=[], faults=[]))
+    monkeypatch.setattr(candidates, 'build_candidates', lambda *a, **k: SimpleNamespace(candidates=[candidate]))
+    monkeypatch.setattr(propose_sequence, 'load_routes', lambda: [route])
+    assert propose_sequence.propose_by_rules(request, rows).plan == plan.to_dict()
     # The override does not excuse a conflicting catalogue destination.
     rows['BAEB'] = replace(rows['BAEB'], overnight_city='Baghdad or Erbil')
     broken = resolve_plan(codes, rows, request, route, operator_overrides=overrides)

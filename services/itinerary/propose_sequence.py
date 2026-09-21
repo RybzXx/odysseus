@@ -128,13 +128,13 @@ def _best_binding_route(request: NormalizedRequest, templates: dict) -> tuple:
     from services.itinerary.candidates import build_candidates
     candidates = build_candidates(request, templates, ceiling=1)
     if not candidates.candidates:
-        return None, 0.0, [], candidates.untested
+        return None, 0.0, [], candidates.untested, None
     candidate = candidates.candidates[0]
     route = next(r for r in load_routes() if r.id == candidate.route_id
                  and r.source_file == candidate.route_name)
     issues = list(candidate.gap_notes) + list(candidate.check.untested)
     issues.extend(f.statement for f in candidate.check.faults)
-    return route, candidate.match_score, candidate.day_codes, issues
+    return route, candidate.match_score, candidate.day_codes, issues, candidate.plan
 
 
 def propose_by_rules(request: NormalizedRequest, templates: dict) -> ProposedSequence:
@@ -148,7 +148,7 @@ def propose_by_rules(request: NormalizedRequest, templates: dict) -> ProposedSeq
     Deterministic by design. It is the fixed second opinion a thread is read
     against, so it must answer the same way however many comments follow.
     """
-    route, score, day_codes, gap_notes = _best_binding_route(request, templates)
+    route, score, day_codes, gap_notes, plan = _best_binding_route(request, templates)
     if route is None:
         return ProposedSequence(source=SOURCE_RULES, day_codes=[],
                                 note="; ".join(gap_notes) or "No historical route could be bound.")
@@ -171,10 +171,9 @@ def propose_by_rules(request: NormalizedRequest, templates: dict) -> ProposedSeq
                  else "no region evidence either way")
     if gap_notes:
         parts.append("Not ready: " + "; ".join(gap_notes))
-    from services.itinerary.resolved_plan import resolve_plan
     return ProposedSequence(source=SOURCE_RULES, day_codes=list(day_codes),
                             note=". ".join(parts) + ".",
-                            plan=resolve_plan(day_codes, templates, request, route).to_dict())
+                            plan=plan.to_dict())
 
 
 # ── the model proposer ────────────────────────────────────────────────────────
