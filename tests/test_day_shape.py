@@ -36,6 +36,7 @@ from services.itinerary.day_shape import (  # noqa: E402
     SOURCE_CATALOGUE,
     SOURCE_OWNER,
     SOURCE_TITLE,
+    allowed_start_cities,
     all_shapes,
     shape_of,
     shapes_without_a_start,
@@ -136,6 +137,12 @@ def test_a_title_that_says_a_drive_gives_a_role_and_no_start():
 
 def test_both_title_only_codes_are_named():
     assert set(ROLE_FROM_TITLE) == {"ArrSU", "NA1"}
+
+
+def test_urerna_can_start_after_basra_or_nasiriyah():
+    template = row(city="Nasiriyah", overnight="Nasiriyah",
+                   title="Eridu, Nasiriyah Museum & Great Ziggurat of Ur")
+    assert allowed_start_cities("UrErNA", template) == ("Basra", "Nasiriyah")
 
 
 # ── what the catalogue alone can say ─────────────────────────────────────────

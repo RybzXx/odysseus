@@ -391,14 +391,15 @@ def _check_day_starts(check: SequenceCheck, templates: dict) -> None:
 
     Pre:  `check.day_codes` is the proposal in order.
 
-    A day with no fixed start passes. Four templates carry none, because the
-    work sells them from either side, and refusing one would refuse a day that
-    may be right (ws-03 phase seven, WP34.1).
+    A day with no confirmed start passes. Some templates have more than one
+    confirmed start because operations sells the day from either city.
 
     This sees what the night chain cannot. A day trip and a departure day carry
     no overnight city, so they take no position in that chain, and the two
     routing faults the owner named both sat on such a day.
     """
+    from services.itinerary.day_shape import allowed_start_cities
+
     shapes = _shapes_for(check, templates)
     if not shapes:
         return
@@ -408,15 +409,17 @@ def _check_day_starts(check: SequenceCheck, templates: dict) -> None:
         shape = shapes.get(code)
         if shape is None:
             continue
-        if (where_the_night_ended and shape.start_city
-                and shape.start_city != where_the_night_ended):
+        starts = allowed_start_cities(code, templates[code])
+        if (where_the_night_ended and starts
+                and where_the_night_ended not in starts):
+            named_starts = " / ".join(starts)
             check.faults.append(SequenceFault(
                 kind=FAULT_DAY_START, day=position,
                 statement=(f"day {position} ({code}) begins in "
-                           f"{shape.start_city}, and the night before ended in "
+                           f"{named_starts}, and the night before ended in "
                            f"{where_the_night_ended}"),
                 day_code=code, from_city=where_the_night_ended,
-                to_city=shape.start_city))
+                to_city=named_starts))
         where_the_night_ended = shape.end_city or where_the_night_ended
 
 

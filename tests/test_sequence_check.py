@@ -25,6 +25,7 @@ if ODYSSEUS_ROOT not in sys.path:
 from services.itinerary import move_map, site_index  # noqa: E402
 from services.itinerary.sequence_check import (  # noqa: E402
     FAULT_DAY_REPEAT,
+    FAULT_DAY_START,
     FAULT_FLAG_CAP,
     FAULT_LEG_TOO_LONG,
     FAULT_MOVE_NOT_JOINED,
@@ -78,6 +79,10 @@ TEMPLATES = {
                   "included_sites": ["ERB_CITD"]},
     "TO_BASRA": {"city": "Duhok / Basra", "overnight_city": "Basra",
                  "included_sites": []},
+    "BASRA_DAY": {"city": "Basra", "overnight_city": "Basra",
+                  "included_sites": []},
+    "UrErNA": {"city": "Nasiriyah", "overnight_city": "Nasiriyah",
+                "included_sites": []},
     "DEPARTURE": {"city": "Baghdad", "overnight_city": "", "included_sites": []},
 }
 
@@ -129,6 +134,12 @@ def test_a_departure_day_takes_no_night():
     check = check_sequence(["BAGHDAD_DAY", "DEPARTURE"], TEMPLATES,
                            start_date=date(2026, 1, 1))
     assert check.nights == ["Baghdad"]
+
+
+def test_urerna_can_follow_a_basra_night():
+    check = check_sequence(["BASRA_DAY", "UrErNA"], TEMPLATES,
+                           start_date=date(2026, 1, 1))
+    assert FAULT_DAY_START not in kinds(check)
 
 
 # ── a site on two days ───────────────────────────────────────────────────────

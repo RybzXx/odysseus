@@ -106,6 +106,12 @@ ROLE_FROM_TITLE = {
     "NA1": ROLE_TRANSIT,
 }
 
+# Operations sells this Nasiriyah day after either a Basra or Nasiriyah night.
+# The catalogue-derived Nasiriyah start stays the canonical shape.
+ADDITIONAL_ALLOWED_STARTS = {
+    "UrErNA": ("Basra",),
+}
+
 # Words in a title that name a role the chain cannot show.
 _ARRIVAL_WORDS = ("arrival", "arrive")
 _DEPARTURE_WORDS = ("departure", "depart")
@@ -218,6 +224,13 @@ def shape_of(code: str, template) -> DayShape:
     role = ROLE_DAY_TRIP if len(chain) > 1 else ROLE_CITY_DAY
     return DayShape(code=code, start_city=overnight, end_city=overnight,
                     role=role, source=SOURCE_CATALOGUE)
+
+
+def allowed_start_cities(code: str, template) -> tuple[str, ...]:
+    """Return every confirmed city from which this template can begin."""
+    shape = shape_of(code, template)
+    starts = (*ADDITIONAL_ALLOWED_STARTS.get(code, ()), shape.start_city)
+    return tuple(dict.fromkeys(start for start in starts if start))
 
 
 _SHAPES: Optional[dict] = None
