@@ -869,6 +869,10 @@ app.include_router(itinerary_router)
 from routes.offers.offers_routes import setup_offers_routes
 app.include_router(setup_offers_routes())
 
+# Mahdawi Platforms (Fedshi products -> priced, captioned posts, staged + packaged)
+from routes.mahdawi.mahdawi_routes import setup_mahdawi_routes
+app.include_router(setup_mahdawi_routes())
+
 from routes.curated.itinerary_desk_routes import setup_itinerary_desk_routes
 app.include_router(setup_itinerary_desk_routes())
 
@@ -984,6 +988,17 @@ async def serve_offers(request: Request):
     before it needs to be docked, and a standalone page cannot break the SPA.
     """
     return FileResponse(os.path.join(STATIC_DIR, "offers_review.html"))
+
+
+@app.get("/platforms")
+async def serve_platforms(request: Request):
+    """The Mahdawi Platforms dashboard — a standalone page.
+
+    Platform status cards plus the gathered-product grid, each product linking
+    to its Fedshi page and package. Standalone like the offers review, so it is
+    usable before it is docked and cannot break the SPA.
+    """
+    return FileResponse(os.path.join(STATIC_DIR, "platforms.html"))
 
 
 @app.get("/itinerary")
