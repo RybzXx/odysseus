@@ -90,6 +90,9 @@ async def process_job(job):
             if response.status_code == 200:
                 quote = response.json()
                 quote['warnings'] = list(dict.fromkeys(quote.get('warnings', []) + result['checks']))[:200]
+                active = next(v for v in quote['variants'] if v['key'] == quote['active_variant'])
+                result['days'] = [{key: day[key] for key in ('number', 'code', 'title', 'text', 'overnight')}
+                                  for day in active['days']]
                 status = 'needs_review' if not body['request']['start_date'] else 'ready'
                 summary = 'The itinerary and prices are ready for team review.'
             else:

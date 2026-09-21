@@ -74,3 +74,23 @@ def test_failed_pricing_returns_retryable_result(monkeypatch):
     assert sent['status'] == 'failed'
     assert sent['lease_token'] == 'claim'
     assert sent['quote'] is None
+
+
+def test_completed_result_uses_priced_final_night_variant(monkeypatch):
+    from src import ops_hub
+    post = AsyncMock(return_value={'ok': True})
+    monkeypatch.setattr(ops_hub, '_post', post)
+    monkeypatch.setenv('NEWOPS_API_TOKEN', 'test-token')
+    monkeypatch.setenv('NEWOPS_API_URL', 'https://pricing.example')
+    day = {'number': 1, 'code': 'BG1', 'title': 'Baghdad', 'text': 'Visit', 'overnight': ''}
+    payload = {'active_variant': 'without_final_night', 'variants': [{'key': 'without_final_night', 'days': [day]}]}
+    monkeypatch.setattr(worker, 'prepare_job', lambda j: ({'request': {'start_date': '2027-03-26'}}, {'days': [], 'checks': []}))
+    client = AsyncMock()
+    client.post.return_value = NS(status_code=200, json=lambda: payload)
+    context = AsyncMock(); context.__aenter__.return_value = client
+    monkeypatch.setattr(worker.httpx, 'AsyncClient', lambda **k: context)
+    asyncio.run(worker.process_job({'id': 'job', 'lease_token': 'claim'}))
+    result = post.call_args.args[1]
+    assert result['status'] == 'ready'
+    assert result['result']['days'] == [day]
+    assert result['result']['days'][-1]['overnight'] == ''
