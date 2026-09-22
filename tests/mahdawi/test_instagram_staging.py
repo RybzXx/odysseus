@@ -12,11 +12,17 @@ import pytest
 
 from mahdawi.driver import instagram
 from mahdawi.driver.errors import DriverError
-from mahdawi.driver.instagram import InstagramDriver, _read_package, first_image
+from mahdawi.driver import app_flow
+from mahdawi.driver.app_flow import first_image, read_package
+from mahdawi.driver.instagram import InstagramDriver
 
 
 class FakePhone:
-    """Records calls; MediaStore reports `newest` once `index_after` scans have run."""
+    """
+    Records calls. MediaStore indexes the pushed file after `index_after`
+    scans, and reports `stale` as newest until then; index_after None never
+    indexes it.
+    """
 
     def __init__(self, index_after=1, stale="/storage/emulated/0/Pictures/mahdawi-logo.png"):
         self.calls, self.scans, self.index_after, self.stale = [], 0, index_after, stale
@@ -39,14 +45,21 @@ class FakePhone:
     def delete_media(self, storage_path):
         self.calls.append(("delete", storage_path))
 
+    def _indexed(self):
+        return self.index_after is not None and self.scans >= self.index_after
+
+    def media_id(self, storage_path):
+        return 77 if self._indexed() else None
+
     def newest_gallery_item(self):
-        if self.index_after is not None and self.scans >= self.index_after:
+        if self._indexed():
             return self.pushed.replace("/sdcard/", "/storage/emulated/0/")
         return self.stale
 
 
 @pytest.fixture()
 def fast(monkeypatch):
+    monkeypatch.setattr(app_flow.time, "sleep", lambda s: None)
     monkeypatch.setattr(instagram.time, "sleep", lambda s: None)
 
 
@@ -54,24 +67,34 @@ def _driver(phone):
     return InstagramDriver(adb=phone, selectors={"app_package": "x"})
 
 
-def test_staging_waits_until_the_image_is_newest(fast, tmp_path):
+def test_push_waits_until_mediastore_holds_the_file(fast, tmp_path):
     phone = FakePhone(index_after=3)
     d = _driver(phone)
-    d._stage_in_gallery(str(tmp_path / "a.png"), "/sdcard/Pictures/mahdawi/S_1_a.png")
+    assert d._push_to_gallery(str(tmp_path / "a.png"), "/sdcard/Pictures/mahdawi/S_1_a.png") == 77
     assert phone.scans == 3
     assert ("touch", "/sdcard/Pictures/mahdawi/S_1_a.png") in phone.calls
-    assert "newest in gallery" in d.steps[-1]
+    d._require_newest_in_gallery("/sdcard/Pictures/mahdawi/S_1_a.png")
+    assert "newest in the gallery" in d.steps[-1]
 
 
-def test_staging_fails_closed_when_another_item_stays_newest(fast, tmp_path, monkeypatch):
-    monkeypatch.setattr(instagram, "_SCAN_WAIT_SECONDS", 0.05)
-    with pytest.raises(DriverError, match="not the newest gallery item"):
-        _driver(FakePhone(index_after=None))._stage_in_gallery(
+def test_push_fails_closed_when_mediastore_never_indexes(fast, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_flow, "SCAN_WAIT_SECONDS", 0.05)
+    with pytest.raises(DriverError, match="did not index"):
+        _driver(FakePhone(index_after=None))._push_to_gallery(
             str(tmp_path / "a.png"), "/sdcard/Pictures/mahdawi/S_1_a.png")
 
 
+def test_another_newer_item_fails_closed(fast, tmp_path):
+    phone = FakePhone(index_after=1, stale="/storage/emulated/0/Pictures/other.png")
+    d = _driver(phone)
+    d._push_to_gallery(str(tmp_path / "a.png"), "/sdcard/Pictures/mahdawi/S_1_a.png")
+    phone.index_after = None               # something else became newest
+    with pytest.raises(DriverError, match="not the newest gallery item"):
+        d._require_newest_in_gallery("/sdcard/Pictures/mahdawi/S_1_a.png")
+
+
 def test_post_never_opens_the_app_when_staging_fails(fast, tmp_path, monkeypatch):
-    monkeypatch.setattr(instagram, "_SCAN_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(app_flow, "SCAN_WAIT_SECONDS", 0.05)
     (tmp_path / "caption.txt").write_text("c", encoding="utf-8")
     (tmp_path / "a.png").write_bytes(b"i")
     phone = FakePhone(index_after=None)
@@ -86,9 +109,9 @@ def test_each_run_pushes_a_fresh_name(fast, tmp_path, monkeypatch):
     (tmp_path / "a.png").write_bytes(b"i")
     names = []
     for t in (1000, 2000):
-        monkeypatch.setattr(instagram.time, "time", lambda t=t: t)
+        monkeypatch.setattr(app_flow.time, "time", lambda t=t: t)
         phone = FakePhone(index_after=None)
-        monkeypatch.setattr(instagram, "_SCAN_WAIT_SECONDS", 0)
+        monkeypatch.setattr(app_flow, "SCAN_WAIT_SECONDS", 0)
         with pytest.raises(DriverError):
             _driver(phone).post(str(tmp_path), dry_run=True)
         names.append(phone.pushed)
@@ -101,7 +124,7 @@ def test_package_order_comes_from_meta_and_instagram_caption_wins(tmp_path):
     for n in ("v.mp4", "b.png", "a.png"):
         (tmp_path / n).write_bytes(b"x")
     (tmp_path / "meta.json").write_text(json.dumps({"media": ["v.mp4", "b.png", "a.png"]}))
-    caption, media = _read_package(str(tmp_path))
+    caption, media = read_package(str(tmp_path), "instagram")
     assert caption == "insta"
     assert [p.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for p in media] == ["v.mp4", "b.png", "a.png"]
     assert first_image(media).endswith("b.png")
@@ -110,7 +133,7 @@ def test_package_order_comes_from_meta_and_instagram_caption_wins(tmp_path):
 def test_a_package_of_only_video_is_refused(tmp_path):
     (tmp_path / "caption.txt").write_text("c", encoding="utf-8")
     (tmp_path / "v.mp4").write_bytes(b"x")
-    _c, media = _read_package(str(tmp_path))
+    _c, media = read_package(str(tmp_path), "instagram")
     with pytest.raises(DriverError, match="no image"):
         first_image(media)
 
@@ -119,7 +142,7 @@ def test_meta_listing_a_missing_file_skips_it(tmp_path):
     (tmp_path / "caption.txt").write_text("c", encoding="utf-8")
     (tmp_path / "a.png").write_bytes(b"x")
     (tmp_path / "meta.json").write_text(json.dumps({"media": ["gone.png", "a.png"]}))
-    _c, media = _read_package(str(tmp_path))
+    _c, media = read_package(str(tmp_path), "instagram")
     assert len(media) == 1 and media[0].endswith("a.png")
 
 
@@ -260,7 +283,7 @@ def test_open_create_still_gives_up_when_no_screen_answers(fast):
 
 
 def test_a_failed_run_removes_the_image_it_pushed(fast, tmp_path, monkeypatch):
-    monkeypatch.setattr(instagram, "_SCAN_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(app_flow, "SCAN_WAIT_SECONDS", 0.05)
     (tmp_path / "caption.txt").write_text("c", encoding="utf-8")
     (tmp_path / "a.png").write_bytes(b"i")
     phone = FakePhone(index_after=None)
@@ -328,7 +351,7 @@ def test_launch_waits_until_the_app_is_in_front(fast):
 
 def test_launch_fails_closed_when_another_app_keeps_the_screen(fast, monkeypatch):
     # BUG-11: the driver tapped into Termux while Instagram was still starting.
-    monkeypatch.setattr(instagram, "_LAUNCH_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(app_flow, "LAUNCH_WAIT_SECONDS", 0.05)
     with pytest.raises(DriverError, match="did not come to the front"):
         InstagramDriver(adb=LaunchPhone(ready_after=None), settle=0)._launch_and_wait()
 

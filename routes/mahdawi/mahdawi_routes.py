@@ -33,6 +33,12 @@ class SkuRequest(BaseModel):
     sku: str
 
 
+class DriveRequest(BaseModel):
+    sku: str
+    channel: str = "instagram"            # "instagram" | "tiktok"
+    dry_run: bool = True                  # the live post needs an explicit false
+
+
 def setup_mahdawi_routes() -> APIRouter:
     router = APIRouter(prefix="/api/mahdawi", tags=["Mahdawi Platforms"])
 
@@ -106,6 +112,27 @@ def setup_mahdawi_routes() -> APIRouter:
             raise HTTPException(409, str(e))
         finally:
             db.close()
+
+    @router.post("/drive")
+    async def drive(request: Request, body: DriveRequest):
+        """Drive a packaged product onto one platform. dry_run posts nothing."""
+        owner = _owner(request)
+
+        def _drive():
+            db = SessionLocal()
+            try:
+                return svc.drive_post(db, body.sku, body.channel, owner, body.dry_run)
+            finally:
+                db.close()
+
+        try:
+            return await asyncio.to_thread(_drive)
+        except svc.NotFound:
+            raise HTTPException(404, "no product %s" % body.sku)
+        except svc.BadState as e:
+            raise HTTPException(409, str(e))
+        except Exception as e:                    # a DriverError names the step
+            raise HTTPException(502, "%s: %s" % (e.__class__.__name__, e))
 
     @router.post("/layer2/retry")
     async def layer2_retry(request: Request):

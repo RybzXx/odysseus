@@ -1,0 +1,13 @@
+{
+  "app_package": "com.zhiliaoapp.musically",
+  "share_as_photo": {"texts": ["Photo"], "descs": ["Photo"]},
+  "next": {"texts": ["Next"], "descs": ["Next"]},
+  "description_field": {"texts": ["Writing a long description"]},
+  "title_field": {"texts": ["Add a catchy title"]},
+  "blank_area": {"fallback_xy": [0.903, 0.167]},
+  "leave_screen": {"fallback_xy": [0.074, 0.068]},
+  "discard_option": {"texts": ["Discard"]},
+  "post_screen": {"texts": ["More options", "Everyone can view"],
+                  "descs": ["More options", "Everyone can view"]},
+  "post_button": {"texts": ["Post"], "fallback_xy": [0.74, 0.899]}
+}

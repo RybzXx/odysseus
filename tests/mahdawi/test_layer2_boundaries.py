@@ -142,11 +142,11 @@ def test_ranking_rejects_an_empty_answer_for_candidates():
 
 # -- driver: which file the Instagram post uses -----------------------------------
 def test_instagram_driver_posts_an_image_first(tmp_path):
-    from mahdawi.driver.instagram import _read_package, first_image
+    from mahdawi.driver.app_flow import first_image, read_package
     (tmp_path / "caption.txt").write_text("x", encoding="utf-8")
     (tmp_path / "1000.mp4").write_bytes(b"v")
     (tmp_path / "2000.png").write_bytes(b"i")
-    _caption, media = _read_package(str(tmp_path))
+    _caption, media = read_package(str(tmp_path), "instagram")
     assert first_image(media).endswith("2000.png")
 
 

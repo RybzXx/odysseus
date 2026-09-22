@@ -77,16 +77,42 @@ class Adb:
         self.shell("content", "delete", "--uri", "content://media/external/file",
                    "--where", "\"_data='%s'\"" % storage_path)
 
-    def date_added(self, storage_path: str) -> Optional[int]:
-        """Post: MediaStore's date_added (epoch seconds) for the path, or None."""
-        out = self.shell("content", "query", "--uri", "content://media/external/file",
-                         "--projection", "date_added",
+    def _media_field(self, storage_path: str, field: str, uri: str) -> Optional[int]:
+        out = self.shell("content", "query", "--uri", uri, "--projection", field,
                          "--where", "\"_data='%s'\"" % storage_path)
         for line in out.splitlines():
-            if "date_added=" in line:
-                value = line.split("date_added=", 1)[1].split(",")[0].strip()
+            if "%s=" % field in line:
+                value = line.split("%s=" % field, 1)[1].split(",")[0].strip()
                 return int(value) if value.isdigit() else None
         return None
+
+    def date_added(self, storage_path: str) -> Optional[int]:
+        """Post: MediaStore's date_added (epoch seconds) for the path, or None."""
+        return self._media_field(storage_path, "date_added",
+                                 "content://media/external/file")
+
+    def media_id(self, storage_path: str) -> Optional[int]:
+        """
+        Post: the images-table id for the path, or None while MediaStore has
+              not indexed it. An app receives the image as
+              content://media/external/images/media/<id>.
+        """
+        return self._media_field(storage_path, "_id",
+                                 "content://media/external/images/media")
+
+    def share_image(self, media_id: int, package: str) -> None:
+        """
+        Hand one image to an app as a share.
+
+        Pre : media_id comes from media_id(); package is installed.
+        Post: the app opens its share screen with that image. Read permission
+              rides on the intent, so the app needs no gallery permission.
+        """
+        self.shell("am", "start", "-a", "android.intent.action.SEND",
+                   "-t", "image/*", "--grant-read-uri-permission",
+                   "--eu", "android.intent.extra.STREAM",
+                   "content://media/external/images/media/%d" % media_id,
+                   "-p", package)
 
     def utc_offset_seconds(self) -> int:
         """Post: the phone's current UTC offset, from `date +%z` (e.g. +0300)."""
@@ -137,6 +163,16 @@ class Adb:
 
     def back(self) -> None:
         self.keyevent("KEYCODE_BACK")
+
+    def hide_keyboard(self) -> None:
+        """
+        Post: no input method window holds the bottom of the screen. Escape
+              closes it without the screen change that Back causes.
+        """
+        self.keyevent("KEYCODE_ESCAPE")
+
+    def swipe(self, x1: int, y1: int, x2: int, y2: int, ms: int = 300) -> None:
+        self.shell("input", "swipe", str(x1), str(y1), str(x2), str(y2), str(ms))
 
     def set_ime(self, ime: str) -> None:
         self.shell("ime", "set", ime)

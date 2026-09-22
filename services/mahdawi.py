@@ -423,19 +423,29 @@ def mark_posted(db: Session, sku: str, owner: Optional[str] = None,
 
 
 # -- drive a post onto a platform (blocking; call via asyncio.to_thread) ------
-def drive_instagram(db: Session, sku: str, owner: Optional[str] = None,
-                    dry_run: bool = True) -> dict:
+def _driver_for(channel: str):
+    """Post: the driver class for the channel. Raises BadState for any other."""
+    if channel == "instagram":
+        from mahdawi.driver.instagram import InstagramDriver
+        return InstagramDriver
+    if channel == "tiktok":
+        from mahdawi.driver.tiktok import TikTokDriver
+        return TikTokDriver
+    raise BadState("no driver for channel %r" % channel)
+
+
+def drive_post(db: Session, sku: str, channel: str = "instagram",
+               owner: Optional[str] = None, dry_run: bool = True) -> dict:
     """
-    Drive an already-packaged product onto Instagram through the phone.
+    Drive an already-packaged product onto one platform through the phone.
 
     Pre : status is packaged and package_dir exists on disk.
-    Post: dry_run -> a report, status unchanged, nothing posted. live -> status
-          posted and posted_at stamped only when the driver reports "posted".
+    Post: dry_run -> a report, status unchanged, nothing posted. live -> the
+          channel is recorded in post_urls and, once every target channel has
+          posted, status posted and posted_at stamped.
     Invariant (fail closed, spec 0.3): a DriverError propagates and the row
           stays packaged, never a false "posted".
     """
-    from mahdawi.driver.instagram import InstagramDriver
-
     row = get_post(db, sku, owner)
     if not row:
         raise NotFound(sku)
@@ -444,9 +454,15 @@ def drive_instagram(db: Session, sku: str, owner: Optional[str] = None,
     if not row.package_dir or not os.path.isdir(row.package_dir):
         raise BadState("sku %s has no package on disk" % sku)
 
-    result = InstagramDriver().post(row.package_dir, dry_run=dry_run)
+    result = _driver_for(channel)().post(row.package_dir, dry_run=dry_run)
     if not dry_run and result.get("status") == "posted":
-        mark_posted(db, sku, owner)
+        posted_channels = dict(row.post_urls or {})
+        posted_channels[channel] = "posted by the driver"
+        if all(c in posted_channels for c in (row.channels or [channel])):
+            mark_posted(db, sku, owner, post_urls=posted_channels)
+        else:
+            row.post_urls = posted_channels
+            db.commit()
     return result
 
 
