@@ -2396,18 +2396,41 @@ def _migrate_email_account_default_invariant():
 _ENDPOINT_9ROUTER_ID = "endpoint_9router"
 
 
+def _probe_9router_model_ids(base_url: str, timeout: float = 3.0) -> list:
+    """GET <base>/models and return the OpenAI-format model ids.
+
+    Post: the ids, or [] on any failure. Bounded and silent on purpose: a
+    gateway that is down at boot must not delay or break startup. The normal
+    refresh path fills the cache later.
+    """
+    import json as _json
+    import urllib.request as _urlreq
+    try:
+        with _urlreq.urlopen(base_url.rstrip("/") + "/models", timeout=timeout) as resp:
+            data = _json.load(resp)
+        return [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+    except Exception:
+        return []
+
+
 def _migrate_seed_9router_endpoint():
     """Seed the 9router gateway as a model endpoint, once, if absent.
 
     9router is an OpenAI-compatible LLM gateway on the phone (Tailscale port
-    20128, keyless, ~745 models). This registers it so its models appear in the
-    picker, the same as a dashboard "add endpoint" would.
+    20128, keyless). This registers it so its models appear in the picker, the
+    same as a dashboard "add endpoint" with the default kind would.
+
+    endpoint_kind is "auto", not "proxy". The loopback URL then classifies as a
+    local server, which keeps automatic model refresh and shows every cached
+    model. A proxy is forced to manual refresh and a pinned-only picker, so it
+    stays empty until someone refreshes it by hand.
 
     Idempotent by a fixed id, not by URL: once the row exists, this never
     touches it again, so an admin who disables, edits, or re-keys it keeps that
     change. Only a hard delete lets the seed re-create it on the next start. The
     URL comes from ODYSSEUS_9ROUTER_URL when set, else the loopback default.
     """
+    import json as _json
     base_url = os.environ.get("ODYSSEUS_9ROUTER_URL", "http://localhost:20128/v1")
     db = None
     try:
@@ -2416,6 +2439,7 @@ def _migrate_seed_9router_endpoint():
         db = SessionLocal()
         if db.get(ModelEndpoint, _ENDPOINT_9ROUTER_ID) is not None:
             return
+        ids = _probe_9router_model_ids(base_url)
         db.add(ModelEndpoint(
             id=_ENDPOINT_9ROUTER_ID,
             name="9router",
@@ -2423,14 +2447,50 @@ def _migrate_seed_9router_endpoint():
             api_key=None,               # keyless on the phone; no secret to store
             is_enabled=True,
             model_type="llm",
-            endpoint_kind="proxy",      # external OpenAI-compatible API over the tailnet
+            endpoint_kind="auto",       # loopback -> local: auto refresh, all models visible
             model_refresh_mode="auto",
+            cached_models=_json.dumps(ids) if ids else None,
             owner=None,                 # shared: visible to every user
         ))
         db.commit()
-        logger.info("Seeded the 9router model endpoint at %s", base_url)
+        logger.info("Seeded the 9router model endpoint at %s with %d models", base_url, len(ids))
     except Exception as e:
         logger.warning("9router endpoint seed: %s", e)
+    finally:
+        if db is not None:
+            db.close()
+
+
+def _migrate_fix_9router_endpoint_kind():
+    """Repair the 9router row that the first seed wrote as a proxy.
+
+    The first seed used endpoint_kind="proxy". Odysseus forces every proxy to
+    manual model refresh, so that row never learned its models and the picker
+    showed it empty. This switches that row to "auto" and fills its model cache
+    once.
+
+    The guard matches only the row as the first seed left it: kind "proxy" and
+    no cached models. Any admin edit to either field makes the guard miss, so a
+    deliberate choice stays untouched. Idempotent: after one run the kind is no
+    longer "proxy".
+    """
+    import json as _json
+    db = None
+    try:
+        if not inspect(engine).has_table(ModelEndpoint.__tablename__):
+            return
+        db = SessionLocal()
+        row = db.get(ModelEndpoint, _ENDPOINT_9ROUTER_ID)
+        if row is None or row.endpoint_kind != "proxy" or (row.cached_models or "").strip():
+            return
+        row.endpoint_kind = "auto"
+        ids = _probe_9router_model_ids(row.base_url)
+        if ids:
+            row.cached_models = _json.dumps(ids)
+        db.commit()
+        logger.info("Repaired the 9router endpoint: kind auto, %d models cached", len(ids))
+    except Exception as e:
+        logger.warning("9router endpoint repair: %s", e)
     finally:
         if db is not None:
             db.close()
@@ -2648,6 +2708,7 @@ def init_db():
     _migrate_email_account_default_invariant()
     _migrate_seed_email_account()
     _migrate_seed_9router_endpoint()
+    _migrate_fix_9router_endpoint_kind()
     _migrate_add_calendar_metadata()
     _migrate_add_calendar_is_utc()
     _migrate_add_calendar_origin()
