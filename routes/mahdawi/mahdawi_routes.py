@@ -107,6 +107,30 @@ def setup_mahdawi_routes() -> APIRouter:
         finally:
             db.close()
 
+    @router.post("/layer2/retry")
+    async def layer2_retry(request: Request):
+        """Run Layer Two (Gemini via 9router) again for products waiting on it."""
+        owner = _owner(request)
+
+        def _retry():
+            db = SessionLocal()
+            try:
+                gateway = svc.layer2_gateway(db)
+                if gateway is None:
+                    raise HTTPException(409, "Layer Two is off (MAHDAWI_LAYER2=off)")
+                return svc.retry_waiting(db, gateway, owner)
+            finally:
+                db.close()
+
+        return await asyncio.to_thread(_retry)
+
+    @router.get("/replies")
+    async def replies(request: Request):
+        """Customer replies Gemini wrote that wait for the owner's approval."""
+        _owner(request)
+        from services import mahdawi_inbox
+        return {"replies": await asyncio.to_thread(mahdawi_inbox.pending_replies)}
+
     @router.post("/posted")
     async def posted(request: Request, body: SkuRequest):
         owner = _owner(request)

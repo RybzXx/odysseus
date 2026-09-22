@@ -885,6 +885,13 @@ class MahdawiPost(TimestampMixin, Base):
     post_urls    = Column(JSON, default=dict)          # {"instagram": url, ...}
     scheduled_at = Column(DateTime, nullable=True)
     posted_at    = Column(DateTime, nullable=True)
+    # Layer Two (Gemini via 9router). source_record keeps the Fedshi facts so a
+    # product waiting on 9router can be finished later without a re-fetch.
+    source_record = Column(JSON, nullable=True)
+    market_note  = Column(Text, nullable=True)      # buyer, season, selling angle
+    rank         = Column(Integer, nullable=True)   # 1 = post first, among passing products
+    rank_reason  = Column(Text, nullable=True)
+    layer2_error = Column(Text, nullable=True)      # why the product is waiting
 
     __table_args__ = (
         Index('ix_mahdawi_posts_owner_status', 'owner', 'status'),
@@ -2747,6 +2754,11 @@ def _migrate_add_mahdawi_catalog_columns():
         "content_type": "TEXT",
         "transform_state": "TEXT",
         "overlay_price_rendered": "BOOLEAN",
+        "source_record": "TEXT",
+        "market_note": "TEXT",
+        "rank": "INTEGER",
+        "rank_reason": "TEXT",
+        "layer2_error": "TEXT",
     }
     try:
         with engine.connect() as conn:

@@ -5,9 +5,9 @@ You chose the page's promo copy as the caption. So this assembles, it does not
 write: the product's description is the body, wrapped in a fixed skeleton —
 title, price, tagline, and the DM call to action عالخاص.
 
-A CaptionGenerator seam lets a later custom or model writer replace the body.
-It is dormant now: with no generator, the caption uses the description as is
-(spec 3.2.6).
+A CaptionGenerator seam lets Layer Two (layer2.caption_line) supply text: the
+selling line under the title in the short style, the body in the full style.
+With no generator, the caption is code text only (spec 3.2.6).
 
 When the caption exceeds the channel limit, only the description is trimmed,
 at a word boundary. The price and the CTA are load-bearing and never cut
@@ -75,17 +75,35 @@ def hashtag_cap(channel: Optional[str]) -> int:
     return settings.HASHTAG_CAP
 
 
+def for_channel(caption: str, channel: str) -> str:
+    """
+    The caption with its tag line cut to the channel's hashtag cap.
+
+    Pre : caption came from build_caption, whose tags form the last paragraph.
+    Post: every line except the tag line is unchanged. A caption whose last
+          paragraph is not all hashtags comes back unchanged.
+    """
+    head, sep, last = caption.rpartition("\n\n")
+    tags = last.split()
+    if not sep or not tags or not all(t.startswith("#") for t in tags):
+        return caption
+    kept = tags[:hashtag_cap(channel)]
+    return head + ("\n\n" + " ".join(kept) if kept else "")
+
+
 def _build_short(record: ProductRecord, price: Optional[int],
-                 hashtags: List[str]) -> str:
+                 hashtags: List[str], selling_line: Optional[str] = None) -> str:
     """
     Three lines: the product, the trust line, the call to action.
 
     Pre : the price already rides on the media (spec 2.3), so it is omitted here
-          unless INCLUDE_PRICE overrides.
-    Post: a caption of at most four lines plus the tag line. Observed Iraqi store
-          captions run one to three lines (research 2026-09-22).
+          unless INCLUDE_PRICE overrides. selling_line, when given, is Layer Two
+          text that already passed its code check (layer2.caption_line).
+    Post: a caption of at most five lines plus the tag line. Observed Iraqi store
+          captions run one to three lines (research 2026-09-22). The selling line
+          sits under the title; every other line is code text.
     """
-    lines = [p for p in (record.title or "", _price_line(price),
+    lines = [p for p in (record.title or "", selling_line or "", _price_line(price),
                          settings.TRUST_LINE, order_cta()) if p]
     body = "\n".join(lines)
     tags = " ".join(hashtags)
@@ -109,12 +127,12 @@ def build_caption(record: ProductRecord,
     flags: List[str] = []
     hashtags = build_hashtags(record, category, channel)
 
-    if settings.CAPTION_STYLE == "short":
-        return _build_short(record, price, hashtags), hashtags, flags
+    generated = generator(record) if generator is not None else None
 
-    body = None
-    if generator is not None:
-        body = generator(record)
+    if settings.CAPTION_STYLE == "short":
+        return _build_short(record, price, hashtags, generated), hashtags, flags
+
+    body = generated
     if not body:
         body = record.description or ""
 

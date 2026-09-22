@@ -6,6 +6,12 @@ mahdawi.fedshi for extraction+media) and keeps all state in one SQLAlchemy
 model, MahdawiPost. Nothing here posts to a platform: a human approves, then
 packaging builds a folder to post by hand.
 
+Two layers compose a product. Layer One (code) prices it, gates it, and checks
+its files. Layer Two (Gemini via 9router, mahdawi.layer2) judges its images,
+writes its market note and caption line, and ranks the open products. When
+Layer Two fails, the product waits (STATUS_WAITING_LAYER2) rather than falling
+back to code-written text.
+
 The fetch run (run_fetch) drives Playwright, which is a blocking sync API, so a
 route calls it through asyncio.to_thread. Playwright is imported lazily inside
 run_fetch, so the module — and the dashboard — load even where Playwright is
@@ -17,19 +23,32 @@ import json
 import os
 import shutil
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from core.database import MahdawiPost, SessionLocal, utcnow_naive
-from mahdawi.content import compose, scoring
+from core.database import (
+    MahdawiPost, ModelEndpoint, SessionLocal, _ENDPOINT_9ROUTER_ID, utcnow_naive,
+)
+from mahdawi.content import caption as caption_mod
+from mahdawi.content import compose, media_check, media_select, pricing, scoring
+from mahdawi.content import settings as content_settings
 from mahdawi.content.models import FLAG_NO_MEDIA, FLAG_NO_PRICE
 from mahdawi.fedshi.models import ProductRecord
+from mahdawi.layer2 import caption_line, image_judge, market_note, ranking
+from mahdawi.layer2 import settings as layer2_settings
+from mahdawi.layer2.gateway import Gateway, Layer2Failure
 
 STATUS_STAGED = "staged"
 STATUS_APPROVED = "approved"
 STATUS_PACKAGED = "packaged"
 STATUS_POSTED = "posted"
+# Passed the Layer One gates, but a Layer Two step (Gemini via 9router) failed.
+# The row holds its Fedshi facts and waits for retry_waiting(); it cannot be
+# approved, because it has no checked caption yet.
+STATUS_WAITING_LAYER2 = "waiting_layer2"
+
+FLAG_MEDIA_DROPPED = "MEDIA_DROPPED"
 
 _FEDSHI_PRODUCT_URL = "https://web.fedshi.com/products/%s"
 
@@ -65,6 +84,8 @@ def post_to_dict(row: MahdawiPost) -> dict:
         "category": row.category, "original_price": row.original_price,
         "discount_pct": row.discount_pct, "variants": row.variants or [],
         "curation_score": row.curation_score,
+        "market_note": row.market_note, "rank": row.rank, "rank_reason": row.rank_reason,
+        "layer2_error": row.layer2_error,
         "views": row.views, "orders": row.orders, "post_urls": row.post_urls or {},
         "scheduled_at": row.scheduled_at.isoformat() if row.scheduled_at else None,
         "posted_at": row.posted_at.isoformat() if row.posted_at else None,
@@ -96,60 +117,221 @@ def platform_status(db: Session, owner: Optional[str] = None) -> dict:
     if owner is not None:
         q = q.filter(MahdawiPost.owner == owner)
     rows = q.all()
-    counts = {STATUS_STAGED: 0, STATUS_APPROVED: 0, STATUS_PACKAGED: 0, STATUS_POSTED: 0}
+    counts = {STATUS_STAGED: 0, STATUS_APPROVED: 0, STATUS_PACKAGED: 0, STATUS_POSTED: 0,
+              STATUS_WAITING_LAYER2: 0}
     for r in rows:
         counts[r.status] = counts.get(r.status, 0) + 1
+    waiting = [r for r in rows if r.status == STATUS_WAITING_LAYER2]
     from mahdawi.fedshi import session as fedshi_session
     return {
         "gathered": len(rows),
         "counts": counts,
         "fedshi_session": fedshi_session.has_state(),
         "channels": ["instagram", "tiktok", "fedshi"],
+        "layer2": {
+            "enabled": layer2_settings.ENABLED,
+            "writer_model": layer2_settings.MODEL_WRITER,
+            "judge_model": layer2_settings.MODEL_JUDGE,
+            "waiting": len(waiting),
+            "last_error": waiting[0].layer2_error if waiting else None,
+        },
     }
 
 
-# -- stage (no network) ------------------------------------------------------
+# -- Layer Two (Gemini via 9router) -------------------------------------------
+def layer2_gateway(db: Session) -> Optional[Gateway]:
+    """
+    Post: None when Layer Two is switched off (operator state). Otherwise a
+          Gateway for the seeded 9router endpoint; a missing or disabled row
+          gives a Gateway whose every call fails, so products wait.
+    """
+    if not layer2_settings.ENABLED:
+        return None
+    row = db.get(ModelEndpoint, _ENDPOINT_9ROUTER_ID)
+    if row is None or not row.is_enabled:
+        return Gateway(None)
+    headers = {"Authorization": "Bearer %s" % row.api_key} if row.api_key else {}
+    return Gateway(row.base_url, headers)
+
+
+def _layer2_content(gateway: Gateway, record: ProductRecord,
+                    paths: List[str]) -> Tuple[List[str], List[Tuple[str, str]],
+                                               Optional[str], Optional[str]]:
+    """
+    Layer One file checks, then every Layer Two step for one product that
+    passed the rubric gates.
+
+    Post: (kept_media, dropped_media, market_note, caption_line). When no media
+          survives, note and line are None and no text call was made.
+    Raises: Layer2Failure from any step; no partial result escapes.
+    """
+    kept, dropped = media_check.check_media(paths)
+    # Post order first (videos, then images), so the carousel cap decides which
+    # files Gemini judges and no call is spent on a file that cannot be posted.
+    kept = media_select.order_media(kept, cap=len(kept))
+    kept, judged_out = image_judge.filter_images(gateway, record, kept,
+                                                 limit=content_settings.MEDIA_CAP)
+    dropped += judged_out
+    if not kept:
+        return kept, dropped, None, None
+    note = market_note.write_note(gateway, record)
+    line = caption_line.write_line(gateway, record, note)
+    return kept, dropped, note, line
+
+
+def _apply_draft(row: MahdawiPost, draft) -> None:
+    row.title = draft.title
+    row.caption = draft.caption
+    row.price = draft.price
+    row.profit = draft.profit
+    row.media_files = [os.path.basename(p) for p in draft.media_paths]
+    row.channels = list(draft.target_channels)
+    row.flags = list(draft.flags)
+
+
+def _compose_row(row: MahdawiPost, record: ProductRecord, paths: List[str],
+                 gateway: Optional[Gateway]) -> str:
+    """
+    Fill one row from its record. Returns the row's status.
+
+    Pre : row.sku == record.sku; paths are the product's local media files.
+    Post: STATUS_STAGED with a complete draft, or STATUS_WAITING_LAYER2 with
+          layer2_error set and no caption.
+    Invariant: a product the rubric rejects never costs a Layer Two call, and a
+          product whose images Gemini all refuses is staged as REJECTED.
+    """
+    price, _profit, _flags = pricing.price(record)
+    score = scoring.score_product(record, price=price)
+    row.tier, row.gate_reasons = score.tier, list(score.reasons)
+
+    if gateway is None or score.rejected:
+        _apply_draft(row, compose.build_draft(record, media_paths=paths))
+        row.status, row.layer2_error = STATUS_STAGED, None
+        return row.status
+
+    try:
+        kept, dropped, note, line = _layer2_content(gateway, record, paths)
+    except Layer2Failure as exc:
+        row.media_files = [os.path.basename(p) for p in paths]
+        row.caption, row.market_note = None, None
+        row.status, row.layer2_error = STATUS_WAITING_LAYER2, str(exc)
+        return row.status
+
+    draft = compose.build_draft(record, media_paths=kept,
+                                generator=(lambda _r: line) if line else None)
+    _apply_draft(row, draft)
+    if dropped:
+        row.flags = row.flags + ["%s %s: %s" % (FLAG_MEDIA_DROPPED, n, why) for n, why in dropped]
+    if not kept:
+        row.tier = scoring.TIER_REJECTED
+        row.gate_reasons = [scoring.GATE_MEDIA + ": no image passed the image check"]
+    row.market_note = note
+    row.status, row.layer2_error = STATUS_STAGED, None
+    return row.status
+
+
+def rank_open_products(db: Session, gateway: Gateway, owner: Optional[str] = None) -> int:
+    """
+    Gemini orders every product that passed the gates and is not yet posted.
+
+    Post: each such row carries rank and rank_reason; returns how many.
+    Raises: Layer2Failure — ranks keep their previous values.
+    """
+    q = db.query(MahdawiPost).filter(MahdawiPost.status.in_([STATUS_STAGED, STATUS_APPROVED]),
+                                     MahdawiPost.tier.in_([scoring.TIER_A, scoring.TIER_B,
+                                                           scoring.TIER_C]))
+    if owner is not None:
+        q = q.filter(MahdawiPost.owner == owner)
+    rows = {r.sku: r for r in q.all()}
+    candidates = [ranking.Candidate(
+        sku=r.sku, title=r.title, category=r.category, tier=r.tier,
+        margin_pct=(round(100.0 * r.profit / r.price, 1) if r.price and r.profit is not None
+                    else None),
+        price=r.price, market_note=r.market_note) for r in rows.values()]
+    for ranked in ranking.rank(gateway, candidates):
+        rows[ranked.sku].rank = ranked.rank
+        rows[ranked.sku].rank_reason = ranked.reason
+    db.commit()
+    return len(candidates)
+
+
+def _rank_after(db: Session, gateway: Optional[Gateway], owner: Optional[str]) -> Optional[str]:
+    """Post: None when ranking ran or Layer Two is off; else the failure text."""
+    if gateway is None:
+        return None
+    try:
+        rank_open_products(db, gateway, owner)
+        return None
+    except Layer2Failure as exc:
+        return str(exc)
+
+
+# -- stage -------------------------------------------------------------------
 def stage_records(db: Session, records: List[ProductRecord],
                   media_by_sku: Optional[Dict[str, List[str]]] = None,
-                  owner: Optional[str] = None) -> dict:
+                  owner: Optional[str] = None,
+                  gateway: Optional[Gateway] = None) -> dict:
     """
-    Compose each record and persist a MahdawiPost. No network.
+    Compose each record and persist a MahdawiPost.
 
     Pre : records already fetched; media_by_sku maps sku -> local media paths.
-    Post: each new sku has a staged row; duplicates skip; no-price/no-media flag.
+          gateway None means Layer Two is off: no network, code-only drafts.
+    Post: each new sku has a staged or waiting row; duplicates skip;
+          no-price/no-media flag. With a gateway, open products are re-ranked.
     """
     media_by_sku = media_by_sku or {}
-    staged, skipped, flagged = 0, 0, []
+    staged, waiting, skipped, flagged = 0, 0, 0, []
     for record in records:
         if get_post(db, record.sku, owner):
             skipped += 1
             continue
-        paths = media_by_sku.get(record.sku, [])
-        draft = compose.build_draft(record, media_paths=paths)
-        # Gate and tier the product before it reaches a human (spec 3). A
-        # rejected product is still staged, so the dashboard can say why it
+        # A rejected product is still staged, so the dashboard can say why it
         # will not post, but approve() refuses to advance it.
-        score = scoring.score_product(record, price=draft.price)
         row = MahdawiPost(
-            id=str(uuid.uuid4()), owner=owner, sku=record.sku, title=draft.title,
-            caption=draft.caption, price=draft.price, profit=draft.profit,
+            id=str(uuid.uuid4()), owner=owner, sku=record.sku, title=record.title,
             media_dir=os.path.join(media_root(), record.sku),
-            media_files=[os.path.basename(p) for p in draft.media_paths],
-            channels=list(draft.target_channels), flags=list(draft.flags),
-            status=STATUS_STAGED,
             fedshi_url=record.source_url or (_FEDSHI_PRODUCT_URL % record.sku),
             thumb_url=(record.image_urls[0] if record.image_urls else None),
             category=record.category,           # null until thread C confirms a source
             variants=list(record.colors or []),  # colours we already read off the page
-            tier=score.tier, gate_reasons=list(score.reasons),
             content_type="product", transform_state="pending",
+            source_record=record.to_dict(),
         )
+        status = _compose_row(row, record, media_by_sku.get(record.sku, []), gateway)
         db.add(row)
-        staged += 1
-        if FLAG_NO_PRICE in draft.flags or FLAG_NO_MEDIA in draft.flags:
-            flagged.append(record.sku)
+        if status == STATUS_WAITING_LAYER2:
+            waiting += 1
+        else:
+            staged += 1
+            if FLAG_NO_PRICE in row.flags or FLAG_NO_MEDIA in row.flags:
+                flagged.append(record.sku)
     db.commit()
-    return {"staged": staged, "skipped_duplicate": skipped, "flagged": flagged}
+    return {"staged": staged, "waiting_layer2": waiting, "skipped_duplicate": skipped,
+            "flagged": flagged, "rank_error": _rank_after(db, gateway, owner)}
+
+
+def retry_waiting(db: Session, gateway: Gateway, owner: Optional[str] = None) -> dict:
+    """
+    Run Layer Two again for every product waiting on it.
+
+    Pre : gateway is not None (Layer Two is on).
+    Post: each waiting row is staged or still waiting with a fresh error; open
+          products are re-ranked.
+    """
+    q = db.query(MahdawiPost).filter(MahdawiPost.status == STATUS_WAITING_LAYER2)
+    if owner is not None:
+        q = q.filter(MahdawiPost.owner == owner)
+    done, still = 0, 0
+    for row in q.all():
+        record = ProductRecord.from_dict(row.source_record or {"sku": row.sku})
+        paths = [os.path.join(row.media_dir or "", n) for n in (row.media_files or [])]
+        if _compose_row(row, record, paths, gateway) == STATUS_WAITING_LAYER2:
+            still += 1
+        else:
+            done += 1
+    db.commit()
+    return {"staged": done, "still_waiting": still,
+            "rank_error": _rank_after(db, gateway, owner)}
 
 
 # -- lifecycle ---------------------------------------------------------------
@@ -198,6 +380,10 @@ def build_package(db: Session, sku: str, owner: Optional[str] = None) -> str:
     os.makedirs(pkg, exist_ok=True)
     with open(os.path.join(pkg, "caption.txt"), "w", encoding="utf-8") as f:
         f.write(row.caption or "")
+    # One caption per channel: the tag line is cut to each channel's cap.
+    for channel in (row.channels or []):
+        with open(os.path.join(pkg, "caption_%s.txt" % channel), "w", encoding="utf-8") as f:
+            f.write(caption_mod.for_channel(row.caption or "", channel))
     copied = []
     for name in (row.media_files or []):
         src = os.path.join(row.media_dir or "", name)
@@ -288,6 +474,7 @@ def run_fetch(run_id: str, skus: List[str], owner: Optional[str] = None,
 
     run = _RUNS.setdefault(run_id, {"id": run_id, "state": "running", "done": 0,
                                     "total": 0, "staged": 0, "skipped": 0,
+                                    "waiting_layer2": 0, "rank_error": None,
                                     "flagged": [], "error": None})
     db = SessionLocal()
     try:
@@ -307,8 +494,10 @@ def run_fetch(run_id: str, skus: List[str], owner: Optional[str] = None,
             media_by_sku[sku] = paths
             run["done"] += 1
 
-        report = stage_records(db, records, media_by_sku, owner)
+        run["state"] = "writing"                 # Layer Two: Gemini via 9router
+        report = stage_records(db, records, media_by_sku, owner, layer2_gateway(db))
         run.update(state="done", staged=report["staged"],
+                   waiting_layer2=report["waiting_layer2"], rank_error=report["rank_error"],
                    skipped=report["skipped_duplicate"], flagged=report["flagged"])
     except SessionExpired:
         run.update(state="error", error="SESSION_EXPIRED")
