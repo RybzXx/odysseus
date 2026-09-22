@@ -63,9 +63,71 @@ class Adb:
                    "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
                    "-d", "file://%s" % remote)
 
+    def touch(self, remote: str) -> None:
+        """Post: the file's mtime is now. adb push keeps the PC file's mtime."""
+        self.shell("touch", remote)
+
+    def delete_media(self, storage_path: str) -> None:
+        """
+        Remove one file and its MediaStore row.
+
+        Post: the gallery no longer lists it. A path MediaStore does not hold
+              is not an error, so this is safe to call on a half-done run.
+        """
+        self.shell("content", "delete", "--uri", "content://media/external/file",
+                   "--where", "\"_data='%s'\"" % storage_path)
+
+    def date_added(self, storage_path: str) -> Optional[int]:
+        """Post: MediaStore's date_added (epoch seconds) for the path, or None."""
+        out = self.shell("content", "query", "--uri", "content://media/external/file",
+                         "--projection", "date_added",
+                         "--where", "\"_data='%s'\"" % storage_path)
+        for line in out.splitlines():
+            if "date_added=" in line:
+                value = line.split("date_added=", 1)[1].split(",")[0].strip()
+                return int(value) if value.isdigit() else None
+        return None
+
+    def utc_offset_seconds(self) -> int:
+        """Post: the phone's current UTC offset, from `date +%z` (e.g. +0300)."""
+        z = self.shell("date", "+%z").strip()
+        if len(z) != 5 or z[0] not in "+-" or not z[1:].isdigit():
+            raise DriverError("cannot read the phone's UTC offset: %r" % z)
+        seconds = int(z[1:3]) * 3600 + int(z[3:5]) * 60
+        return seconds if z[0] == "+" else -seconds
+
+    def newest_gallery_item(self) -> Optional[str]:
+        """
+        The image or video MediaStore added last — the item a gallery picker
+        such as Instagram's shows first under Recents.
+
+        Post: its path as MediaStore stores it (/storage/emulated/0/...), or
+              None when MediaStore holds no image or video.
+        """
+        out = self.shell("content", "query", "--uri", "content://media/external/file",
+                         "--projection", "_data",
+                         "--where", "'media_type=1 OR media_type=3'",
+                         "--sort", "'date_added DESC, _id DESC'")
+        for line in out.splitlines():
+            if line.startswith("Row: 0 ") and "_data=" in line:
+                return line.split("_data=", 1)[1].strip()
+        return None
+
     def launch(self, package: str) -> None:
         self.shell("monkey", "-p", package, "-c",
                    "android.intent.category.LAUNCHER", "1")
+
+    def foreground_package(self) -> Optional[str]:
+        """
+        Post: the package that owns the focused window, or None when the focus
+              line is missing (the screen is off, or a transition is running).
+        """
+        out = self.shell("dumpsys", "window")
+        for line in out.splitlines():
+            if "mCurrentFocus" in line and "/" in line:
+                token = line.rsplit(" ", 1)[-1]
+                return token.split("/", 1)[0].strip("{}")
+        return None
 
     def tap(self, x: int, y: int) -> None:
         self.shell("input", "tap", str(x), str(y))

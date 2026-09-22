@@ -1,7 +1,11 @@
 {
   "app_package": "com.instagram.android",
+  "home_tab": {"descs": ["Home"]},
   "create_button": {"fallback_xy": [0.0625, 0.075]},
+  "create_post_option": {"descs": ["Create new post"], "texts": ["Post"]},
   "next": {"texts": ["Next"], "descs": ["Next"]},
+  "partial_access": {"rid": "root_partial_permission_view"},
+  "selected_photo": {"descs": ["Selected Photo thumbnail created on"]},
   "audio_remove": {"descs": ["Remove audio", "Clear audio", "Remove sound"]},
   "sharing_ok": {"texts": ["OK"]},
   "caption_field": {"rid": "caption_input_text_view"},
