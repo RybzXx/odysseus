@@ -2393,6 +2393,49 @@ def _migrate_email_account_default_invariant():
         raise
 
 
+_ENDPOINT_9ROUTER_ID = "endpoint_9router"
+
+
+def _migrate_seed_9router_endpoint():
+    """Seed the 9router gateway as a model endpoint, once, if absent.
+
+    9router is an OpenAI-compatible LLM gateway on the phone (Tailscale port
+    20128, keyless, ~745 models). This registers it so its models appear in the
+    picker, the same as a dashboard "add endpoint" would.
+
+    Idempotent by a fixed id, not by URL: once the row exists, this never
+    touches it again, so an admin who disables, edits, or re-keys it keeps that
+    change. Only a hard delete lets the seed re-create it on the next start. The
+    URL comes from ODYSSEUS_9ROUTER_URL when set, else the loopback default.
+    """
+    base_url = os.environ.get("ODYSSEUS_9ROUTER_URL", "http://localhost:20128/v1")
+    db = None
+    try:
+        if not inspect(engine).has_table(ModelEndpoint.__tablename__):
+            return
+        db = SessionLocal()
+        if db.get(ModelEndpoint, _ENDPOINT_9ROUTER_ID) is not None:
+            return
+        db.add(ModelEndpoint(
+            id=_ENDPOINT_9ROUTER_ID,
+            name="9router",
+            base_url=base_url,
+            api_key=None,               # keyless on the phone; no secret to store
+            is_enabled=True,
+            model_type="llm",
+            endpoint_kind="proxy",      # external OpenAI-compatible API over the tailnet
+            model_refresh_mode="auto",
+            owner=None,                 # shared: visible to every user
+        ))
+        db.commit()
+        logger.info("Seeded the 9router model endpoint at %s", base_url)
+    except Exception as e:
+        logger.warning("9router endpoint seed: %s", e)
+    finally:
+        if db is not None:
+            db.close()
+
+
 def _migrate_seed_email_account():
     """Atomically seed one legacy default account when no account exists.
 
@@ -2604,6 +2647,7 @@ def init_db():
     _migrate_add_email_smtp_security()
     _migrate_email_account_default_invariant()
     _migrate_seed_email_account()
+    _migrate_seed_9router_endpoint()
     _migrate_add_calendar_metadata()
     _migrate_add_calendar_is_utc()
     _migrate_add_calendar_origin()
