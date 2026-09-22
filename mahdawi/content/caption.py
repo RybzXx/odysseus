@@ -25,11 +25,12 @@ from mahdawi.fedshi.models import ProductRecord
 CaptionGenerator = Callable[[ProductRecord], Optional[str]]
 
 
-def build_hashtags(record: ProductRecord, category: Optional[str] = None) -> List[str]:
+def build_hashtags(record: ProductRecord, category: Optional[str] = None,
+                   channel: Optional[str] = None) -> List[str]:
     """
-    Base store tags plus one category tag, capped.
+    Base store tags plus one category tag, capped for the channel.
 
-    Post: at most settings.HASHTAG_CAP tags, no duplicates, order preserved.
+    Post: at most the channel's cap, no duplicates, order preserved.
     """
     tags = list(settings.BASE_HASHTAGS)
     cat = category or record.category
@@ -42,7 +43,7 @@ def build_hashtags(record: ProductRecord, category: Optional[str] = None) -> Lis
         if t not in seen:
             seen.add(t)
             out.append(t)
-    return out[:settings.HASHTAG_CAP]
+    return out[:hashtag_cap(channel)]
 
 
 def _price_line(price: Optional[int]) -> str:
@@ -51,20 +52,65 @@ def _price_line(price: Optional[int]) -> str:
     return "السعر: {:,} د.ع".format(price)
 
 
+def order_cta() -> str:
+    """
+    The call to action for the active order channel.
+
+    Pre : settings.ORDER_CHANNEL is "dm" or "whatsapp".
+    Post: the DM line, or the WhatsApp line with the number filled in. A
+          WhatsApp channel with no number falls back to DM, so a half-configured
+          switch never ships a caption reading "واتساب {number}".
+    """
+    if settings.ORDER_CHANNEL == "whatsapp" and settings.WHATSAPP_NUMBER:
+        return settings.ORDER_CTA_WHATSAPP.format(number=settings.WHATSAPP_NUMBER)
+    return settings.ORDER_CTA_DM
+
+
+def hashtag_cap(channel: Optional[str]) -> int:
+    """Post: the per-channel cap, or the general cap when the channel is unknown."""
+    if channel == "tiktok":
+        return settings.HASHTAG_CAP_TIKTOK
+    if channel == "instagram":
+        return settings.HASHTAG_CAP_INSTAGRAM
+    return settings.HASHTAG_CAP
+
+
+def _build_short(record: ProductRecord, price: Optional[int],
+                 hashtags: List[str]) -> str:
+    """
+    Three lines: the product, the trust line, the call to action.
+
+    Pre : the price already rides on the media (spec 2.3), so it is omitted here
+          unless INCLUDE_PRICE overrides.
+    Post: a caption of at most four lines plus the tag line. Observed Iraqi store
+          captions run one to three lines (research 2026-09-22).
+    """
+    lines = [p for p in (record.title or "", _price_line(price),
+                         settings.TRUST_LINE, order_cta()) if p]
+    body = "\n".join(lines)
+    tags = " ".join(hashtags)
+    return body + ("\n\n" + tags if tags else "")
+
+
 def build_caption(record: ProductRecord,
                   price: Optional[int],
                   category: Optional[str] = None,
-                  generator: Optional[CaptionGenerator] = None
+                  generator: Optional[CaptionGenerator] = None,
+                  channel: Optional[str] = None
                   ) -> Tuple[str, List[str], List[str]]:
     """
     Assemble the caption. Returns (caption, hashtags, flags).
 
-    Pre : price came from mahdawi.content.pricing.
-    Post: the caption contains the CTA and, when INCLUDE_PRICE, the price line.
-          The description is the only part trimmed to fit CAPTION_LIMIT.
+    Pre : price came from content.pricing.
+    Post: the caption always carries the CTA. In the short style it also carries
+          the trust line and stays inside a few lines. In the full style the
+          description is the body and is the only part trimmed to CAPTION_LIMIT.
     """
     flags: List[str] = []
-    hashtags = build_hashtags(record, category)
+    hashtags = build_hashtags(record, category, channel)
+
+    if settings.CAPTION_STYLE == "short":
+        return _build_short(record, price, hashtags), hashtags, flags
 
     body = None
     if generator is not None:
@@ -75,7 +121,7 @@ def build_caption(record: ProductRecord,
     head = record.title or ""
     price_line = _price_line(price)
     # Fixed tail: everything that must survive truncation.
-    tail_parts = [p for p in (price_line, settings.TAGLINE, settings.ORDER_CTA,
+    tail_parts = [p for p in (price_line, settings.TAGLINE, order_cta(),
                               " ".join(hashtags)) if p]
     tail = "\n".join(tail_parts)
 

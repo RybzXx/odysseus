@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from core.database import MahdawiPost, SessionLocal, utcnow_naive
-from mahdawi.content import compose
+from mahdawi.content import compose, scoring
 from mahdawi.content.models import FLAG_NO_MEDIA, FLAG_NO_PRICE
 from mahdawi.fedshi.models import ProductRecord
 
@@ -59,6 +59,9 @@ def post_to_dict(row: MahdawiPost) -> dict:
         "flags": row.flags or [], "package_dir": row.package_dir,
         "fedshi_url": row.fedshi_url or (_FEDSHI_PRODUCT_URL % row.sku),
         "thumb_url": row.thumb_url,
+        "tier": row.tier, "gate_reasons": row.gate_reasons or [],
+        "content_type": row.content_type, "transform_state": row.transform_state,
+        "overlay_price_rendered": bool(row.overlay_price_rendered),
         "category": row.category, "original_price": row.original_price,
         "discount_pct": row.discount_pct, "variants": row.variants or [],
         "curation_score": row.curation_score,
@@ -123,6 +126,10 @@ def stage_records(db: Session, records: List[ProductRecord],
             continue
         paths = media_by_sku.get(record.sku, [])
         draft = compose.build_draft(record, media_paths=paths)
+        # Gate and tier the product before it reaches a human (spec 3). A
+        # rejected product is still staged, so the dashboard can say why it
+        # will not post, but approve() refuses to advance it.
+        score = scoring.score_product(record, price=draft.price)
         row = MahdawiPost(
             id=str(uuid.uuid4()), owner=owner, sku=record.sku, title=draft.title,
             caption=draft.caption, price=draft.price, profit=draft.profit,
@@ -134,6 +141,8 @@ def stage_records(db: Session, records: List[ProductRecord],
             thumb_url=(record.image_urls[0] if record.image_urls else None),
             category=record.category,           # null until thread C confirms a source
             variants=list(record.colors or []),  # colours we already read off the page
+            tier=score.tier, gate_reasons=list(score.reasons),
+            content_type="product", transform_state="pending",
         )
         db.add(row)
         staged += 1
@@ -153,11 +162,20 @@ class BadState(RuntimeError):
 
 
 def approve(db: Session, sku: str, owner: Optional[str] = None) -> dict:
+    """
+    Pre : status is staged and the product passed the rubric.
+    Post: status approved.
+    Invariant: a REJECTED product never advances, whatever a caller asks, so a
+          gated product cannot reach packaging by way of the approve route.
+    """
     row = get_post(db, sku, owner)
     if not row:
         raise NotFound(sku)
     if row.status != STATUS_STAGED:
         raise BadState("sku %s is %s, not staged" % (sku, row.status))
+    if row.tier == scoring.TIER_REJECTED:
+        raise BadState("sku %s failed the rubric: %s"
+                       % (sku, "; ".join(row.gate_reasons or ["no reason recorded"])))
     row.status = STATUS_APPROVED
     db.commit()
     return post_to_dict(row)

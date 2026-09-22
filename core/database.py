@@ -870,6 +870,15 @@ class MahdawiPost(TimestampMixin, Base):
     discount_pct   = Column(Integer, nullable=True)    # 0-100
     variants       = Column(JSON, default=list)        # colours/sizes read off the page
     curation_score = Column(Integer, nullable=True)    # agent rank, 0-100
+    # Scoring rubric output (spec 3). tier is A/B/C or REJECTED, and
+    # gate_reasons says why, so the dashboard explains every rejection.
+    tier         = Column(String, nullable=True, index=True)
+    gate_reasons = Column(JSON, default=list)
+    # Post build state. content_type is "product" or "proof". transform_state
+    # tracks the originality layer, which no post may skip (spec 1).
+    content_type = Column(String, default="product")
+    transform_state = Column(String, default="pending")
+    overlay_price_rendered = Column(Boolean, default=False)
     # Post-time facts, filled when a post goes live.
     views        = Column(Integer, nullable=True)
     orders       = Column(Integer, nullable=True)
@@ -2628,6 +2637,11 @@ def _migrate_add_mahdawi_catalog_columns():
         "post_urls": "TEXT",
         "scheduled_at": "DATETIME",
         "posted_at": "DATETIME",
+        "tier": "TEXT",
+        "gate_reasons": "TEXT",
+        "content_type": "TEXT",
+        "transform_state": "TEXT",
+        "overlay_price_rendered": "BOOLEAN",
     }
     try:
         with engine.connect() as conn:

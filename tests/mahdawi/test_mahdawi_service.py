@@ -73,7 +73,11 @@ def test_full_lifecycle(session, tmp_path):
     assert {"caption.txt", "meta.json", "1736150.mp4", "1736123.png"} <= files
 
     caption = open(os.path.join(pkg, "caption.txt"), encoding="utf-8").read()
-    assert "عالخاص" in caption and "السعر" in caption
+    # Short style (spec 2): the CTA and the trust line carry the caption, and the
+    # price is absent because the media renders it instead (spec 2.3).
+    assert "عالخاص" in caption
+    assert "الدفع عند الاستلام" in caption
+    assert "السعر" not in caption
 
     meta = json.load(open(os.path.join(pkg, "meta.json"), encoding="utf-8"))
     assert meta["sku"] == "AFOZC" and meta["price"] and meta["price"] > 0
@@ -90,6 +94,32 @@ def test_no_price_flagged(session):
                         profit_hint=None, reselling_price_min=None)
     rep = svc.stage_records(session, [rec], {}, owner="u1")
     assert "NOPRICE" in rep["flagged"]
+
+
+def test_rejected_product_carries_tier_and_cannot_be_approved(session):
+    # A 1,000 IQD profit hint is Fedshi's floor filler, so the rubric rejects it.
+    rec = ProductRecord(sku="TRAP", title="سلعة", wholesale_price=15300,
+                        profit_hint=1000, stock_band="50-75",
+                        image_urls=["a.jpg", "b.jpg", "c.jpg"])
+    svc.stage_records(session, [rec], {}, owner="u1")
+    row = [p for p in svc.list_products(session, owner="u1") if p["sku"] == "TRAP"][0]
+    assert row["tier"] == "REJECTED"
+    assert row["gate_reasons"], "a rejection must say why"
+
+    with pytest.raises(svc.BadState):
+        svc.approve(session, "TRAP", owner="u1")
+
+
+def test_good_product_is_tiered_and_approves(session):
+    rec = ProductRecord(sku="GOOD", title="ستائر", category="المنزل والتنظيم",
+                        wholesale_price=3900, profit_hint=8000, stock_band="100-200",
+                        image_urls=["a.jpg", "b.jpg", "c.jpg"])
+    svc.stage_records(session, [rec], {}, owner="u1")
+    row = [p for p in svc.list_products(session, owner="u1") if p["sku"] == "GOOD"][0]
+    assert row["tier"] == "A"
+    assert row["gate_reasons"] == []
+    assert row["content_type"] == "product"
+    assert svc.approve(session, "GOOD", owner="u1")["status"] == "approved"
 
 
 def test_owner_isolation(session):
