@@ -379,6 +379,9 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     if not is_local and cache_key in _context_cache:
         return _context_cache[cache_key]
 
+    # Drop any report from an earlier query: only this query's catalog read may
+    # exempt the model from the local ceiling below.
+    _catalog_reported_windows.pop(cache_key, None)
     ctx, known = _query_context_length(endpoint_url, model)
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
@@ -389,12 +392,16 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     # Every public accessor funnels through here, so the ceiling is applied
     # once rather than at each call site. Cloud models are exempt: the local
     # server only proxies them, so its serving window does not bound theirs.
+    # A window the server itself reported in its /models catalog replaces the
+    # env ceiling: that ceiling stands in for servers that report nothing.
     if is_local and not is_cloud_served_model(model):
-        ceiling = local_served_context_ceiling(model)
+        reported = _catalog_reported_windows.get(cache_key)
+        ceiling = reported if reported else local_served_context_ceiling(model)
+        source = "its /models catalog" if reported else LOCAL_SERVED_CONTEXT_ENV
         if ceiling is not None and ctx > ceiling:
             logger.info(
                 "Local endpoint serves %d; capping %s from %d (%s)",
-                ceiling, model, ctx, LOCAL_SERVED_CONTEXT_ENV,
+                ceiling, model, ctx, source,
             )
             ctx = ceiling
     # <<< odysseus-local-served-context
@@ -457,11 +464,23 @@ def _lookup_known(model: str) -> Optional[int]:
     return best_ctx
 
 
+def _positive_window(val) -> Optional[int]:
+    # bool is an int subclass; a stray True must not read as a 1-token window.
+    if isinstance(val, (int, float)) and not isinstance(val, bool) and val > 0:
+        return int(val)
+    return None
+
+
 def _model_ctx_from_entry(m: dict) -> Optional[int]:
     """Extract a positive context window from one /models catalog entry.
 
     Checks the common top-level fields first, then a nested meta/model_extra
-    object. Returns None when no positive window is reported.
+    object, then a nested capabilities object. Returns None when no positive
+    window is reported.
+
+    The camelCase names come from gateways such as 9router, which report
+    ``capabilities.contextWindow`` per model. Without them every model behind
+    such a gateway fell back to the known table or the bare default.
     """
     if not isinstance(m, dict):
         return None
@@ -471,18 +490,35 @@ def _model_ctx_from_entry(m: dict) -> Optional[int]:
         "max_model_len",
         "max_context_length",
         "max_seq_len",
+        "contextWindow",
+        "contextLength",
     ):
-        val = m.get(field)
-        if val and isinstance(val, (int, float)) and val > 0:
-            return int(val)
+        val = _positive_window(m.get(field))
+        if val:
+            return val
     meta = m.get("meta") or m.get("model_extra") or {}
     if isinstance(meta, dict):
         # n_ctx is the actual serving context (set via -c flag in llama.cpp)
         for field in ("n_ctx", "context_length", "context_window", "max_model_len"):
-            val = meta.get(field)
-            if val and isinstance(val, (int, float)) and val > 0:
-                return int(val)
+            val = _positive_window(meta.get(field))
+            if val:
+                return val
+    caps = m.get("capabilities")
+    if isinstance(caps, dict):
+        for field in ("contextWindow", "context_window", "context_length", "contextLength"):
+            val = _positive_window(caps.get(field))
+            if val:
+                return val
     return None
+
+
+# Windows a local server reported for a model in its own /models catalog,
+# keyed on (endpoint_url, model) like _context_cache. A reported window is the
+# server's statement of what it serves (llama.cpp n_ctx, vLLM max_model_len, a
+# gateway's contextWindow), so it replaces the local served ceiling, which
+# exists only for servers such as Ollama whose catalog reports no window.
+# Written by _query_context_length, read and reset by _get_context_length_cached.
+_catalog_reported_windows: Dict[Tuple[str, str], int] = {}
 
 
 # Per-endpoint cache of the {model_id: context_length} map parsed from a
@@ -631,6 +667,8 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
                 mid = m.get("id", "")
                 if mid == model or mid.split("/")[-1] == model.split("/")[-1]:
                     api_ctx = _model_ctx_from_entry(m)
+                    if api_ctx:
+                        _catalog_reported_windows[(endpoint_url, model)] = api_ctx
                     break
     except Exception as e:
         logger.debug(f"Failed to query context length for {model}: {e}")
